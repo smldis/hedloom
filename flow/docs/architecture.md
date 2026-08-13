@@ -420,7 +420,8 @@ persistence, or runtime-study ownership.
 **Superseded on 2026-08-03.** The per-work-order allocation policy below was
 falsified on its own stated terms — repeated reviews added ceremony without
 changing scope across Phases 1–5. The observation and the replacement policy
-are recorded in [`../../exec/DECISIONS.md`](../../exec/DECISIONS.md).
+are recorded in
+[`../../hedloom-exec/DECISIONS.md`](../../hedloom-exec/DECISIONS.md).
 Development now proceeds against a living decision ledger with review at
 natural boundaries. The falsifiable framing, named discriminating observations,
 and the rule that passing tests accept only the stated evidence are retained.

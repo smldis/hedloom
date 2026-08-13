@@ -111,6 +111,14 @@ def _bind_child_lifetime() -> Callable[[], None] | None:
     Linux only. Combined with the child staying in our process group, this is
     what makes "the job dies with its owner" true even when the owner is killed
     without a chance to clean up.
+
+    DEVNOTE/TODO: There is a small fork-to-prctl race here. If the parent dies
+    after fork but before this callback installs PR_SET_PDEATHSIG, Linux does
+    not deliver the signal retroactively and the child may survive. Replace
+    this preexec hook with a tiny native launcher that receives the expected
+    parent PID, installs PR_SET_PDEATHSIG, verifies getppid() still matches,
+    and only then execs the requested command. That replacement should also
+    remove Python's general preexec_fn hazard in the threaded Dask kernel.
     """
 
     if _LIBC is None:

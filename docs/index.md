@@ -432,7 +432,14 @@ rather than into the unit's own environment.
 
 ## Further reading
 
-- [`hedloom/ONTOLOGY.md`](https://github.com/smldis/analog-sim-studies/blob/main/hedloom/ONTOLOGY.md)
+For a simulator-free farm check after the LSF preflight passes, run
+[`examples/farm_smoke.py`](../examples/farm_smoke.py) with its explicit
+[`farm-smoke.site.toml`](../examples/farm-smoke.site.toml) profile. Its Plan
+sweeps two explicit `start`/`count` parameter sets through a file-generating
+farm command and a dependent summarizing command. The four invocations produce
+two deterministic artifacts, then are all reused by an identical submission.
+
+- [`hedloom/ONTOLOGY.md`](../ONTOLOGY.md)
   for the unit's current contracts and what its own examples have and have not
   demonstrated (in particular: every placement run against a real substrate
   so far is `local`; the `lsf` launcher path is designed and untested against
@@ -446,6 +453,12 @@ rather than into the unit's own environment.
 - [`docs/reference/ota-pvt-plan/`](../../../reference/ota-pvt-plan/README.md)
   at the repository root — the root-owned, cross-unit Plan declaration this
   study's shape is drawn from, plus its own real-execution binding.
+
+```{toctree}
+:hidden:
+
+../ONTOLOGY
+```
 
 ```{toctree}
 :maxdepth: 1
