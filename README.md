@@ -77,8 +77,8 @@ python examples/farm_smoke.py examples/farm-smoke.site.toml
 
 The Plan sweeps two points, each with explicit `start` and `count` parameters.
 For each point one `/bin/sh` command generates a numeric file and a second
-command consumes it with `wc` and `awk`, producing four visible `bsub -I` jobs
-and two deterministic summaries. It then submits the same Plan again and
+POSIX-shell command consumes it, producing four visible `bsub -I` jobs and two
+deterministic summaries. It then submits the same Plan again and
 requires all four invocations to be reused without new jobs. Results live under
 `examples/_runs/farm-smoke/`. The profile explicitly requests queue `reg`, one
 core per job, and a one-minute walltime; copy the TOML and change those site

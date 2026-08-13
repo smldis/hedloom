@@ -74,8 +74,9 @@ def summarize_numbers(numbers, out, *, start: int, count: int):
         "/bin/sh",
         "-c",
         'input=$1; start=$2; count=$3; output=$4; '
-        'rows=$(wc -l < "$input"); '
-        "sum=$(awk '{ total += $1 } END { print total + 0 }' \"$input\"); "
+        'rows=0; sum=0; '
+        'while IFS= read -r value; do '
+        'rows=$((rows + 1)); sum=$((sum + value)); done < "$input"; '
         'printf "start=%s\\ncount=%s\\nrows=%s\\nsum=%s\\n" '
         '"$start" "$count" "$rows" "$sum" > "$output"',
         "hedloom-summarize",
