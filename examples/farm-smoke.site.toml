@@ -1,0 +1,12 @@
+# Minimal, directly runnable profile for examples/farm_smoke.py.
+# Relative storage paths are anchored to this file's directory.
+[study]
+root = "_runs/farm-smoke/attempts"
+workspace_root = "_runs/farm-smoke/work"
+
+[placement.lsf]
+kind = "lsf-interactive"
+queue = "reg"
+walltime = "1"
+cores = 1
+timeout = 300
