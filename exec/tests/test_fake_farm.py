@@ -43,13 +43,22 @@ def test_a_real_submission_runs_the_command_and_records_success(farm, tmp_path):
 
 def test_a_failing_command_propagates_its_exit_status(farm, tmp_path):
     journal = AttemptJournal(tmp_path, "hedloom-farm-fail")
-    bundle = {"command": [sys.executable, "-c", "raise SystemExit(3)"]}
+    bundle = {
+        "command": [
+            sys.executable,
+            "-c",
+            "print('failure detail'); raise SystemExit(3)",
+        ]
+    }
 
     launch_or_attach(journal, farm, bundle)
     state = reconcile(journal, farm)
 
     assert state.outcome == "failed"
-    assert journal.read_manifest()["result"]["returncode"] == 3
+    result = journal.read_manifest()["result"]
+    assert result["returncode"] == 3
+    assert result["stdout"] == "failure detail\n"
+    assert result["error"] == "bsub -I exited with status 3"
 
 
 def test_the_submission_reaches_bsub_with_its_declared_shape(farm, tmp_path):

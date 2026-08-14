@@ -85,14 +85,24 @@ def test_successful_exit_becomes_a_published_success(tmp_path):
 
 
 def test_nonzero_exit_becomes_a_published_failure(tmp_path):
-    runner = FakeRunner(CommandResult(returncode=137, stderr="killed"))
+    runner = FakeRunner(
+        CommandResult(returncode=137, stdout="payload detail", stderr="killed")
+    )
     lsf, _ = transport(runner=runner)
     journal = AttemptJournal(tmp_path, "hedloom-abc")
-    launch_or_attach(journal, lsf, BUNDLE)
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    launch_or_attach(journal, lsf, {**BUNDLE, "workdir": str(workdir)})
     state = reconcile(journal, lsf)
 
     assert state.outcome == "failed"
-    assert journal.read_manifest()["result"]["returncode"] == 137
+    result = journal.read_manifest()["result"]
+    assert result["returncode"] == 137
+    assert result["stdout"] == "payload detail"
+    assert result["stderr"] == "killed"
+    assert result["error"] == "bsub -I exited with status 137"
+    assert (workdir / "stdout.log").read_text() == "payload detail"
+    assert (workdir / "stderr.log").read_text() == "killed"
 
 
 def test_discovery_reports_nothing_when_no_job_survives():

@@ -530,7 +530,16 @@ class LSFInteractiveTransport:
                 return Observation("succeeded", {"stdout": handle.get("stdout", "")})
             return Observation(
                 "failed",
-                {"returncode": returncode, "stderr": handle.get("stderr", "")},
+                {
+                    # LSF installations do not agree about which stream carries
+                    # interactive job diagnostics.  Dropping stdout here erased
+                    # the only explanation some failed jobs produced, even
+                    # though submit() had captured it in the handle.
+                    "returncode": returncode,
+                    "stdout": handle.get("stdout", ""),
+                    "stderr": handle.get("stderr", ""),
+                    "error": f"bsub -I exited with status {returncode}",
+                },
             )
 
         # A live handle describes a job we attached to rather than ran, so its
