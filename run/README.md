@@ -77,7 +77,9 @@ placement name before anything runs.
 `distributed` is an optional dependency (`pip install hedloom-run[dask]`), reached
 by explicit import: a plan small enough to walk in one thread should not need a
 scheduler. What Dask still cannot tell you is whether a corner is `PEND` or
-`RUN` — that needs a watcher over the attempt records, and is not built yet.
+`RUN` — that needs a watcher over the attempt records, which is
+`hedloom_exec.watch` and which `hedloom.Study.submit(watch=True)` now runs for
+the duration of a run.
 
 ## What the cluster exposes
 

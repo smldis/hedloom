@@ -335,9 +335,13 @@ screen long enough to watch — a documented instrument, not a claim about how
 the study behaves in general.
 
 `watch=True` prints one line per invocation as it settles
-(`[disposition] key  operation  outcome`). `on_event=callback` is the same
-hook without the printing, for a caller that wants its own progress reporting;
-passing both is redundant — `on_event` wins.
+(`[disposition] key  operation  outcome`), and additionally polls the farm for
+the duration of the run, printing each queue transition as it happens
+(`[watch] invoke:corner-tt pending → running (48s queued)`). `on_event=callback`
+replaces the first of those, for a caller that wants its own progress
+reporting; it does not replace the second, because a queue transition is not an
+invocation settling. Passing both is redundant for completions — `on_event`
+wins — and still watches the queue.
 
 Every declared source is read exactly once per submission, before anything
 else runs: that one reading both fingerprints the source (decides whether

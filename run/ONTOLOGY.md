@@ -127,11 +127,19 @@ dashboard, and failure isolation are untested against anything but fakes.
   belongs to `hedloom-exec` and is not re-implemented here.
 - On failure the sequential kernel stops. Successors are reported as `blocked`,
   never run against inputs that do not exist. `stop_on_failure=False` continues.
-- The graph kernel blocks *dependents* and lets independent branches finish: a
-  dependent of failed work returns a blocked outcome rather than raising. One
-  corner failing does not abandon the other forty-nine, which is what a sweep
-  wants and what the sequential kernel cannot offer. This is a deliberate
-  difference in scope of failure, not in the meaning of a result.
+- The graph kernel blocks *dependents*: a dependent of failed work returns a
+  blocked outcome rather than raising. Whether independent branches also stop
+  is now the caller's, through `stop_on_failure`, which defaults to `True`
+  because the usual answer to a failed corner is to debug it rather than to
+  spend the farm on the other forty-nine. With it, the first failure cancels
+  every task that has not acquired a worker thread, waits for the ones already
+  executing, and reports the rest as blocked. With `stop_on_failure=False` the
+  independent branches finish, which is what a sweep wants when the failure is
+  known and local.
+- The two kernels therefore stop at different boundaries — the sequential one
+  blocks plan-order successors, the graph one blocks what has not started.
+  This is a deliberate difference in the scope of failure, and it is the one
+  place the readiness kernel is allowed to change what a run produces.
 - `on_event` reports each outcome as it happens, so a long run is observable
   without waiting for the report.
 
