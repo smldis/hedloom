@@ -53,6 +53,10 @@ authored config, which bakes a machine path into the outer plan's identity.
 
 ## Further reading for contributors
 
+- [`placement-clustering-scheduling.md`](placement-clustering-scheduling.md)
+  — a schematic description of current placement routing, the sequential and
+  Dask scheduling kernels, and the missing placement-specific concurrency
+  model.
 - [`hedloom/ONTOLOGY.md`](https://github.com/smldis/analog-sim-studies/blob/main/hedloom/ONTOLOGY.md)
   — this unit's current contracts, and what its examples have and have not
   demonstrated. In particular: every placement run against a real substrate so
