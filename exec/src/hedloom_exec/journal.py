@@ -157,6 +157,68 @@ class AttemptJournal:
         plan runner -- can both fold an unsubmitted state and both submit,
         producing two real jobs for one attempt. An advisory lock on a file in
         the attempt directory is enough: every writer goes through here.
+
+        ==================================================================
+        DEVNOTE/TODO -- REVIEW BEFORE ANY MULTI-HOST USE. Raised 2026-08-16.
+
+        "An advisory lock on a file is enough" assumes a filesystem that
+        honours the lock. **A study root on NFS may not be one, and it does
+        not say so.** This is the weakest load-bearing assumption in the whole
+        durability argument and it has never been tested against a real
+        network filesystem.
+
+        What can go wrong, all of it silently -- `flock()` returns success in
+        every case below:
+
+        * Linux emulates `flock` over NFS with POSIX byte-range locks, but the
+          `local_lock=` mount option turns that off. Mounted `local_lock=flock`
+          or `local_lock=all`, the lock becomes **node-local**: two hosts both
+          acquire it and neither is told.
+        * NFSv3 mounted `-o nolock` is the same story, and is common on
+          clusters that had lockd trouble.
+        * NFSv3 needs `rpc.statd`/`lockd` alive; NFSv4 locks are **leases**, so
+          a client partitioned past its lease can have a lock revoked while it
+          still believes it holds it.
+
+        And the consequence is worse than duplicate jobs. The lock is what
+        makes "exactly one writer" true, and `events.jsonl` is appended with
+        `O_APPEND` -- which **NFS does not make atomic**, because the client
+        resolves the offset itself. So a lock that silently degrades does not
+        merely produce two `bsub` jobs for one identity: it can interleave or
+        overwrite records in the journal that every recovery, reuse and
+        identity decision is read back from. The durable record starts lying.
+
+        Not at risk: manifest publication is an atomic `rename()` within one
+        directory, which NFS does guarantee. It is the claim half that is
+        suspect, not the publication half.
+
+        Not reachable today, which is why this is a flag and not a fix: one
+        process runs the plan, the Dask cluster is in-process, and two separate
+        `open()` calls in one process do contend on `flock` correctly. The
+        exposure opens with (a) two controllers against one root -- two people,
+        or the same study started twice on two login hosts -- and (b) pooled
+        placement, where journals would be written from farm nodes; see
+        `docs/pooled-placement-plan.md` section 2, which defers that design for
+        this reason.
+
+        Options to weigh when it is picked up, cheapest first:
+
+        1. **Detect rather than trust.** At run start, read the mount options
+           for the study root from `/proc/mounts`; if it is NFS with
+           `local_lock` or `nolock`, refuse or say so loudly. This is the house
+           style -- refuse rather than guess -- and it is maybe thirty lines.
+        2. **Replace the lock with an NFS-safe idiom.** `O_CREAT|O_EXCL` is
+           atomic on NFSv4 but was not on v3; the portable one is the classic
+           `link()`-then-check-`st_nlink == 2` dance, which holds on both.
+        3. **Do not share a root across controllers** -- partition by run. Safe,
+           but cross-run reuse is the entire point, so this costs the feature.
+        4. **Ask the substrate instead** -- `bjobs -J <identity>` before
+           submitting. Racy on its own, and `discovery_is_authoritative`
+           already encodes a better version of this idea.
+
+        Do not treat the current single-host green test suite as evidence about
+        any of this. It is evidence that the lock works on a local filesystem.
+        ==================================================================
         """
 
         self.directory.mkdir(parents=True, exist_ok=True)
