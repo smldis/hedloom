@@ -10,8 +10,18 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 STATE = os.environ.get("FAKE_LSF_STATE")
+
+
+def write_record(path, record):
+    """Publish one whole observation so a concurrent `bjobs` never sees half."""
+
+    temporary = f"{path}.{os.getpid()}.tmp"
+    with open(temporary, "w") as handle:
+        json.dump(record, handle)
+    os.replace(temporary, path)
 
 
 def main(argv):
@@ -41,12 +51,24 @@ def main(argv):
         return 255
 
     name = options.get("-J", "unnamed")
+    record_path = None
+    record = {
+        "name": name,
+        "options": options,
+        "command": command,
+        "started_at_ns": time.time_ns(),
+    }
     if STATE:
         os.makedirs(STATE, exist_ok=True)
-        with open(os.path.join(STATE, f"{name}.json"), "w") as handle:
-            json.dump({"name": name, "options": options, "command": command}, handle)
+        record_path = os.path.join(STATE, f"{name}.json")
+        write_record(record_path, record)
 
-    completed = subprocess.run(command)
+    try:
+        completed = subprocess.run(command)
+    finally:
+        if record_path is not None:
+            record["ended_at_ns"] = time.time_ns()
+            write_record(record_path, record)
     return completed.returncode
 
 
