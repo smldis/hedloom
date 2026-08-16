@@ -65,8 +65,9 @@ model anywhere in the tree, better than the register's prose — and replace its
 final section with a pointer to the register entry. Then the doc is the
 *explanation* and the register stays the *decision*.
 
-**Status 2026-08-16.** The unbuildable-profile claim above is stale, although
-the broader documentation-consolidation call remains open. A profile may now
+**Built 2026-08-16.** The doc's closing section is replaced by a pointer to the
+register; sections 1-3 are kept. The unbuildable-profile claim above was already
+stale, and remains recorded because the argument around it is not. A profile may now
 declare `kind = "in-process"`; `_placements_from` gives it `max_jobs`, or
 defaults it to `[kernel] threads` or 1, and `Study.submit` supplies its
 `BoundTransport` from the authored implementations.
@@ -334,7 +335,14 @@ merge for the per-invocation half), and have `_transports_from` split
 kernel-level keys (`max_jobs`) from transport keys, refusing anything in neither
 set by name. ~30 lines, and it deletes the asymmetry rather than patching it.
 
-**Partly addressed 2026-08-16; point 6 remains open.** `max_jobs` is now
+**Built 2026-08-16.** One tuple now governs both halves: the transport takes a
+single `defaults` mapping validated against `PLACEMENT_OPTIONS`, `settings_for`
+resolves an invocation over it, and `_transports_from` refuses an unknown key by
+placement *and* key as a `SiteError`. `-app` is added; `-R rh80` needed nothing
+but a test. `licences` stays, because one key excluded from the site half is the
+asymmetry itself. The account below is kept as the record of what was wrong.
+
+Previously: `max_jobs` is now
 profile vocabulary: `_placements_from` validates it, requires it for an
 `lsf-interactive` placement, and `_transports_from` removes it before calling
 `LSFInteractiveTransport`. But `memory_mb` and `licences` are still forwarded
@@ -393,10 +401,13 @@ Cheap partial mitigation if the native launcher is too much right now: bind
 attribute resolution or argument conversion. Does not close the race; removes one
 allocation path from the post-fork window.
 
-**Status 2026-08-16: still open.** The current topology is now an in-process
-`SpecCluster` with one `Worker` per placement, but its farm-placement threads
-still call the same `subprocess.run(preexec_fn=...)` path. The topology changed;
-the risk did not.
+**Mitigated 2026-08-16; the finding stays open at lower rank.**
+`_LIBC.prctl.argtypes` and `.restype` are bound at import, so the forked child
+resolves no ctypes attributes and marshals no arguments inside the fork-to-exec
+window. The race itself is untouched and the native launcher is unscheduled, as
+you asked. The topology is now an in-process `SpecCluster` with one `Worker` per
+placement, whose farm threads still call the same `subprocess.run(preexec_fn=...)`
+path: the topology changed, the risk did not.
 
 **Your call:** ☐ schedule the native launcher before the parallel farm run ☐ cheap mitigation now, launcher later ☐ accept, revisit if it bites
 
@@ -456,12 +467,15 @@ the risk did not.
 
 Concurrency is fourth, not first. That is the argument, not an oversight.
 
-**Status 2026-08-16.** Step 4 is built, together with the concurrency slice of
-step 1: `max_jobs`, placement caps, `cluster_spec`, task annotations and the
-admission preflight now ship. Step 1 is only partial because `memory_mb` and
-`licences` still fail as described in point 6. Steps 2, 3 and 5 remain open:
-the watcher bug and façade integration, the graph-kernel × fakefarm coverage,
-and failure containment have not been built.
+**All five steps built, 2026-08-16.** Step 1 (profile vocabulary), step 2 (the
+watcher, now wired into `submit(watch=True)` and printing queue transitions),
+step 3 (graph kernel × fakefarm, which also proves `max_jobs` bounds concurrency
+— removing the annotation fails it with `assert 4 == 2`), step 4 (placement caps
+and `cluster_spec`), and step 5 (`stop_on_failure` exposed and meaning *stop
+admitting*, with nothing stranded on the way out). Suite: 272 passed, 1 skipped.
+Implemented from `docs/implementation-plan-2026-08-16.md`, which records the one
+place the plan was wrong: `client.processing()` means *assigned*, not
+*executing*, and `client.call_stack()` is the primitive that works.
 
 ### The push-back
 
