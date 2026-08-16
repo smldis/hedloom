@@ -1,12 +1,12 @@
-"""Run a four-job Hedloom sweep on an LSF farm.
+"""Run four independent, two-job Hedloom chains on an LSF farm.
 
     python examples/farm_smoke.py examples/farm-smoke.site.toml [--dask]
 
-Each of four independently ready commands generates and summarizes an integer
-range after a different authored delay. The delays make completion order
-observably differ from Plan order, while readiness makes the placement's
-concurrency budget measurable. An identical second submission must reuse all
-four invocations.
+Each point first generates an integer range, then passes that declared artifact
+to a summarizing farm job after a different authored delay. The four chains are
+independent of each other, making the placement's concurrency budget measurable;
+the delays make completion order observably differ from Plan order. An identical
+second submission must reuse all eight invocations.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ for unit in ("flow", "exec", "run"):
 
 from hedloom import (  # noqa: E402
     Site,
+    artifact,
     file,
     flow,
     lsf,
@@ -33,6 +34,7 @@ from hedloom import (  # noqa: E402
 )
 from hedloom_run.cluster import cluster_for  # noqa: E402
 
+NUMBER_LIST = artifact("number-list")
 POINTS = (
     {"key": "slow", "start": 1, "count": 4, "delay_s": 2.5},
     {"key": "fast", "start": 10, "count": 3, "delay_s": 0.2},
@@ -42,32 +44,50 @@ POINTS = (
 
 
 @operation(
+    config={"start": parameter(int), "count": parameter(int)},
+    outputs={"numbers": file("numbers.txt", kind="number-list")},
+    policy=lsf(),
+)
+def generate_numbers(out, *, start: int, count: int):
+    """Materialize one point's range for its consumer farm job."""
+
+    return shell(
+        "/bin/sh",
+        "-c",
+        'start=$1; count=$2; output=$3; i=0; '
+        ': > "$output"; while [ "$i" -lt "$count" ]; do '
+        'printf "%s\\n" "$((start + i))" >> "$output"; i=$((i + 1)); done',
+        "hedloom-generate",
+        start,
+        count,
+        out.numbers,
+    )
+
+
+@operation(
     config={
         "start": parameter(int),
         "count": parameter(int),
         "delay_s": parameter(float),
     },
-    outputs={
-        "numbers": file("numbers.txt", kind="number-list"),
-        "summary": file("summary.txt", kind="text-file"),
-    },
+    inputs={"numbers": NUMBER_LIST},
+    outputs={"summary": file("summary.txt", kind="text-file")},
     policy=lsf(),
 )
 def summarize_numbers(
+    numbers,
     out,
     *,
     start: int,
     count: int,
     delay_s: float,
 ):
-    """Materialize and summarize one range in one visible farm job."""
+    """Consume the producer farm job's declared artifact."""
 
     return shell(
         "/bin/sh",
         "-c",
-        'start=$1; count=$2; delay=$3; numbers=$4; output=$5; i=0; '
-        ': > "$numbers"; while [ "$i" -lt "$count" ]; do '
-        'printf "%s\\n" "$((start + i))" >> "$numbers"; i=$((i + 1)); done; '
+        'numbers=$1; start=$2; count=$3; delay=$4; output=$5; '
         'sleep "$delay"; '
         'rows=0; sum=0; '
         'while IFS= read -r value; do '
@@ -75,10 +95,10 @@ def summarize_numbers(
         'printf "start=%s\\ncount=%s\\nrows=%s\\nsum=%s\\n" '
         '"$start" "$count" "$rows" "$sum" > "$output"',
         "hedloom-summarize",
+        numbers,
         start,
         count,
         delay_s,
-        out.numbers,
         out.summary,
     )
 
@@ -87,7 +107,9 @@ def summarize_numbers(
 def range_sweep(points):
     summaries = {}
     for point in sweep(points, key="key"):
+        numbers = generate_numbers(start=point["start"], count=point["count"])
         result = summarize_numbers(
+            numbers,
             start=point["start"],
             count=point["count"],
             delay_s=point["delay_s"],
@@ -105,7 +127,7 @@ def build():
 def run(subject, site, *, client=None) -> int:
     """Submit twice, proving the second pass spends no farm work."""
 
-    print("first submission (must launch four LSF jobs):")
+    print("first submission (must launch eight LSF jobs):")
     first = subject.submit(site=site, client=client, watch=True)
     if not first.succeeded:
         print(first.summary())
@@ -117,13 +139,13 @@ def run(subject, site, *, client=None) -> int:
         print(f"\n{point['key']} summary ({summary}):")
         print(summary.read_text(), end="")
 
-    print("\nsecond submission (must reuse all four; no new LSF jobs):")
+    print("\nsecond submission (must reuse all eight; no new LSF jobs):")
     second = subject.submit(site=site, client=client, watch=True)
-    if not second.succeeded or len(second.report.reused) != 4:
+    if not second.succeeded or len(second.report.reused) != 8:
         print(second.summary())
         return 1
 
-    print("\nfarm sweep passed: four jobs launched, recorded, and reused")
+    print("\nfarm sweep passed: eight jobs launched, chained, recorded, and reused")
     return 0
 
 

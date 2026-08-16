@@ -43,9 +43,10 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
 ) -> None:
     """The real crossing is graph × `bsub -I` × authored-body binding.
 
-    Four jobs alone prove none of those seams. The placement resource earns
-    its existence only if the same profile both confines every ready farm task
-    to the farm worker and keeps them below ``max_jobs``.
+    Eight jobs alone prove none of those seams. The placement resource earns
+    its existence only if the same profile both confines four independent
+    producer-consumer chains to the farm worker and keeps them below
+    ``max_jobs``.
     """
 
     profile = tmp_path / "site.toml"
@@ -94,7 +95,7 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
             assert [item.authored_key for item in first.report.outcomes] == plan_order
             assert completion_order != plan_order
             assert completion_order[-1] == "slow:summarize_numbers"
-            assert len(stream.data) == 4
+            assert len(stream.data) == 8
             task_workers = {workers[item["worker"]] for item in stream.data}
 
             before_reuse = {
@@ -106,7 +107,7 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
 
     submitted = sorted(fake_state.glob("*.json"))
     records = [json.loads(item.read_text(encoding="utf-8")) for item in submitted]
-    assert len(records) == 4
+    assert len(records) == 8
     for path, record in zip(submitted, records):
         assert record["name"] == path.stem
         assert record["options"]["-J"] == record["name"]
@@ -115,7 +116,7 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
     assert maximum_overlap(records) == 2
     assert task_workers == {"lsf"}
     assert second.succeeded
-    assert len(second.report.reused) == 4
+    assert len(second.report.reused) == 8
     assert {
         item.name: item.read_bytes() for item in fake_state.glob("*.json")
     } == before_reuse
@@ -127,4 +128,4 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
         "start=10\ncount=3\nrows=3\nsum=33\n",
         "start=20\ncount=2\nrows=2\nsum=41\n",
         "start=100\ncount=1\nrows=1\nsum=100\n",
-    }
+    }, "each consumer must report rows and sum from its producer's artifact"
