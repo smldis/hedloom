@@ -22,15 +22,22 @@ same declaration rather than from two files that must agree.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from threading import Event, Thread
 from typing import Any, Callable, Mapping
 
-from hedloom_exec.transport import Transport
+from hedloom_exec.transport import Transport, TransportError
+from hedloom_exec.watch import AttemptStatus, LSFStatusReader, live_attempts, observe
 from hedloom_run.driver import InvocationOutcome, RunReport, run_plan
 from hedloom_run.site import Site
 
 from hedloom.binding import BoundTransport
 
 __all__ = ["Study", "StudyRun", "submit"]
+
+_WATCH_INTERVAL_SECONDS = 10.0
+_WATCH_JOIN_SECONDS = 1.0
+_WATCH_THREAD_NAME = "hedloom-watch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +119,7 @@ class Study:
         watch: bool = False,
         stop_on_failure: bool = True,
         on_event: Callable[[InvocationOutcome], None] | None = None,
+        _watch_reader: LSFStatusReader | None = None,
     ) -> StudyRun:
         """Run this study, honouring every placement the Plan resolved.
 
@@ -156,12 +164,22 @@ class Study:
             on_event=report_to,
         )
 
-        if client is None:
-            report = run_plan(document, **common)
-        else:
-            from hedloom_run.graph import run_plan_graph
+        watcher = start_watcher(site.root, _watch_reader) if watch else None
+        try:
+            if client is None:
+                report = run_plan(document, **common)
+            else:
+                from hedloom_run.graph import run_plan_graph
 
-            report = run_plan_graph(document, client=client, **common)
+                report = run_plan_graph(document, client=client, **common)
+        finally:
+            if watcher is not None:
+                stop, thread = watcher
+                stop.set()
+                # Status is evidence about the run, never part of it. A stuck
+                # scheduler query therefore cannot keep the caller here or
+                # change an otherwise completed outcome.
+                thread.join(timeout=_WATCH_JOIN_SECONDS)
         return StudyRun(report=report, document=document)
 
 
@@ -200,6 +218,62 @@ def _reporter(
         print(f"[{outcome.disposition:>9}] {name:<32}{outcome.outcome}{detail}")
 
     return report
+
+
+def start_watcher(
+    root: str | Path, reader: LSFStatusReader | None = None
+) -> tuple[Event, Thread]:
+    """Start the small queue poller used by ``submit(watch=True)``.
+
+    The injected reader keeps the scheduler boundary explicit in tests. The
+    thread is a daemon as a second line of defence behind the bounded join: a
+    wedged external command must never acquire authority over process lifetime.
+    """
+
+    stop = Event()
+    thread = Thread(
+        target=_watch,
+        args=(root, reader, stop),
+        daemon=True,
+        name=_WATCH_THREAD_NAME,
+    )
+    thread.start()
+    return stop, thread
+
+
+def _watch(
+    root: str | Path,
+    reader: LSFStatusReader | None,
+    stop: Event,
+) -> None:
+    while True:
+        try:
+            before = live_attempts(root)
+            previous = {row.identity: row.observed for row in before}
+            rows = observe(root, reader, attempts=before)
+        except TransportError as error:
+            print(f"[watch disabled] {error}")
+            return
+
+        for row in rows:
+            state = row.observed
+            old_state = previous.get(row.identity)
+            if state is not None and state != old_state:
+                print(_watch_transition(row, old_state))
+
+        if stop.wait(_WATCH_INTERVAL_SECONDS):
+            return
+
+
+def _watch_transition(row: AttemptStatus, previous: str | None) -> str:
+    name = row.invocation_id or row.identity
+    transition = f"{previous} → {row.observed}" if previous else f"→ {row.observed}"
+    queued = (
+        f" ({row.queue_seconds:.0f}s queued)"
+        if row.observed == "running" and row.queue_seconds is not None
+        else ""
+    )
+    return f"[watch] {name} {transition}{queued}"
 
 
 def submit(
