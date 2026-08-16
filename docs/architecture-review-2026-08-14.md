@@ -344,7 +344,7 @@ placement-naming `SiteError`. The defaults-vocabulary asymmetry is not fixed.
 
 **Your call:** ☑ build as described ☐ narrower: just add memory_mb/licences to the constructor ☐ defer
 
-**Notes:** yep refactor this with care, we want things simple and clean. Also in the side consider that i dont use the license keyword in the farm (licenses are managed in some other way), that i use a --app bsub option sometimes and i use a -Rrh80 that can be merged with rusage etc.. for specifying the selection of the machine based on its os. maybe we can plug this in now as a sidequest.
+**Notes:** yep refactor this with care, we want things simple and clean. Also in the side consider that i dont use the license keyword in the farm (licenses are managed in some other way), that i use a --app bsub option sometimes and i use a -Rrh80 that can be merged with rusage etc.. for specifying the selection of the machine based on its os. maybe we can plug this in now as a sidequest. find a fix for the asymmetry.
 
 > **Reply — 2026-08-16.** Building it. On the sidequest, those are three
 > separate facts and only two need work:
