@@ -293,7 +293,7 @@ Two independent fixes, both small:
    and still returns a partial report naming what was in flight. A run that dies
    should say which jobs it left behind.
 
-**Your call:** ☐ both ☐ (1) only ☐ (2) only ☐ neither, out of scope
+**Your call:** ☑ both ☐ (1) only ☐ (2) only ☐ neither, out of scope
 
 **Notes:** _
 
