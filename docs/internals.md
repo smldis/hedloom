@@ -53,6 +53,16 @@ authored config, which bakes a machine path into the outer plan's identity.
 
 ## Further reading for contributors
 
+- [`dask-scheduling-concepts.md`](dask-scheduling-concepts.md)
+  — what the pieces are and why the cluster is shaped this way: cluster versus
+  farm, placement versus worker, why a thread is expensive, and the lockout
+  that annotating every task exists to prevent. Start here.
+- [`dask-scheduling-rules.md`](dask-scheduling-rules.md)
+  — the same subject as ten rules, each cited to a line of
+  `distributed==2026.7.1` so an upgrade can be re-checked.
+- [`review-before-the-farm.md`](review-before-the-farm.md)
+  — a reading order for everything that changed since the rename, arranged by
+  what reaches the farm, with the smallest first run.
 - [`placement-clustering-scheduling.md`](placement-clustering-scheduling.md)
   — a schematic description of current placement routing, the sequential and
   Dask scheduling kernels, and the missing placement-specific concurrency

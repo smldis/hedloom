@@ -439,9 +439,18 @@ rather than into the unit's own environment.
 For a simulator-free farm check after the LSF preflight passes, run
 [`examples/farm_smoke.py`](../examples/farm_smoke.py) with its explicit
 [`farm-smoke.site.toml`](../examples/farm-smoke.site.toml) profile. Its Plan
-sweeps two explicit `start`/`count` parameter sets through a file-generating
-farm command and a dependent summarizing command. The four invocations produce
-two deterministic artifacts, then are all reused by an identical submission.
+sweeps four explicit `start`/`count` parameter sets through a file-generating
+farm command and a dependent summarizing command — eight invocations,
+independent between points and chained within one, so a declared artifact
+crosses from one `bsub -I` job into the next. All eight are reused by an
+identical submission. Passing `--dask` runs the same Plan through the graph
+kernel on a cluster from `cluster_for(site)`, where the placement's `max_jobs`
+bounds how many are in flight at once.
+
+For the scheduling model those placements rely on, see
+[`dask-scheduling-concepts.md`](dask-scheduling-concepts.md) for the
+explanation and [`dask-scheduling-rules.md`](dask-scheduling-rules.md) for the
+source-cited rules.
 
 - [`hedloom/ONTOLOGY.md`](../ONTOLOGY.md)
   for the unit's current contracts and what its own examples have and have not
