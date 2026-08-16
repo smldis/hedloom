@@ -21,6 +21,7 @@ from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
 __all__ = [
     "Observation",
+    "substrate_of",
     "SubmissionRefused",
     "Transport",
     "TransportError",
@@ -111,6 +112,21 @@ class Transport(Protocol):
     name: str
     discovery_is_authoritative: bool
 
+    substrate: str
+    """What ultimately holds the work, when that is not this transport.
+
+    Optional, and only a wrapper needs it. A transport that submits the work
+    itself *is* the substrate and may leave it unset — `substrate_of` falls back
+    to `name`.
+
+    It exists because those are two facts and conflating them is silently
+    wrong. A caller may be handed a decorator that runs an authored body and
+    then delegates a command; the decorator is the transport that was asked, and
+    the queue underneath is where the job actually lives. An observer asking a
+    farm about its jobs needs the second, and matching on the first finds
+    nothing at all — not an error, an empty answer.
+    """
+
     def submit(self, identity: str, bundle: Mapping[str, Any]) -> Mapping[str, Any]:
         """Accept the attempt and return a durable-recordable handle."""
 
@@ -126,6 +142,12 @@ class Transport(Protocol):
 
     def cancel(self, handle: Mapping[str, Any]) -> None:
         """Ask the substrate to stop the work. Delivery is not guaranteed."""
+
+
+def substrate_of(transport: Any) -> str:
+    """What holds this transport's work: the substrate it names, or itself."""
+
+    return getattr(transport, "substrate", None) or transport.name
 
 
 class InProcessTransport:

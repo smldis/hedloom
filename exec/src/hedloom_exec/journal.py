@@ -88,6 +88,9 @@ class AttemptState:
     phase: str
     handle: Mapping[str, Any] | None = None
     transport: str | None = None
+    substrate: str | None = None
+    """Where the work actually landed, which may not be what submitted it."""
+
     outcome: str | None = None
     manifest_path: str | None = None
     cancel_requested: bool = False
@@ -247,6 +250,7 @@ class AttemptJournal:
         phase = "unsubmitted"
         handle: Mapping[str, Any] | None = None
         transport: str | None = None
+        substrate: str | None = None
         outcome: str | None = None
         manifest_path: str | None = None
         cancel_requested = False
@@ -261,6 +265,9 @@ class AttemptJournal:
             if item.event == "submit_intent":
                 phase = "intended"
                 transport = item.data.get("transport")
+                # Records written before the two were told apart carry only
+                # `transport`, and for those it is the substrate.
+                substrate = item.data.get("substrate") or transport
             elif item.event == "submit_receipt":
                 phase = "submitted"
                 handle = item.data.get("handle")
@@ -296,6 +303,7 @@ class AttemptJournal:
             phase=phase,
             handle=handle,
             transport=transport,
+            substrate=substrate,
             outcome=outcome,
             manifest_path=manifest_path,
             cancel_requested=cancel_requested,

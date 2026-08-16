@@ -31,7 +31,7 @@ from hedloom_exec.artifacts import (
 )
 from hedloom_exec.journal import AttemptJournal, AttemptState
 from hedloom_exec.reuse import input_digest
-from hedloom_exec.transport import Observation, SubmissionRefused, Transport
+from hedloom_exec.transport import Observation, SubmissionRefused, Transport, substrate_of
 
 __all__ = [
     "AttemptCancelled",
@@ -215,7 +215,11 @@ def _launch_or_attach_locked(
                 f"confirm or deny acceptance; recoverable execution is "
                 f"unsupported here"
             )
-        journal.append("submit_lost", transport=transport.name)
+        journal.append(
+            "submit_lost",
+            transport=transport.name,
+            substrate=substrate_of(transport),
+        )
 
     if not state.events:
         journal.append(
@@ -239,7 +243,15 @@ def _launch_or_attach_locked(
 
     # Intent is durable before the substrate is touched. Everything downstream
     # depends on this ordering.
-    journal.append("submit_intent", transport=transport.name)
+    # Both, because they answer different questions. `transport` is what was
+    # asked to submit, which is what a wrapper's provenance depends on;
+    # `substrate` is where the job then lives, which is the only thing an
+    # outside observer can ask about.
+    journal.append(
+        "submit_intent",
+        transport=transport.name,
+        substrate=substrate_of(transport),
+    )
     try:
         handle = transport.submit(journal.identity, bundle)
     except SubmissionRefused as error:

@@ -29,7 +29,12 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 import shlex
 
-from hedloom_exec.transport import Observation, SubmissionRefused, Transport
+from hedloom_exec.transport import (
+    Observation,
+    SubmissionRefused,
+    Transport,
+    substrate_of,
+)
 
 __all__ = ["BoundTransport", "Shell", "Workspace", "shell"]
 
@@ -104,6 +109,13 @@ class BoundTransport:
         self._delegate = delegate
         self._results: dict[str, Observation] = {}
         self.name = f"bound:{delegate.name}" if delegate is not None else "bound"
+        # What the work will actually land on, which is not this wrapper. An
+        # observer asking a farm about its jobs matches on this; matching on
+        # `name` would ask about "bound:lsf-interactive", which no farm has
+        # ever heard of, and would answer that nothing is running.
+        self.substrate = (
+            substrate_of(delegate) if delegate is not None else "in-process"
+        )
         if delegate is not None:
             self.discovery_is_authoritative = delegate.discovery_is_authoritative
 

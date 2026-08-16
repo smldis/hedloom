@@ -47,7 +47,16 @@ __all__ = [
     "status_of",
 ]
 
-_LSF_TRANSPORT = "lsf-interactive"
+_LSF_SUBSTRATE = "lsf-interactive"
+"""Matched against an attempt's *substrate*, never against what submitted it.
+
+A caller may wrap the queue in a decorator that runs an authored body first, in
+which case the transport is named for the wrapper and the queue is named
+underneath it. Matching the wrapper's name found nothing, and finding nothing
+here is not an error — it is an empty sweep and a queue latency that cannot be
+computed, which is exactly the number the pooled-versus-direct question waits
+on. The journal records both facts so this can match the right one.
+"""
 
 _STATE_WORDS = {
     "PEND": "pending",
@@ -142,6 +151,7 @@ class AttemptStatus:
     phase: str = "unsubmitted"
     outcome: str | None = None
     transport: str | None = None
+    substrate: str | None = None
     observed: str | None = None
     submitted_at: str | None = None
     running_at: str | None = None
@@ -189,6 +199,7 @@ def status_of(root: str | Path, identity: str) -> AttemptStatus:
         phase=state.phase,
         outcome=state.outcome,
         transport=state.transport,
+        substrate=state.substrate,
         observed=log.last_state(),
         submitted_at=_submitted_at(journal),
         running_at=log.first_at("running"),
@@ -282,7 +293,7 @@ def observe(
     """
 
     live = tuple(attempts) if attempts is not None else live_attempts(root)
-    watched = [item for item in live if item.transport == _LSF_TRANSPORT]
+    watched = [item for item in live if item.substrate == _LSF_SUBSTRATE]
     if not watched:
         return live
 

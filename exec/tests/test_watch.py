@@ -145,6 +145,53 @@ def test_observing_cannot_change_what_an_attempt_concludes(tmp_path):
     assert second.value == 41
 
 
+def test_a_record_written_before_substrates_were_told_apart_is_still_watched(
+    tmp_path,
+):
+    """`submit_intent` used to carry one name for two facts.
+
+    Folding falls back to it, so a journal written by an older run is still
+    asked about rather than quietly dropped from every sweep.
+    """
+
+    journal = AttemptJournal(tmp_path, "hedloom-old")
+    journal.claim()
+    journal.append("created", invocation="invoke:old", operation="simulate")
+    journal.append("submit_intent", transport="lsf-interactive")
+
+    status = status_of(tmp_path, "hedloom-old")
+
+    assert status.substrate == "lsf-interactive"
+    assert observe(
+        tmp_path, LSFStatusReader(FakeBjobs([("hedloom-old", "PEND")]))
+    )[0].observed == "pending"
+
+
+def test_a_wrapped_transport_is_watched_by_what_holds_the_job(tmp_path):
+    """The failure this file could not previously see.
+
+    A caller may wrap the queue in something that runs an authored body first.
+    The wrapper is what submitted the attempt; the queue is what holds the job,
+    and it is the queue a farm can be asked about. Matching the wrapper's name
+    returned an empty sweep, which is indistinguishable from a finished one.
+    """
+
+    journal = AttemptJournal(tmp_path, "hedloom-wrapped")
+    journal.claim()
+    journal.append("created", invocation="invoke:wrapped", operation="simulate")
+    journal.append(
+        "submit_intent",
+        transport="bound:lsf-interactive",
+        substrate="lsf-interactive",
+    )
+
+    rows = observe(
+        tmp_path, LSFStatusReader(FakeBjobs([("hedloom-wrapped", "RUN")]))
+    )
+
+    assert [row.observed for row in rows] == ["running"]
+
+
 def test_an_attempt_on_another_substrate_is_not_invented(tmp_path):
     """An in-process invocation has no job to ask about."""
 
