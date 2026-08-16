@@ -119,6 +119,30 @@ It removes the calling thread from the pool so a new task can start
 rejected it here for a different reason (a worker holding live `bsub -I`
 clients should read as busy, not idle).
 
+**R10 — `processing` means *assigned to a worker*, not *executing*.**
+This one is a trap, and it cost a build pass. `Client.processing()` reports the
+tasks the scheduler has handed to each worker and not yet heard back about —
+which includes everything queued at that worker behind its thread limit. It is
+not "what is running now", and under R6 it is *especially* not that here: every
+task in this kernel carries a placement annotation, so root-task queuing is
+bypassed and the whole graph is assigned at once.
+
+Measured on `distributed==2026.7.1`, eight tasks submitted to a two-thread
+worker:
+
+| Call | Answer |
+| --- | --- |
+| `client.processing()` | all 8 |
+| `client.call_stack()` | the 2 with a live Python stack |
+| `client.run(lambda w: [ts.key for ts in w.state.executing])` | the same 2 |
+
+**Use `call_stack()` when the question is "what has actually started".** It is
+public client API and ships no closure to the workers. Anything that needs to
+tell started from unstarted — cancellation, admission control, a progress view
+— is wrong if it reads `processing`. `run/src/hedloom_run/graph.py`'s
+`_executing_keys` is the one place hedloom asks this question, and it is named
+for the answer rather than for the API.
+
 ---
 
 ## 4. Where each number is written

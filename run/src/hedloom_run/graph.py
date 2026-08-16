@@ -390,7 +390,15 @@ def _report(
 
 
 def _executing_keys(client: Any) -> set[str]:
-    """Task keys with live Python stacks, not merely assigned to a worker."""
+    """Task keys with live Python stacks, not merely assigned to a worker.
+
+    Named for the answer because Dask's own name for the nearby question is
+    misleading: `Client.processing()` reports what the scheduler has *handed
+    to* a worker, queued work included, and every task here is annotated, so
+    root-task queuing is bypassed and the whole graph is assigned at once.
+    Eight tasks on a two-thread worker report eight "processing" and two call
+    stacks. See `docs/dask-scheduling-rules.md` R10 before changing this.
+    """
 
     return {
         key
