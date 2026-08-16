@@ -110,6 +110,7 @@ class Study:
         site: Site,
         client: Any = None,
         watch: bool = False,
+        stop_on_failure: bool = True,
         on_event: Callable[[InvocationOutcome], None] | None = None,
     ) -> StudyRun:
         """Run this study, honouring every placement the Plan resolved.
@@ -119,6 +120,10 @@ class Study:
         cluster and wrong for a sweep. The cluster is the caller's because its
         shape — how many concurrent jobs this site tolerates — is an
         operational decision a library must not make silently.
+
+        ``stop_on_failure`` is explicit because the kernels stop at different
+        boundaries: the sequential reference blocks plan-order successors,
+        while Dask stops work that has not acquired a worker thread.
         """
 
         document = self.document
@@ -147,6 +152,7 @@ class Study:
             workspace_root=site.workspace_root,
             source_fingerprints=fingerprints,
             source_addresses=site.source_addresses(document, fingerprints),
+            stop_on_failure=stop_on_failure,
             on_event=report_to,
         )
 
@@ -202,7 +208,13 @@ def submit(
     site: Site,
     client: Any = None,
     watch: bool = False,
+    stop_on_failure: bool = True,
 ) -> StudyRun:
     """Run a study. The verb Hedloom Flow reserved and refused until now."""
 
-    return study.submit(site=site, client=client, watch=watch)
+    return study.submit(
+        site=site,
+        client=client,
+        watch=watch,
+        stop_on_failure=stop_on_failure,
+    )

@@ -29,6 +29,7 @@ from hedloom_exec.artifacts import (
     capture_outputs,
     write_diagnostics,
 )
+from hedloom_exec.errors import AttemptError
 from hedloom_exec.journal import AttemptJournal, AttemptState
 from hedloom_exec.reuse import input_digest
 from hedloom_exec.transport import Observation, SubmissionRefused, Transport, substrate_of
@@ -63,10 +64,6 @@ So a failed attempt is kept, not reused: rerunning is the default, the earlier
 attempt stays on disk for inspection, and an operator who has looked at it can
 mark it reusable with `accept_for_reuse`.
 """
-
-
-class AttemptError(RuntimeError):
-    """The attempt cannot proceed under its recorded state."""
 
 
 class UnrecoverableAttempt(AttemptError):

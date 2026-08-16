@@ -5,6 +5,8 @@ run are the ones the Plan names, that a declared output lands where the
 operation said it would, and that nothing is spent before `submit`.
 """
 
+import importlib
+import inspect
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,7 @@ from hedloom import (
 )
 from hedloom.binding import BoundTransport, Shell, Workspace
 from hedloom_exec.transport import SubmissionRefused
+from hedloom_run.driver import RunReport
 
 TEXT = artifact("text-file")
 COUNT = artifact("count")
@@ -101,6 +104,53 @@ def test_the_body_that_runs_is_the_one_the_plan_names(site):
     assert run.succeeded, run.summary()
     assert run["ab:measure"].value == 6
     assert run["cde:measure"].value == 9
+
+
+def test_stop_on_failure_defaults_true_and_reaches_both_kernels(
+    site, monkeypatch
+):
+    """The façade must not silently choose either kernel's failure scope."""
+
+    study_module = importlib.import_module("hedloom.study")
+    graph_module = importlib.import_module("hedloom_run.graph")
+    calls = []
+
+    def fake_run(document, **kwargs):
+        calls.append(("sequential", kwargs["stop_on_failure"]))
+        return RunReport(())
+
+    def fake_graph(document, **kwargs):
+        calls.append(("graph", kwargs["stop_on_failure"]))
+        return RunReport(())
+
+    monkeypatch.setattr(study_module, "run_plan", fake_run)
+    monkeypatch.setattr(graph_module, "run_plan_graph", fake_graph)
+    subject = study(build())
+    subject.submit(site=site, stop_on_failure=False)
+    subject.submit(site=site, client=object(), stop_on_failure=False)
+
+    assert calls == [("sequential", False), ("graph", False)]
+    assert inspect.signature(study_module.Study.submit).parameters[
+        "stop_on_failure"
+    ].default is True
+    assert inspect.signature(study_module.submit).parameters[
+        "stop_on_failure"
+    ].default is True
+
+
+def test_the_module_submit_threads_stop_on_failure(site):
+    seen = {}
+
+    class Subject:
+        def submit(self, **kwargs):
+            seen.update(kwargs)
+            return "run"
+
+    study_module = importlib.import_module("hedloom.study")
+    assert (
+        study_module.submit(Subject(), site=site, stop_on_failure=False) == "run"
+    )
+    assert seen["stop_on_failure"] is False
 
 
 def test_a_declared_file_lands_where_the_operation_said(site):

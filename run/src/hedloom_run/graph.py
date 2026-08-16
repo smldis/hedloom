@@ -62,6 +62,7 @@ driver could not offer.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
@@ -356,6 +357,132 @@ def _task_key(item: PlannedInvocation) -> str:
     return f"{item.operation}-{name}-{item.input_digest[:8]}"
 
 
+@dataclass(frozen=True, slots=True)
+class _Stop:
+    """The futures whose real outcomes survive a stop-admission decision."""
+
+    preserved: tuple[Any, ...]
+    in_flight: tuple[str | None, ...]
+
+
+def _blocked(item: PlannedInvocation) -> _Step:
+    return _Step(_outcome(item, disposition="skipped", outcome="blocked"))
+
+
+def _abnormal(item: PlannedInvocation, error: BaseException) -> _Step:
+    """Name a broken task in a partial report without swallowing its error."""
+
+    return _Step(
+        _outcome(
+            item,
+            disposition="refused",
+            outcome="failed",
+            placement=_placement_of(item),
+            error=f"{type(error).__name__}: {error}",
+        )
+    )
+
+
+def _report(
+    items: Sequence[PlannedInvocation], completed: Mapping[str, _Step]
+) -> RunReport:
+    return RunReport(tuple(completed[item.invocation_id].outcome for item in items))
+
+
+def _executing_keys(client: Any) -> set[str]:
+    """Task keys with live Python stacks, not merely assigned to a worker."""
+
+    return {
+        key
+        for tasks in (client.call_stack() or {}).values()
+        for key in tasks
+    }
+
+
+def _stop_admitting(
+    *,
+    client: Any,
+    items: Sequence[PlannedInvocation],
+    futures: Mapping[str, Any],
+    completed: dict[str, _Step],
+    on_event: Callable[[InvocationOutcome], None] | None,
+    notify: bool,
+) -> _Stop:
+    """Cancel work without a live stack and preserve work already executing."""
+
+    by_id = {item.invocation_id: item for item in items}
+    executing = _executing_keys(client)
+    outstanding = {
+        invocation_id: future
+        for invocation_id, future in futures.items()
+        if invocation_id not in completed
+    }
+    in_flight = {
+        invocation_id: future
+        for invocation_id, future in outstanding.items()
+        if future.key in executing
+    }
+    finished = {
+        invocation_id: future
+        for invocation_id, future in outstanding.items()
+        if future.done() and invocation_id not in in_flight
+    }
+    cancelled = {
+        invocation_id: future
+        for invocation_id, future in outstanding.items()
+        if invocation_id not in in_flight and invocation_id not in finished
+    }
+
+    if cancelled:
+        # A task can acquire a thread after the stack snapshot but before this
+        # call. Dask cannot interrupt that Python thread: its `bsub -I` runs to
+        # completion and its journal is published normally. The bounded loss is
+        # only this run report's line for it, which is marked blocked below.
+        client.cancel(list(cancelled.values()), force=False)
+        for item in items:
+            if item.invocation_id not in cancelled:
+                continue
+            step = _blocked(item)
+            completed[item.invocation_id] = step
+            if notify and on_event:
+                on_event(step.outcome)
+
+    return _Stop(
+        preserved=tuple([*finished.values(), *in_flight.values()]),
+        in_flight=tuple(
+            by_id[invocation_id].authored_key for invocation_id in in_flight
+        ),
+    )
+
+
+def _collect_preserved(
+    futures: Sequence[Any],
+    *,
+    by_future_key: Mapping[str, PlannedInvocation],
+    completed: dict[str, _Step],
+    on_event: Callable[[InvocationOutcome], None] | None,
+    notify: bool,
+    suppress_errors: bool,
+) -> None:
+    """Wait for admitted tasks; cleanup may record but never replace an error."""
+
+    from distributed import as_completed
+
+    deferred: BaseException | None = None
+    for future in as_completed(list(futures)):
+        item = by_future_key[future.key]
+        try:
+            step = future.result()
+        except BaseException as error:
+            step = _abnormal(item, error)
+            deferred = deferred or error
+        completed[item.invocation_id] = step
+        if notify and on_event:
+            on_event(step.outcome)
+    if deferred is not None and not suppress_errors:
+        raise deferred
+
+
 def run_plan_graph(
     document: Mapping[str, Any],
     transport: Transport | None = None,
@@ -370,6 +497,7 @@ def run_plan_graph(
     identity_env: Mapping[str, str] | None = None,
     source_fingerprints: Mapping[str, str] | None = None,
     source_addresses: Mapping[str, str] | None = None,
+    stop_on_failure: bool = True,
     on_event: Callable[[InvocationOutcome], None] | None = None,
 ) -> RunReport:
     """Execute a Plan as a Dask graph and report in the Plan's own order.
@@ -387,6 +515,11 @@ def run_plan_graph(
     ``on_event`` fires as tasks complete, in completion order, so a long sweep
     is observable while it runs. The returned report stays in plan order, so a
     run remains comparable with any other run of the same plan.
+
+    With ``stop_on_failure`` (the default), the first failed outcome stops work
+    that has no live worker stack and waits for work already executing. An
+    exception outside an invocation outcome is re-raised with ``report`` and
+    ``in_flight`` attributes, so cleanup does not erase what the run had done.
     """
 
     from distributed import as_completed
@@ -436,13 +569,72 @@ def run_plan_graph(
             pure=False,
         )
 
+    by_future_key = {
+        future.key: item
+        for item in items
+        for future in (futures[item.invocation_id],)
+    }
     completed: dict[str, _Step] = {}
-    for future in as_completed(list(futures.values())):
-        step = future.result()
-        completed[step.outcome.invocation_id] = step
-        if on_event:
-            on_event(step.outcome)
+    known_in_flight: tuple[str | None, ...] = ()
+    normal_exit = False
+    try:
+        for future in as_completed(list(futures.values())):
+            step = future.result()
+            completed[step.outcome.invocation_id] = step
+            if on_event:
+                on_event(step.outcome)
+            if stop_on_failure and step.outcome.outcome != "succeeded":
+                stopped = _stop_admitting(
+                    client=client,
+                    items=items,
+                    futures=futures,
+                    completed=completed,
+                    on_event=on_event,
+                    notify=True,
+                )
+                known_in_flight = stopped.in_flight
+                _collect_preserved(
+                    stopped.preserved,
+                    by_future_key=by_future_key,
+                    completed=completed,
+                    on_event=on_event,
+                    notify=True,
+                    suppress_errors=False,
+                )
+                break
+        normal_exit = True
+    finally:
+        if not normal_exit:
+            error = sys.exc_info()[1]
+            try:
+                stopped = _stop_admitting(
+                    client=client,
+                    items=items,
+                    futures=futures,
+                    completed=completed,
+                    on_event=on_event,
+                    notify=False,
+                )
+                known_in_flight = tuple(
+                    dict.fromkeys([*known_in_flight, *stopped.in_flight])
+                )
+                _collect_preserved(
+                    stopped.preserved,
+                    by_future_key=by_future_key,
+                    completed=completed,
+                    on_event=on_event,
+                    notify=False,
+                    suppress_errors=True,
+                )
+            except BaseException as cleanup_error:
+                if error is None:
+                    raise
+                error.cleanup_error = cleanup_error
 
-    return RunReport(
-        tuple(completed[item.invocation_id].outcome for item in items)
-    )
+            for item in items:
+                completed.setdefault(item.invocation_id, _blocked(item))
+            if error is not None:
+                error.report = _report(items, completed)
+                error.in_flight = known_in_flight
+
+    return _report(items, completed)

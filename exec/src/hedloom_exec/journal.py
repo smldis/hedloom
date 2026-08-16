@@ -26,6 +26,8 @@ import fcntl
 import json
 import os
 
+from hedloom_exec.errors import AttemptError
+
 __all__ = [
     "AttemptJournal",
     "AttemptState",
@@ -58,7 +60,7 @@ class JournalError(RuntimeError):
     """The durable record is missing, malformed, or internally contradictory."""
 
 
-class ConcurrentClaim(JournalError):
+class ConcurrentClaim(JournalError, AttemptError):
     """Another caller holds this attempt right now.
 
     Reported rather than waited on: a second submission of the same attempt is

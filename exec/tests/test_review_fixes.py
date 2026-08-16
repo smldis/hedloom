@@ -11,6 +11,7 @@ import pytest
 
 from hedloom_exec.attempt import (
     AttemptCancelled,
+    AttemptError,
     StaleIdentity,
     launch_or_attach,
     reconcile,
@@ -187,6 +188,12 @@ def test_two_concurrent_callers_cannot_both_claim_one_attempt(tmp_path):
         with pytest.raises(ConcurrentClaim):
             with AttemptJournal(tmp_path, "hedloom-race").claim():
                 pass
+
+
+def test_a_concurrent_claim_is_an_attempt_error_without_changing_imports():
+    """Run kernels catch attempt refusals without importing journal internals."""
+
+    assert issubclass(ConcurrentClaim, AttemptError)
 
 
 def test_only_one_of_many_threads_submits(tmp_path):
