@@ -12,7 +12,7 @@ the moment it names one it has taken over a default that belongs to Dask.
 
 import pytest
 
-from hedloom_run.cluster import cluster_for, local_cluster
+from hedloom_run.cluster import cluster_for, local_cluster, spec_cluster
 from hedloom_run.site import Site, SiteError
 
 distributed = pytest.importorskip("distributed")
@@ -38,6 +38,19 @@ def recorded(monkeypatch):
     return recorder
 
 
+@pytest.fixture
+def spec_recorded(monkeypatch):
+    """The same, for the heterogeneous shape a site actually gets.
+
+    `cluster_for` builds a `SpecCluster` because a site has one worker per
+    placement and `LocalCluster` applies a single recipe to all of them.
+    """
+
+    recorder = Recorder()
+    monkeypatch.setattr(distributed, "SpecCluster", recorder)
+    return recorder
+
+
 def test_the_network_exposure_asks_dask_for_nothing(recorded):
     local_cluster(threads=4, dashboard="network")
 
@@ -50,13 +63,18 @@ def test_the_network_exposure_asks_dask_for_nothing(recorded):
     }
 
 
-def test_network_is_what_a_site_gets_without_declaring_anything(tmp_path, recorded):
+def test_network_is_what_a_site_gets_without_declaring_anything(
+    tmp_path, spec_recorded
+):
     site = Site(root=str(tmp_path))
 
     assert site.dashboard == "network"
 
     cluster_for(site)
-    assert "dashboard_address" not in recorded.kwargs
+    scheduler = spec_recorded.kwargs["scheduler"]["options"]
+    assert scheduler["dashboard_address"] == ":8787"
+    # A bare Scheduler would take 8786 and collide with whatever is there.
+    assert scheduler["port"] == 0
 
 
 def test_unset_threads_leave_the_sizing_to_dask(recorded):
@@ -74,21 +92,52 @@ def test_loopback_binds_the_worker_too(recorded):
     assert recorded.kwargs["worker_dashboard_address"] == "127.0.0.1:0"
 
 
-def test_a_site_carries_its_exposure_to_the_cluster(tmp_path, recorded):
+def test_a_site_carries_its_exposure_to_the_cluster(tmp_path, spec_recorded):
     site = Site(root=str(tmp_path), threads=7, dashboard="loopback")
 
     cluster_for(site)
 
-    assert recorded.kwargs["threads_per_worker"] == 7
-    assert recorded.kwargs["dashboard_address"] == "127.0.0.1:0"
+    assert spec_recorded.kwargs["scheduler"]["options"][
+        "dashboard_address"
+    ] == "127.0.0.1:0"
+    worker = spec_recorded.kwargs["workers"]["local"]["options"]
+    # Two servers, so binding only the scheduler would look closed.
+    assert worker["dashboard_address"] == "127.0.0.1:0"
+    assert worker["nthreads"] == 7
 
 
-def test_an_override_beats_the_profile(tmp_path, recorded):
-    site = Site(root=str(tmp_path), threads=7, dashboard="loopback")
+def test_an_override_beats_the_profile(tmp_path, spec_recorded):
+    site = Site(root=str(tmp_path), dashboard="loopback")
 
-    cluster_for(site, threads=2)
+    cluster_for(site, dashboard="network")
 
-    assert recorded.kwargs["threads_per_worker"] == 2
+    assert spec_recorded.kwargs["scheduler"]["options"][
+        "dashboard_address"
+    ] == ":8787"
+
+
+def test_every_placement_gets_a_worker_that_holds_only_its_own_work(
+    tmp_path, spec_recorded
+):
+    """The point of the shape, asserted rather than assumed.
+
+    An unannotated task is legal on every worker and gets both placed and
+    stolen onto whichever looks idle — always the one sized for a big farm cap.
+    Separate workers, each declaring only its own placement, is what leaves no
+    unrestricted task to misplace.
+    """
+
+    site = Site(root=str(tmp_path), placements={"local": 2, "lsf": 200})
+
+    cluster_for(site)
+
+    workers = spec_recorded.kwargs["workers"]
+    assert set(workers) == {"local", "lsf"}
+    assert workers["lsf"]["options"]["resources"] == {"placement:lsf": 200}
+    assert workers["local"]["options"]["resources"] == {"placement:local": 2}
+    # Derived, not configured: a smaller thread count would bind first, cap the
+    # farm below what the profile declared, and report nothing.
+    assert workers["lsf"]["options"]["nthreads"] == 200
 
 
 def test_a_multi_process_cluster_cannot_be_silent():
@@ -124,6 +173,33 @@ def test_a_silent_cluster_holds_no_http_server():
 
         with distributed.Client(cluster) as client:
             assert client.submit(lambda: 6 * 7).result() == 42
+    finally:
+        cluster.close()
+
+
+def test_a_silent_cluster_is_still_silent_when_it_has_two_workers():
+    """The seam is scoped to construction, and SpecCluster builds inside it.
+
+    `SpecCluster.__init__` starts the scheduler and every worker before it
+    returns, so suppressing the HTTP server for the duration of construction
+    covers all of them. Asserted as behaviour, so an upgrade that moves the
+    seam fails here rather than on an import.
+    """
+
+    cluster = spec_cluster(
+        {
+            "local": {"nthreads": 1, "resources": {"placement:local": 1}},
+            "farm": {"nthreads": 2, "resources": {"placement:lsf": 2}},
+        },
+        dashboard="none",
+    )
+    try:
+        assert getattr(cluster.scheduler, "http_server", None) is None
+        for worker in cluster.workers.values():
+            assert getattr(worker, "http_server", None) is None
+
+        with distributed.Client(cluster) as client:
+            assert client.submit(lambda: 6 * 7, resources={"placement:lsf": 1}).result() == 42
     finally:
         cluster.close()
 

@@ -40,7 +40,7 @@ from hedloom_flow import (  # noqa: F401 - the authoring surface, re-exported
 )
 from hedloom_flow import operation as _operation
 from hedloom_flow.authoring import file, returned, stdout, sweep  # noqa: F401
-from hedloom_run.cluster import cluster_for, local_cluster  # noqa: F401
+from hedloom_run.cluster import cluster_for, local_cluster, spec_cluster  # noqa: F401
 from hedloom_run.site import Site, SiteError  # noqa: F401
 
 from hedloom.binding import BoundTransport, Shell, Workspace, shell  # noqa: F401

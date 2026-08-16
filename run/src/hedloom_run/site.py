@@ -43,6 +43,7 @@ from hedloom_exec.transport import Transport
 
 __all__ = [
     "EXPOSURES",
+    "PLACEMENT_RESOURCE",
     "Site",
     "SiteError",
     "fingerprint_file",
@@ -51,6 +52,17 @@ __all__ = [
 
 _MAX_HASHED_BYTES = 64 * 1024 * 1024
 _CHUNK = 1 << 20
+
+PLACEMENT_RESOURCE = "placement:"
+"""Prefix for the Dask resource that carries a placement to the graph kernel.
+
+One name, written here, read by `hedloom_run.cluster` when it declares a worker's
+capacity and by `hedloom_run.graph` when it annotates a task. Both derive it from
+the same profile reading, so the cluster and the plan cannot disagree about what
+a placement is called — a disagreement would not be a wrong number, it would be
+a task no worker is allowed to run, which Dask never schedules and never
+reports.
+"""
 
 EXPOSURES = ("network", "loopback", "none")
 """Every exposure a profile may declare, most open first.
@@ -92,9 +104,28 @@ class Site:
     transports: Mapping[str, Transport] = field(default_factory=dict)
     workspace_root: str | None = None
     address_spaces: Mapping[str, str] = field(default_factory=dict)
+    placements: Mapping[str, int] = field(default_factory=dict)
+    """How many invocations each placement may have in flight at once.
+
+    The number that makes a placement real at run time. Each entry becomes one
+    Dask worker whose threads are that placement's budget and nothing else's,
+    and every task the graph kernel submits asks for one unit of the placement
+    it resolved to. A local invocation therefore cannot occupy a thread meant
+    for a farm job, which it otherwise can and does: an unrestricted task is
+    legal on every worker, and Dask both places and *steals* on that basis.
+
+    For an LSF placement this is the site's MAX JOB policy for this user. It is
+    not a tuning knob this project owns — ask for the number.
+    """
+
     threads: int | None = None
-    """Concurrency for the graph kernel. Not a tuning knob this project owns:
-    size it from the site's MAX JOB policy and per-user process limits."""
+    """Local concurrency, and nothing to do with the farm.
+
+    How many in-process invocations may run at once on the submit host. It is
+    the default cap for an in-process placement that declares no `max_jobs` of
+    its own; farm concurrency is that placement's `max_jobs`, which is a
+    different fact about a different machine.
+    """
 
     dashboard: str = "network"
     """How much of the graph kernel's cluster this installation exposes.
@@ -136,6 +167,14 @@ class Site:
                 for name, location in self.address_spaces.items()
             },
         )
+        # Every plan can name `local`, because that is what an operation
+        # declaring no policy resolves to at authoring time. A site that never
+        # mentions it still has to be able to run it, so the capacity exists
+        # whether or not the profile said so — otherwise the commonest plan of
+        # all asks for a placement the cluster does not offer.
+        placements = {name: int(cap) for name, cap in self.placements.items()}
+        placements.setdefault("local", self.threads or 1)
+        object.__setattr__(self, "placements", placements)
         # Refused here rather than when a cluster is built: a profile naming an
         # exposure this installation cannot honour is a configuration error,
         # and finding it at construction means finding it before a study runs.
@@ -157,9 +196,32 @@ class Site:
             transports={**self.transports, **transports},
             workspace_root=self.workspace_root,
             address_spaces=self.address_spaces,
+            placements=self.placements,
             threads=self.threads,
             dashboard=self.dashboard,
         )
+
+    def cluster_spec(self) -> dict[str, dict[str, Any]]:
+        """One worker per placement, sized by that placement's own cap.
+
+        The thread count is *derived* rather than configured, because the two
+        are independent gates on the same worker and the smaller one binds
+        silently: a worker declaring capacity for two hundred farm jobs and
+        holding eight threads runs eight, reports nothing, and looks correct.
+
+        Read by `hedloom_run.cluster.cluster_for`, which is the only supported way
+        to build a cluster this kernel will accept — the annotation on a task
+        and the capacity on a worker come from this one reading, so they cannot
+        drift apart.
+        """
+
+        return {
+            name: {
+                "nthreads": cap,
+                "resources": {f"{PLACEMENT_RESOURCE}{name}": cap},
+            }
+            for name, cap in self.placements.items()
+        }
 
     def resolve(self, address: Mapping[str, Any]) -> Path:
         """Turn a declared address into a path on this machine."""
@@ -243,6 +305,9 @@ class Site:
                 for name, location in (data.get("address_space") or {}).items()
             },
             transports=_transports_from(data.get("placement") or {}),
+            placements=_placements_from(
+                data.get("placement") or {}, (data.get("kernel") or {}).get("threads")
+            ),
             threads=(data.get("kernel") or {}).get("threads"),
             dashboard=(data.get("kernel") or {}).get("dashboard", "network"),
         )
@@ -265,6 +330,10 @@ def _transports_from(
     for name, options in placements.items():
         settings = dict(options)
         kind = settings.pop("kind", None)
+        # Read by `_placements_from` into the cluster's shape, never by a
+        # transport: how many jobs may be in flight is a fact about this site's
+        # policy, not an argument to any one `bsub`.
+        settings.pop("max_jobs", None)
         if kind == "lsf-interactive":
             built[name] = LSFInteractiveTransport(**settings)
         elif kind == "in-process":
@@ -277,6 +346,41 @@ def _transports_from(
                 "'in-process' placements must be given their implementations"
             )
     return built
+
+
+def _placements_from(
+    placements: Mapping[str, Mapping[str, Any]], threads: int | None
+) -> dict[str, int]:
+    """How many invocations each declared placement may have in flight.
+
+    Refuses an uncapped farm placement rather than choosing for you. The two
+    plausible defaults are both wrong in a way that is expensive to discover:
+    an arbitrary small number silently throttles a sweep, and an arbitrary
+    large one authorises more concurrent jobs than the site permits and more
+    live `bsub` clients than the submit host will carry.
+    """
+
+    caps: dict[str, int] = {}
+    for name, options in placements.items():
+        kind = options.get("kind")
+        declared = options.get("max_jobs")
+        if declared is None:
+            if kind == "lsf-interactive":
+                raise SiteError(
+                    f"placement {name!r} declares no max_jobs. Each placement "
+                    "becomes one worker whose threads are that placement's "
+                    "budget, so the number decides how many farm jobs may be in "
+                    "flight at once. Set it from this site's LSF MAX JOB policy "
+                    "for your user; there is no safe default to guess."
+                )
+            declared = threads or 1
+        if not isinstance(declared, int) or isinstance(declared, bool) or declared < 1:
+            raise SiteError(
+                f"placement {name!r} declares max_jobs = {declared!r}; it must be "
+                "a positive whole number of concurrent invocations"
+            )
+        caps[name] = declared
+    return caps
 
 
 def fingerprint_sources(

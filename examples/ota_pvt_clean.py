@@ -26,10 +26,13 @@ the verdict, the corner table, the limits applied, and the provenance —
 including each declared source's content fingerprint, so the report says which
 inputs produced it rather than asserting a date.
 
-**It runs on Dask.** This is the one example that does. A `LocalCluster` is
-built here rather than inside `submit`, because how many corners a site
-tolerates at once is an operational fact and a library choosing it silently
-would be choosing wrong somewhere. The corners then run concurrently instead of
+**It runs on Dask.** This is the one example that does. The cluster is built
+here rather than inside `submit`, because how many corners a site tolerates at
+once is an operational fact and a library choosing it silently would be
+choosing wrong somewhere. It comes from `cluster_for(site)`, which gives one
+worker per placement sized by that placement's own cap — the kernel annotates
+every task with the placement it resolved to, so a cluster that declares no
+capacity is refused up front rather than hanging. The corners then run concurrently instead of
 one after another, and the dashboard — opened before submission, since the
 sweep outlives a browser launch by only a few seconds — shows which corner is
 running under its authored key.
@@ -60,7 +63,7 @@ import subprocess
 import sys
 import time
 
-from distributed import Client, LocalCluster
+from distributed import Client
 
 DASHBOARD_HEAD_START = 5.0
 """Seconds given to the browser before the first corner is submitted."""
@@ -93,6 +96,7 @@ from hedloom import (  # noqa: E402
     address,
     artifact,
     artifacts,
+    cluster_for,
     codec,
     file,
     flow,
@@ -624,15 +628,19 @@ def main() -> int:
             f"ota-clean-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}"
         )
         print(f"fresh records: {work}")
+    jobs = jobs_of(load_editfile(_REPO / PVT_EDITS_LOCATOR))
+    print(f"{len(jobs)} corners from the edit file: "
+          f"{', '.join(job['name'] for job in jobs)}\n")
+
     site = Site(
         root=str(work / "attempts"),
         workspace_root=str(work / "work"),
         address_spaces={"repository-relative": str(_REPO)},
+        # Everything here is in-process, so one placement and one worker. The
+        # number is local concurrency, which is what `threads` has always been
+        # about; a farm placement would carry its own `max_jobs` beside it.
+        threads=len(jobs),
     )
-
-    jobs = jobs_of(load_editfile(_REPO / PVT_EDITS_LOCATOR))
-    print(f"{len(jobs)} corners from the edit file: "
-          f"{', '.join(job['name'] for job in jobs)}\n")
 
     subject = study(build(_REPO / PVT_EDITS_LOCATOR))
     print(subject.summary(), "\n")
@@ -641,13 +649,10 @@ def main() -> int:
 
     # Threads, in this process, as `hedloom_run.graph` argues at length: an
     # invocation waiting on a simulator costs a blocked thread and nothing
-    # scarce, and a process pool would only copy the transport further.
-    cluster = LocalCluster(
-        processes=False,
-        n_workers=1,
-        threads_per_worker=len(jobs),
-        dashboard_address=":8787",
-    )
+    # scarce, and a process pool would only copy the transport further. The
+    # shape comes from the site so that the capacity each worker declares and
+    # the placement each task asks for are one reading, not two.
+    cluster = cluster_for(site)
     with cluster, Client(cluster) as client:
         print(f"dashboard: {client.dashboard_link}")
         if _open_dashboard(client.dashboard_link):

@@ -14,19 +14,33 @@ The invariant this kernel must not break:
 The binding rules it obeys are therefore imported from `hedloom_run.binding` rather
 than restated here.
 
-**Cluster shape matters, and the recommended one is unusual.** Use a local,
-threaded cluster on the submit host:
+**Cluster shape matters, and the recommended one is unusual.** Build it from
+the site profile, which is the only shape this kernel accepts:
 
-    from distributed import Client, LocalCluster
-    cluster = LocalCluster(processes=False, threads_per_worker=32)
+    from hedloom_run.cluster import cluster_for
+    cluster = cluster_for(site)
 
-Three measured reasons, recorded in `docs/vision/open-concepts.md`:
+That gives one in-process worker per placement, each holding threads that
+belong to that placement alone. Every task submitted here is annotated with the
+placement its invocation already resolved to, so a worker's threads can only be
+spent on the work they were sized for.
+
+The annotation is not a refinement, it is the mechanism. A task that requests no
+resource is legal on *every* worker, and Dask will place it on whichever looks
+least busy and later **steal** it onto whichever falls idle — always the worker
+sized for a large farm cap. A local invocation then holds a thread meant for a
+`bsub -I`, and a farm job waits behind a python function with its capacity
+unused. Annotating only the farm tasks does not prevent this; annotating all of
+them makes it unrepresentable.
+
+Three measured reasons for the rest of the shape, recorded in
+`docs/vision/open-concepts.md`:
 
 * An invocation waiting on `bsub -I` costs about 16 KiB of thread and one
-  client process. Concurrency here is a safety rail, not a scarce resource, and
-  `threads_per_worker` *is* the rail — there is deliberately no limit parameter
-  in this module. Size it from the site's MAX JOB policy and per-user process
-  limits, which are facts to ask for rather than guess.
+  client process. A worker's thread count is therefore not a statement about
+  this host's CPUs but about how many jobs may be in flight, which is why it is
+  *derived* from the placement's declared cap rather than configured beside it:
+  the two are independent gates and the smaller binds silently.
 * Nothing secedes. A worker holding live `bsub -I` clients should read as
   running, and `secede()` would report it idle by excluding the task from the
   parallelism count.
@@ -64,6 +78,7 @@ from hedloom_run.binding import (
     select_transport,
 )
 from hedloom_run.driver import InvocationOutcome, RunReport
+from hedloom_run.site import PLACEMENT_RESOURCE
 
 __all__ = ["run_plan_graph"]
 
@@ -202,6 +217,102 @@ def _run_one(
     )
 
 
+def _placement_of(item: PlannedInvocation) -> str:
+    """The placement this invocation resolved to, at authoring time.
+
+    Never absent: an operation that declares no policy gets `local` when the
+    Plan is built, so there is no such thing as an unplaced invocation. This
+    reads the same field `select_transport` reads, so the worker a task runs on
+    and the transport it runs through can never disagree.
+    """
+
+    return (item.policy or {}).get("name") or "local"
+
+
+def _admission(
+    item: PlannedInvocation, transports: Mapping[str, Transport]
+) -> dict[str, float]:
+    """The capacity this task must be admitted against before it may run.
+
+    One unit of its own placement, including `local`. Leaving local work
+    unannotated is what lets it be scheduled onto — and later stolen onto — the
+    worker whose threads are the farm's budget.
+
+    The exception is a placement this run cannot serve at all. That invocation
+    is refused by `select_transport` the moment it starts, exactly as it is
+    under the sequential kernel, and refusing one branch must not abandon the
+    others. Annotating it would instead hold it unrunnable forever against a
+    capacity nobody declares, which would make the two kernels disagree about a
+    plan — the one thing this module may not do. It reaches no transport, so
+    the thread it occupies is measured in microseconds and there is nothing for
+    a budget to protect.
+    """
+
+    name = _placement_of(item)
+    if transports.get(name) is None:
+        return {}
+    return {f"{PLACEMENT_RESOURCE}{name}": 1}
+
+
+def _declared_placements(client: Any) -> dict[str, float]:
+    """Every placement capacity this cluster offers, summed over its workers."""
+
+    offered: dict[str, float] = {}
+    info = client.scheduler_info() or {}
+    for worker in (info.get("workers") or {}).values():
+        for name, amount in (worker.get("resources") or {}).items():
+            offered[name] = offered.get(name, 0) + amount
+    return offered
+
+
+def _require_admission(
+    client: Any,
+    items: Sequence[PlannedInvocation],
+    transports: Mapping[str, Transport],
+) -> None:
+    """Refuse a cluster that cannot admit this plan, before anything runs.
+
+    A task asking for capacity no worker declares is not slow — it is never
+    scheduled. Dask holds it unrunnable with no exception, no log line at the
+    client, and an idle-looking cluster, which is the worst failure this design
+    can produce: a sweep that appears to be waiting on the farm while the farm
+    has never been asked for anything. Cheaper to refuse here, in the same
+    spirit as `_require_shippable`.
+    """
+
+    offered = _declared_placements(client)
+    # Only placements this run can actually serve. One it cannot is a
+    # per-invocation refusal that both kernels already agree on; see
+    # `_admission`.
+    wanted = sorted(
+        {
+            name
+            for name in (_placement_of(item) for item in items)
+            if transports.get(name) is not None
+        }
+    )
+    missing = [
+        name for name in wanted if f"{PLACEMENT_RESOURCE}{name}" not in offered
+    ]
+    if not missing:
+        return
+    declared = sorted(
+        name[len(PLACEMENT_RESOURCE):]
+        for name in offered
+        if name.startswith(PLACEMENT_RESOURCE)
+    )
+    raise UnsupportedPlacement(
+        f"this cluster declares no capacity for placement "
+        f"{', '.join(repr(name) for name in missing)}, which this plan uses. "
+        f"It offers: {', '.join(declared) or 'no placements at all'}. Every task "
+        "carries the placement it resolved to, so one the cluster does not offer "
+        "is held unrunnable forever rather than failing — the run would appear to "
+        "hang against an idle cluster. Build the cluster with "
+        "hedloom_run.cluster.cluster_for(site), which derives its workers from the "
+        "same profile the placements come from."
+    )
+
+
 def _require_shippable(transports: Mapping[str, Transport]) -> None:
     """Refuse a transport that cannot reach a worker, before anything runs.
 
@@ -227,15 +338,22 @@ def _require_shippable(transports: Mapping[str, Transport]) -> None:
 
 
 def _task_key(item: PlannedInvocation) -> str:
-    """A key an operator can recognise in a dashboard.
+    """A key an operator can recognise, and one Dask can learn from.
 
-    Named after the authored key rather than a digest, because the point of
-    watching a sweep is knowing which *corner* is running. The digest suffix
-    keeps it unique when the same key is planned twice.
+    The operation comes first because Dask groups tasks by everything before the
+    first `-` and keeps a rolling average duration per group. Keyed by corner,
+    every task was its own group, nothing was ever learned, and every task fell
+    back to a flat 500 ms estimate — the number the scheduler then used to decide
+    which worker was least busy and what was worth stealing. Keyed by operation,
+    the average becomes real after the first few corners finish.
+
+    The authored key stays, because the point of watching a sweep is still
+    knowing which *corner* is running. The digest suffix keeps it unique when the
+    same key is planned twice.
     """
 
     name = item.authored_key or item.invocation_id
-    return f"{name}-{item.input_digest[:8]}"
+    return f"{item.operation}-{name}-{item.input_digest[:8]}"
 
 
 def run_plan_graph(
@@ -291,6 +409,7 @@ def run_plan_graph(
         identity_env=identity_env,
         source_fingerprints=source_fingerprints,
     )
+    _require_admission(client, items, available)
     futures: dict[str, Any] = {}
     taken: set[str] = set()
     for item in items:
@@ -307,6 +426,10 @@ def run_plan_graph(
             config,
             *(futures[dependency] for dependency in item.depends_on),
             key=key,
+            # The worker this may run on, which is the worker whose threads
+            # belong to this invocation's placement. Not a hint: an
+            # unannotated task is legal everywhere and gets moved.
+            resources=_admission(item, available),
             # Side-effecting work with a durable record of its own. Dask must
             # not decide two invocations are the same call and run one; reuse
             # is `hedloom_exec`'s decision, made against declared inputs.

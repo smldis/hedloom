@@ -174,6 +174,7 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
         'kind = "lsf-interactive"\n'
         'walltime = "240"\n'
         'queue = "normal"\n'
+        "max_jobs = 200\n"
         "\n[kernel]\n"
         "threads = 32\n"
     )
@@ -184,6 +185,51 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
     assert site.address_spaces["repository-relative"] == str(tmp_path)
     assert site.threads == 32
     assert site.transports["lsf"].walltime == "240"
+    # Two numbers about two machines: local concurrency on the submit host, and
+    # how many jobs this user may have in flight on the farm.
+    assert site.placements == {"lsf": 200, "local": 32}
+
+
+def test_a_farm_placement_without_a_cap_is_refused(tmp_path):
+    """No safe default exists, so the profile has to say.
+
+    A small guess silently throttles a sweep; a large one authorises more
+    concurrent jobs than the site permits and more live `bsub` clients than the
+    submit host will carry. Both are expensive to discover on a farm.
+    """
+
+    (tmp_path / "site.toml").write_text(
+        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        'kind = "lsf-interactive"\nwalltime = "10"\n'
+    )
+    with pytest.raises(SiteError, match="max_jobs"):
+        Site.from_file(tmp_path / "site.toml")
+
+
+def test_local_exists_even_where_a_profile_never_mentions_it(tmp_path):
+    """An operation declaring no policy resolves to `local` when the Plan is
+    built, so the commonest plan there is names a placement no farm profile
+    bothers to declare. The capacity has to be there anyway."""
+
+    site = Site(root=str(tmp_path), placements={"lsf": 8}, threads=3)
+
+    assert site.placements["local"] == 3
+    spec = site.cluster_spec()
+    assert spec["lsf"] == {"nthreads": 8, "resources": {"placement:lsf": 8}}
+    assert spec["local"] == {"nthreads": 3, "resources": {"placement:local": 3}}
+
+
+def test_max_jobs_is_profile_vocabulary_not_a_bsub_argument(tmp_path):
+    """It sizes the cluster; it must never reach the transport as a setting."""
+
+    (tmp_path / "site.toml").write_text(
+        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        'kind = "lsf-interactive"\nwalltime = "10"\nmax_jobs = 4\n'
+    )
+    site = Site.from_file(tmp_path / "site.toml")
+
+    assert site.placements["lsf"] == 4
+    assert not hasattr(site.transports["lsf"], "max_jobs")
 
 
 def test_a_placement_kind_this_site_cannot_build_is_refused(tmp_path):

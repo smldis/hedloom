@@ -19,6 +19,7 @@ def test_farm_smoke_sweeps_chains_publishes_and_reuses(tmp_path: Path) -> None:
         'kind = "lsf-interactive"\n'
         'queue = "reg"\n'
         'walltime = "1"\n'
+        "max_jobs = 4\n"
         "cores = 1\n"
         "timeout = 30\n",
         encoding="utf-8",

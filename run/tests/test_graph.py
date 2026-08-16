@@ -14,6 +14,7 @@ import pytest
 
 from hedloom_exec.transport import InProcessTransport
 from hedloom_run.driver import run_plan
+from hedloom_run.binding import UnsupportedPlacement
 from hedloom_run.graph import _task_key, run_plan_graph
 
 distributed = pytest.importorskip("distributed")
@@ -26,7 +27,11 @@ def client():
     # Silent, because `dashboard_address=None` is not: a scheduler starts its
     # HTTP server regardless and this suite used to bind :8787 on every run,
     # colliding with whatever the developer was already watching.
-    cluster = local_cluster(threads=4, dashboard="none")
+    # Declares the capacity every task now asks for. The kernel annotates each
+    # task with the placement its invocation resolved to and refuses a cluster
+    # that offers none, because an unadmitted task is never scheduled and never
+    # reported — the run would hang against an idle cluster.
+    cluster = local_cluster(threads=4, dashboard="none", placements={"local": 4})
     with distributed.Client(cluster) as connected:
         yield connected
     cluster.close()
@@ -102,6 +107,33 @@ def chain():
             invocation("sibling", "double", config=[{"name": "value", "value": 5}]),
         ]
     )
+
+
+def test_a_cluster_that_cannot_admit_the_plan_is_refused(tmp_path):
+    """The failure this refusal exists to prevent is silence.
+
+    Every task asks for the capacity of the placement it resolved to. A cluster
+    declaring none holds all of them unrunnable — no exception, no log line at
+    the client, an idle cluster and an empty farm. Refused before anything runs
+    instead, in the same spirit as the shippability check.
+    """
+
+    cluster = local_cluster(threads=2, dashboard="none")
+    try:
+        with distributed.Client(cluster) as bare:
+            with pytest.raises(UnsupportedPlacement) as raised:
+                run_plan_graph(
+                    chain(),
+                    client=bare,
+                    transports=transports(),
+                    plan_id="study",
+                    root=str(tmp_path),
+                )
+    finally:
+        cluster.close()
+
+    assert "local" in str(raised.value)
+    assert "cluster_for" in str(raised.value), "say how to build one that works"
 
 
 def test_a_plan_runs_and_reports_in_plan_order(client, tmp_path):
@@ -273,5 +305,9 @@ def test_a_task_is_named_after_the_corner_it_runs():
     items = plan_bundles(chain())
     keys = [_task_key(item) for item in items]
 
-    assert keys[0].startswith("seed-")
+    # The operation comes first: Dask groups tasks by everything before the
+    # first "-" and learns a duration average per group. Keyed by corner, every
+    # task was its own group and every estimate fell back to a flat 500 ms.
+    assert keys[0].startswith("double-")
+    assert "seed" in keys[0], "the corner must still be readable in a dashboard"
     assert len(set(keys)) == len(keys)

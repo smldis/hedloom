@@ -10,3 +10,13 @@ queue = "reg"
 walltime = "1"
 cores = 1
 timeout = 300
+# How many of these may be in flight at once: this user's LSF MAX JOB policy.
+# It sizes the worker whose threads hold the waiting `bsub -I` clients, and
+# nothing else may spend them. Deliberately small here — a smoke test should
+# not queue a farm.
+max_jobs = 4
+
+[kernel]
+# Local concurrency on the submit host, which is a different machine's problem
+# from the number above.
+threads = 2

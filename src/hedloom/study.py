@@ -126,8 +126,14 @@ class Study:
             name: BoundTransport(self.implementations, delegate)
             for name, delegate in site.transports.items()
         }
-        if not transports:
-            transports = {"local": BoundTransport(self.implementations)}
+        # A placement declared as in-process has no transport a TOML can build:
+        # its implementation is the authored body, which lives here. Supplying
+        # one for every placement the site knows about is also what makes
+        # `local` work on a profile that only ever mentions a farm queue —
+        # every operation that declares no policy resolves to `local`, so a run
+        # that cannot provide it refuses the commonest plan there is.
+        for name in site.placements:
+            transports.setdefault(name, BoundTransport(self.implementations))
 
         report_to = _reporter(on_event, watch)
         # One reading of every declared source serves both: its content decides
