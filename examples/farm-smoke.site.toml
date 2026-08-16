@@ -10,8 +10,12 @@ queue = "reg"
 walltime = "1"
 cores = 1
 timeout = 300
-# How many of these may be in flight at once: this user's LSF MAX JOB policy.
-# It sizes the worker whose threads hold the waiting `bsub -I` clients, and
+# How many of these may be in flight at once: the share of the farm this study
+# may spend, which is *not* your LSF MAX JOB policy. That policy counts every
+# job you have running from any source, so leave headroom for whatever you
+# submit by other means — otherwise yours and hedloom's queue behind each
+# other, and hedloom's worker threads sit held by `bsub -I` clients that are
+# still waiting. It sizes the worker whose threads hold those clients, and
 # nothing else may spend them. Deliberately small here — a smoke test should
 # not queue a farm.
 max_jobs = 4

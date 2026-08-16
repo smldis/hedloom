@@ -92,8 +92,10 @@ Three measured reasons, recorded in `docs/vision/open-concepts.md`:
 * An invocation waiting on `bsub -I` costs about 16 KiB of thread and one
   client process. Concurrency here is a safety rail, not a scarce resource,
   and `threads_per_worker` *is* the rail — there is deliberately no limit
-  parameter in this module. Size it from the site's MAX JOB policy and
-  per-user process limits, which are facts to ask for rather than guess.
+  parameter in this module. Size it from the share of the farm this study may
+  spend — deliberately below the site's MAX JOB policy, which counts every job
+  running under your user from any source, so declaring all of it here means
+  hedloom and your own submissions wait for each other.
 * Nothing secedes. A worker holding live `bsub -I` clients should read as
   running, and `secede()` would report it idle by excluding the task from the
   parallelism count.
@@ -222,11 +224,12 @@ without one would need staging, which this unit does not do.
 
 ## `threads`
 
-`Site.threads` is concurrency for the graph kernel, not a tuning knob this
-project invents values for: size it from the site's MAX JOB policy and
-per-user process limits, and pass it to whatever `LocalCluster` the caller
-constructs (`hedloom_run.graph`'s own docstring above states the reasoning this
-field exists to record).
+`Site.threads` is *local* concurrency on the submit host, and nothing to do
+with the farm. Farm concurrency is each placement's own `max_jobs`, which
+`Site.cluster_spec()` turns into that placement's worker; `cluster_for(site)`
+builds the cluster from both, so the capacity a worker declares and the
+placement a task asks for are one reading of the profile rather than two
+numbers that must agree.
 
 ## Binding rules and what stays unowned
 

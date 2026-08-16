@@ -53,11 +53,13 @@ dashboard, and failure isolation are untested against anything but fakes.
   dashboard is served — and a library that started one silently would be making
   it for the operator. `distributed` is an optional dependency reached by
   explicit import.
-- Concurrency under the graph kernel is `threads_per_worker`. There is
-  deliberately no limit parameter: a waiting invocation costs about 16 KiB of
-  thread and one client process, so this is a safety rail rather than a scarce
-  resource, and the real ceiling is the site's MAX JOB policy, per-user process
-  limits, and the licence count.
+- Concurrency under the graph kernel is one worker per placement, sized by
+  that placement's `max_jobs`. A waiting invocation costs about 16 KiB of
+  thread and one client process, so the number is a budget rather than a
+  scarce resource of this host. It is the share of the farm this study may
+  spend, deliberately *below* the site's MAX JOB policy, which counts every
+  job running under your user from any source; per-user process limits and the
+  licence count are the other ceilings above it.
 - `cluster_for(site)` builds that cluster from the profile — the concurrency,
   and how much of it the installation exposes. It does not weaken the rule
   above: `run_plan_graph` still requires a client and still creates none. A

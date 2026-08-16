@@ -106,7 +106,8 @@ def local_cluster(
 
     ``threads`` left as None gives Dask's own sizing, which is this host's CPU
     count — right for a local study and wrong for a farm sweep, where the
-    number is the site's MAX JOB policy and belongs in the profile.
+    number is the share of the farm this study may spend and belongs in the
+    profile as that placement's `max_jobs`.
 
     ``placements`` declares this one worker's capacity for each placement. The
     graph kernel annotates every task with the placement it resolved to and

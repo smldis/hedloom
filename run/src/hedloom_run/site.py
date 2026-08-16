@@ -114,8 +114,16 @@ class Site:
     for a farm job, which it otherwise can and does: an unrestricted task is
     legal on every worker, and Dask both places and *steals* on that basis.
 
-    For an LSF placement this is the site's MAX JOB policy for this user. It is
-    not a tuning knob this project owns — ask for the number.
+    For an LSF placement this is the share of the farm hedloom may spend, which
+    is **not** the site's MAX JOB policy. That policy caps everything you have
+    running under your user, hedloom's jobs and the ones you submit by any other
+    means together, so declaring all of it here means one of the two waits for
+    the other. When it is hedloom that waits, the cost is not only delay: its
+    worker threads are held by `bsub -I` clients that are still queued, so the
+    placement spends its own budget on waiting rather than on work.
+
+    Leave headroom for whatever else you run. It is not a tuning knob this
+    project owns — the number is a judgement about how you use the farm.
     """
 
     threads: int | None = None
@@ -389,8 +397,11 @@ def _placements_from(
                     f"placement {name!r} declares no max_jobs. Each placement "
                     "becomes one worker whose threads are that placement's "
                     "budget, so the number decides how many farm jobs may be in "
-                    "flight at once. Set it from this site's LSF MAX JOB policy "
-                    "for your user; there is no safe default to guess."
+                    "flight at once. Set it to the share of the farm hedloom "
+                    "may spend, leaving room for whatever else you submit — it "
+                    "is not the site's MAX JOB policy, which caps your jobs "
+                    "from every source together. There is no safe default to "
+                    "guess."
                 )
             declared = threads or 1
         if not isinstance(declared, int) or isinstance(declared, bool) or declared < 1:

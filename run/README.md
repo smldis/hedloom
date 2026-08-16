@@ -46,7 +46,8 @@ from hedloom_run.graph import run_plan_graph
 
 # Concurrency is this number. There is no limit parameter: a waiting
 # invocation costs ~16 KiB of thread and one client process, so size it from
-# your site's MAX JOB policy rather than from anything this library knows.
+# the share of the farm this study may spend — not from your site's MAX JOB
+# policy, which counts every job you have running from any source.
 # `cluster_for` reads it, and the exposure, from the profile.
 cluster = cluster_for(site)
 
