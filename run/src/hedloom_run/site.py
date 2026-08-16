@@ -39,7 +39,7 @@ from typing import Any, Callable, Mapping
 import os
 
 from hedloom_exec.planned import source_references
-from hedloom_exec.transport import Transport
+from hedloom_exec.transport import SubmissionRefused, Transport
 
 __all__ = [
     "EXPOSURES",
@@ -324,18 +324,37 @@ def _transports_from(
     Plan for what is a configuration error.
     """
 
-    from hedloom_exec.lsf import LSFInteractiveTransport
+    from hedloom_exec.lsf import LSFInteractiveTransport, PLACEMENT_OPTIONS
 
     built: dict[str, Transport] = {}
+    kernel_keys = {"kind", "max_jobs"}
+    mechanic_keys = {"timeout"}
     for name, options in placements.items():
         settings = dict(options)
-        kind = settings.pop("kind", None)
-        # Read by `_placements_from` into the cluster's shape, never by a
-        # transport: how many jobs may be in flight is a fact about this site's
-        # policy, not an argument to any one `bsub`.
-        settings.pop("max_jobs", None)
+        unknown = sorted(
+            set(settings) - kernel_keys - mechanic_keys - set(PLACEMENT_OPTIONS)
+        )
+        if unknown:
+            raise SiteError(
+                f"placement {name!r} declares unknown option "
+                f"{', '.join(unknown)}; transport options are "
+                f"{', '.join(PLACEMENT_OPTIONS)}"
+            )
+        kind = settings.get("kind")
         if kind == "lsf-interactive":
-            built[name] = LSFInteractiveTransport(**settings)
+            defaults = {
+                key: value for key, value in settings.items()
+                if key in PLACEMENT_OPTIONS
+            }
+            try:
+                built[name] = LSFInteractiveTransport(
+                    defaults=defaults,
+                    timeout=settings.get("timeout"),
+                )
+            except (SubmissionRefused, TypeError, ValueError) as error:
+                raise SiteError(
+                    f"placement {name!r} cannot build its transport: {error}"
+                ) from error
         elif kind == "in-process":
             # Needs callables; supplied through with_transports(...).
             continue

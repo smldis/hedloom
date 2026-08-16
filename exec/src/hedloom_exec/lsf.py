@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
+import ctypes
 import os
 import re
 import shlex
@@ -95,14 +96,16 @@ def _load_libc():
     if sys.platform != "linux":
         return None
     try:
-        import ctypes
-
         return ctypes.CDLL("libc.so.6", use_errno=True)
     except OSError:  # pragma: no cover - unusual libc layout
         return None
 
 
 _LIBC = _load_libc()
+if _LIBC is not None:
+    # Resolve and marshal prctl before fork; the preexec_fn race itself remains.
+    _LIBC.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong]
+    _LIBC.prctl.restype = ctypes.c_int
 
 
 def _bind_child_lifetime() -> Callable[[], None] | None:
@@ -227,6 +230,7 @@ def _state_from_bjobs(line: str) -> str:
 
 
 PLACEMENT_OPTIONS = (
+    "app",
     "cores",
     "licences",
     "memory_mb",
@@ -257,6 +261,7 @@ class JobSettings:
     """
 
     walltime: str
+    app: str | None = None
     queue: str | None = None
     cores: int | None = None
     memory_mb: int | None = None
@@ -265,7 +270,7 @@ class JobSettings:
 
     def as_data(self) -> dict[str, Any]:
         data: dict[str, Any] = {"walltime": self.walltime}
-        for key in ("queue", "cores", "memory_mb", "resources"):
+        for key in ("app", "queue", "cores", "memory_mb", "resources"):
             value = getattr(self, key)
             if value is not None:
                 data[key] = value
@@ -364,28 +369,31 @@ class LSFInteractiveTransport:
     def __init__(
         self,
         *,
-        walltime: str,
-        queue: str | None = None,
-        resources: str | None = None,
-        cores: int | None = None,
+        defaults: Mapping[str, Any],
         timeout: float | None = None,
         runner: Callable[..., CommandResult] | None = None,
     ) -> None:
-        if not walltime:
-            raise ValueError(
-                "walltime is required: it is the only orphan bound that "
-                "survives this process being killed without warning"
-            )
         # Site defaults for invocations that declare nothing of their own. A
         # plan that authors placement options overrides them per invocation.
-        self.walltime = walltime
-        self.queue = queue
-        self.resources = resources
-        self.cores = cores
+        self.defaults = dict(defaults)
+        unknown = sorted(set(self.defaults) - set(PLACEMENT_OPTIONS))
+        if unknown:
+            raise SubmissionRefused(
+                f"transport defaults name {', '.join(unknown)}, which this "
+                f"transport cannot express as bsub arguments (it understands "
+                f"{', '.join(PLACEMENT_OPTIONS)})"
+            )
+        if "walltime" not in self.defaults:
+            raise SubmissionRefused(
+                "transport defaults must include walltime: it is the only "
+                "orphan bound that survives this process being killed without "
+                "warning"
+            )
         # Bounds our own wait. `-W` bounds the job on the farm, but nothing
         # stopped a hung client from blocking its caller indefinitely.
         self.timeout = timeout
         self._run = runner or SubprocessRunner()
+        self.settings_for({})
 
     def settings_for(self, bundle: Mapping[str, Any]) -> JobSettings:
         """Resolve this invocation's request over the transport's defaults.
@@ -406,10 +414,17 @@ class LSFInteractiveTransport:
                 "need would run the work under conditions nobody asked for."
             )
 
-        cores = options.get("cores", self.cores)
-        memory = options.get("memory_mb")
-        queue = options.get("queue", self.queue)
-        resources = options.get("resources", self.resources)
+        resolved = {**self.defaults, **options}
+        app = resolved.get("app")
+        cores = resolved.get("cores")
+        memory = resolved.get("memory_mb")
+        queue = resolved.get("queue")
+        resources = resolved.get("resources")
+        if app is not None and (not isinstance(app, str) or not app.strip()):
+            raise SubmissionRefused(
+                f"placement option app must be an LSF application profile, got "
+                f"{app!r}"
+            )
         if queue is not None and (not isinstance(queue, str) or not queue.strip()):
             raise SubmissionRefused(
                 f"placement option queue must be a queue name, got {queue!r}"
@@ -420,11 +435,12 @@ class LSFInteractiveTransport:
             )
 
         return JobSettings(
-            walltime=_walltime(options.get("walltime", self.walltime)),
+            walltime=_walltime(resolved.get("walltime")),
+            app=app,
             queue=queue,
             cores=None if cores is None else _positive_int(cores, "cores"),
             memory_mb=None if memory is None else _positive_int(memory, "memory_mb"),
-            licences=_licences(options.get("licences", {})),
+            licences=_licences(resolved.get("licences", {})),
             resources=resources,
         )
 
@@ -442,6 +458,8 @@ class LSFInteractiveTransport:
             )
         settings = settings or self.settings_for(bundle)
         argv = ["bsub", "-I", "-J", identity, "-W", settings.walltime]
+        if settings.app:
+            argv += ["-app", settings.app]
         if settings.queue:
             argv += ["-q", settings.queue]
         if settings.cores:

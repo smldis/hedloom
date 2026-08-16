@@ -26,7 +26,9 @@ def farm(tmp_path, monkeypatch):
     fake = os.path.join(os.path.dirname(__file__), "fakefarm")
     monkeypatch.setenv("PATH", fake + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("FAKE_LSF_STATE", str(tmp_path / "lsf"))
-    return LSFInteractiveTransport(walltime="5", runner=SubprocessRunner())
+    return LSFInteractiveTransport(
+        defaults={"walltime": "5"}, runner=SubprocessRunner()
+    )
 
 
 def test_a_file_the_command_wrote_itself_is_recorded(tmp_path, monkeypatch):

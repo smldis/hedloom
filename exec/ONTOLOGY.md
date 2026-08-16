@@ -98,10 +98,10 @@ its siblings are reused and the superseded results stay nameable.
 - What a job asks for is resolved per invocation. `placement_options(bundle)`
   reads what the Plan requested; `settings_for(...)` resolves it over the
   transport's site defaults, which the invocation's own options win against.
-  `queue`, `cores`, `memory_mb`, `licences`, `resources`, and `walltime` become
-  `-q`, `-n`, `-R`, and `-W` on that job alone, and the resolved `JobSettings`
-  is carried on the handle into the published manifest, so a run can be asked
-  what it requested without reparsing a command line.
+  `app`, `queue`, `cores`, `memory_mb`, `licences`, `resources`, and `walltime`
+  become `-app`, `-q`, `-n`, `-R`, and `-W` on that job alone, and the resolved
+  `JobSettings` is carried on the handle into the published manifest, so a run
+  can be asked what it requested without reparsing a command line.
 - A declared licence is a request LSF arbitrates, not a count this unit keeps:
   `licences={"<name>": n}` becomes a `rusage` term, because the scheduler is
   the only party that knows how many exist and who holds them. Resource names

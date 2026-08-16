@@ -37,7 +37,12 @@ class FakeRunner:
 
 def transport(**kwargs):
     runner = kwargs.pop("runner", None) or FakeRunner()
-    return LSFInteractiveTransport(walltime="30", runner=runner, **kwargs), runner
+    return (
+        LSFInteractiveTransport(
+            defaults={"walltime": "30", **kwargs}, runner=runner
+        ),
+        runner,
+    )
 
 
 def test_submission_is_interactive_named_and_walltime_bounded():
@@ -53,8 +58,8 @@ def test_submission_is_interactive_named_and_walltime_bounded():
 
 
 def test_walltime_is_mandatory():
-    with pytest.raises(ValueError):
-        LSFInteractiveTransport(walltime="")
+    with pytest.raises(SubmissionRefused, match="walltime"):
+        LSFInteractiveTransport(defaults={})
 
 
 def test_resource_request_is_passed_through():

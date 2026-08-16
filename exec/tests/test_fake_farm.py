@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(
 def farm(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", FARM + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("FAKE_LSF_STATE", str(tmp_path / "farm"))
-    return LSFInteractiveTransport(walltime="5", queue="normal")
+    return LSFInteractiveTransport(defaults={"walltime": "5", "queue": "normal"})
 
 
 def test_a_real_submission_runs_the_command_and_records_success(farm, tmp_path):

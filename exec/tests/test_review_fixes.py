@@ -43,7 +43,7 @@ class Runner:
 
 def lsf(**replies):
     runner = Runner(**replies)
-    return LSFInteractiveTransport(walltime="10", runner=runner), runner
+    return LSFInteractiveTransport(defaults={"walltime": "10"}, runner=runner), runner
 
 
 # --- the handle contract ----------------------------------------------------

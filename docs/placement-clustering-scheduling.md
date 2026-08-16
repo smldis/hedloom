@@ -1,7 +1,7 @@
 # Developer note: placement, clustering, and scheduling
 
-Status: description of the current implementation. The final section records
-the missing placement-aware concurrency model; it is not implemented yet.
+Status: description of the current implementation. The final section points to
+the register entry that records the placement-aware concurrency decision.
 
 ## The three concepts
 
@@ -70,9 +70,10 @@ walltime = "30"
 ```
 
 Site values are transport defaults. Supported options authored on an
-invocation override those defaults. For LSF they include queue, cores, memory,
-walltime, licences, and a raw resource expression. The transport renders them
-as `bsub` arguments; for example, `cores = 1` becomes `-n 1`.
+invocation override those defaults. The LSF vocabulary is `app`, `cores`,
+`licences`, `memory_mb`, `queue`, `resources`, and `walltime`. The transport
+renders them as `bsub` arguments; for example, `app = "spectre"` becomes
+`-app spectre` and `cores = 1` becomes `-n 1`.
 
 ### Named placement routes
 
@@ -184,53 +185,7 @@ Placement is selected inside each Dask task. All tasks submitted to the client
 currently share that client's worker and thread limits, regardless of their
 placement.
 
-## Current limitation: concurrency is global
+## Concurrency limits
 
-Placement routing is implemented; placement-specific concurrency is not.
-
-Given:
-
-```toml
-[kernel]
-threads = 10
-```
-
-ten is the maximum number of concurrent controller tasks in total. Local work,
-regular LSF work, and other named placements all consume the same pool. It is
-only an upper bound on concurrent LSF jobs, and unrelated work can reduce the
-number of LSF jobs in flight.
-
-The missing model should separate total controller capacity from capacity per
-placement:
-
-```toml
-[kernel]
-threads = 32
-
-[placement.regular]
-kind = "lsf-interactive"
-max_in_flight = 10
-
-[placement.gpu]
-kind = "lsf-interactive"
-max_in_flight = 2
-
-[placement.local]
-kind = "in-process"
-max_in_flight = 8
-```
-
-Conceptually:
-
-```text
-Dask controller: 32 total tasks
-    regular placement: at most 10
-    GPU placement:      at most 2
-    local placement:    at most 8
-```
-
-Implementing this requires scheduling metadata or another admission-control
-mechanism keyed by resolved placement. Until that exists, a global Dask thread
-count is only a conservative limit suitable for a homogeneous sweep; it is not
-the completed mixed-placement design.
-
+The decision and current mechanism are recorded under *Two concurrency limits,
+not one* in [`open-concepts.md`](../../docs/vision/open-concepts.md).

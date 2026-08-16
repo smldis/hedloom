@@ -36,7 +36,9 @@ class FakeRunner:
 def transport(**kwargs):
     runner = kwargs.pop("runner", None) or FakeRunner()
     walltime = kwargs.pop("walltime", "30")
-    lsf = LSFInteractiveTransport(walltime=walltime, runner=runner, **kwargs)
+    lsf = LSFInteractiveTransport(
+        defaults={"walltime": walltime, **kwargs}, runner=runner
+    )
     return lsf, runner
 
 
@@ -85,6 +87,26 @@ def test_memory_and_licences_compose_into_one_request():
     assert flag(runner.calls[0], "-R") == "rusage[mem=8000,ams=1,spectre=2]"
 
 
+def test_an_invocation_memory_request_overrides_the_site_default():
+    """The authored request wins without mutating the transport's baseline."""
+
+    lsf, runner = transport(memory_mb=4096)
+    lsf.submit("hedloom-default", bundle())
+    lsf.submit("hedloom-override", bundle(memory_mb=8192))
+
+    assert flag(runner.calls[0], "-R") == "rusage[mem=4096]"
+    assert flag(runner.calls[1], "-R") == "rusage[mem=8192]"
+
+
+def test_an_application_profile_is_a_single_dash_bsub_option():
+    lsf, runner = transport(app="spectre")
+    handle = lsf.submit("hedloom-abc", bundle())
+
+    assert flag(runner.calls[0], "-app") == "spectre"
+    assert "--app" not in runner.calls[0]
+    assert handle["settings"]["app"] == "spectre"
+
+
 def test_a_site_requirement_keeps_its_own_sections():
     """A requirement string is space-separated sections, so both survive."""
 
@@ -92,6 +114,19 @@ def test_a_site_requirement_keeps_its_own_sections():
     lsf.submit("hedloom-abc", bundle(licences={"spectre": 1}))
 
     assert flag(runner.calls[0], "-R") == "span[hosts=1] rusage[spectre=1]"
+
+
+def test_an_rh80_requirement_and_memory_default_share_one_argument():
+    """Raw selection and composed rusage are sections of the same request."""
+
+    lsf, runner = transport(
+        resources="select[rh80] span[hosts=1]", memory_mb=4096
+    )
+    lsf.submit("hedloom-abc", bundle())
+
+    argv = runner.calls[0]
+    assert argv.count("-R") == 1
+    assert flag(argv, "-R") == "select[rh80] span[hosts=1] rusage[mem=4096]"
 
 
 def test_two_rusage_sections_refuse_rather_than_guess():
@@ -110,6 +145,13 @@ def test_an_option_this_transport_cannot_express_is_refused():
 
     assert "gpus" in str(raised.value)
     assert runner.calls == [], "nothing may be submitted after a refusal"
+
+
+def test_an_unknown_transport_default_is_refused_by_name():
+    """The constructor and invocation share the same closed vocabulary."""
+
+    with pytest.raises(SubmissionRefused, match="queeu"):
+        LSFInteractiveTransport(defaults={"walltime": "30", "queeu": "reg"})
 
 
 def test_a_misspelled_option_does_not_silently_run_anywhere():

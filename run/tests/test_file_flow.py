@@ -28,7 +28,9 @@ READ = (
 def farm(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", FARM + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("FAKE_LSF_STATE", str(tmp_path / "lsf"))
-    return LSFInteractiveTransport(walltime="5", runner=SubprocessRunner())
+    return LSFInteractiveTransport(
+        defaults={"walltime": "5"}, runner=SubprocessRunner()
+    )
 
 
 def document():

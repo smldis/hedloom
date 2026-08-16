@@ -143,7 +143,9 @@ request, and exit status:
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.lsf import LSFInteractiveTransport
 
-lsf = LSFInteractiveTransport(walltime="30", queue="normal", cores=4)
+lsf = LSFInteractiveTransport(
+    defaults={"walltime": "30", "queue": "normal", "cores": 4}
+)
 execute(
     lsf,
     {"command": ["ngspice", "-b", "corner_tt.spice"], "cwd": "run/tt"},

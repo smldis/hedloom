@@ -174,6 +174,10 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
         'kind = "lsf-interactive"\n'
         'walltime = "240"\n'
         'queue = "normal"\n'
+        'app = "spectre"\n'
+        'memory_mb = 4096\n'
+        'licences = { spectre = 1 }\n'
+        'resources = "select[rh80] span[hosts=1]"\n'
         "max_jobs = 200\n"
         "\n[kernel]\n"
         "threads = 32\n"
@@ -184,7 +188,15 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
     assert site.workspace_root == "/nfs/studies/ota"
     assert site.address_spaces["repository-relative"] == str(tmp_path)
     assert site.threads == 32
-    assert site.transports["lsf"].walltime == "240"
+    lsf = site.transports["lsf"]
+    argv = lsf.build_argv("hedloom-default", {"command": ["simulate"]})
+    assert argv[argv.index("-W") + 1] == "240"
+    assert argv[argv.index("-app") + 1] == "spectre"
+    assert argv.count("-R") == 1
+    assert (
+        argv[argv.index("-R") + 1]
+        == "select[rh80] span[hosts=1] rusage[mem=4096,spectre=1]"
+    )
     # Two numbers about two machines: local concurrency on the submit host, and
     # how many jobs this user may have in flight on the farm.
     assert site.placements == {"lsf": 200, "local": 32}
@@ -230,6 +242,59 @@ def test_max_jobs_is_profile_vocabulary_not_a_bsub_argument(tmp_path):
 
     assert site.placements["lsf"] == 4
     assert not hasattr(site.transports["lsf"], "max_jobs")
+
+
+def test_an_invocation_overrides_a_profile_memory_default(tmp_path):
+    """One placement vocabulary serves both the profile and the Plan."""
+
+    (tmp_path / "site.toml").write_text(
+        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        'kind = "lsf-interactive"\nwalltime = "10"\nmemory_mb = 4096\n'
+        "max_jobs = 4\n"
+    )
+    lsf = Site.from_file(tmp_path / "site.toml").transports["lsf"]
+    bundle = {
+        "command": ["simulate"],
+        "placement": {
+            "requested": {
+                "name": "lsf",
+                "options": {"memory_mb": 8192},
+            }
+        },
+    }
+
+    argv = lsf.build_argv("hedloom-override", bundle)
+    assert argv[argv.index("-R") + 1] == "rusage[mem=8192]"
+
+
+def test_a_misspelled_profile_option_names_the_placement_and_key(tmp_path):
+    """A profile typo is a site error, never a constructor TypeError."""
+
+    (tmp_path / "site.toml").write_text(
+        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        'kind = "lsf-interactive"\nwalltime = "10"\nqueeu = "reg"\n'
+        "max_jobs = 4\n"
+    )
+
+    with pytest.raises(SiteError) as raised:
+        Site.from_file(tmp_path / "site.toml")
+    assert "lsf" in str(raised.value)
+    assert "queeu" in str(raised.value)
+
+
+def test_an_invalid_transport_default_is_a_named_site_error(tmp_path):
+    """Profile validation belongs at the profile boundary, with its route name."""
+
+    (tmp_path / "site.toml").write_text(
+        '[study]\nroot = "attempts"\n\n[placement.farm]\n'
+        'kind = "lsf-interactive"\nwalltime = "10"\nmemory_mb = -1\n'
+        "max_jobs = 4\n"
+    )
+
+    with pytest.raises(SiteError) as raised:
+        Site.from_file(tmp_path / "site.toml")
+    assert "farm" in str(raised.value)
+    assert "memory_mb" in str(raised.value)
 
 
 def test_a_placement_kind_this_site_cannot_build_is_refused(tmp_path):

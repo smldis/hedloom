@@ -179,7 +179,7 @@ def test_an_authored_resource_need_survives_all_the_way_to_the_submission(
         ),
         transports={
             "lsf-direct": LSFInteractiveTransport(
-                walltime="5", runner=SubprocessRunner()
+                defaults={"walltime": "5"}, runner=SubprocessRunner()
             )
         },
         plan_id="study",
