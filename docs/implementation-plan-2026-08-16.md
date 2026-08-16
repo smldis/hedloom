@@ -215,13 +215,35 @@ to block dependents instead of successors, and it should not be.
 failing outcome, cancel the tasks that have not started, let the in-flight ones
 finish, and return a partial report.
 
-The distinction between "not started" and "in flight" is available and must be
-used: `client.processing()` returns `{worker_address: (task keys, …)}` for what
-is executing right now. Everything outstanding and *not* in that set has not
-begun, costs nothing to cancel, and is cancelled with
+The distinction between "not started" and "in flight" is available, and the
+obvious API for it is the wrong one. **Corrected 2026-08-16, after a pass
+stopped on it.**
+
+`client.processing()` does *not* mean "executing". It means "assigned to a
+worker", and because every task in this kernel carries a placement annotation,
+root-task queuing is bypassed and the scheduler hands the entire graph to
+workers at once. Measured against `distributed==2026.7.1`: 8 tasks submitted to
+a 2-thread worker, `processing()` reported **all 8**. An algorithm built on it
+would cancel nothing.
+
+Use **`client.call_stack()`**, which returns `{worker: {key: stack}}` for tasks
+with a live call stack — that is, the ones actually running in a worker thread.
+The same probe returned exactly the 2 executing keys. (`client.run(lambda
+dask_worker: [ts.key for ts in dask_worker.state.executing])` gives the same
+answer and is equally acceptable; `call_stack` is public client API and ships
+no closure to the workers.)
+
+So: everything outstanding and *not* in the `call_stack` snapshot has not begun,
+costs nothing to cancel, and is cancelled with
 `client.cancel(futures, force=False)`. Everything in it is already spending farm
 time and holding a `bsub -I` client — **wait for it.** Killing it here would
 strand exactly what this package exists to stop stranding.
+
+There is an unavoidable race: a task can start between the snapshot and the
+cancel. Its consequences are bounded and worth stating in a comment rather than
+engineering away — Dask cannot interrupt a running Python thread, so such a task
+runs its `bsub -I` to completion and publishes its journal as usual. What is
+lost is its line in the report, not the job and not the record.
 
 Cancelled invocations are reported in plan order with
 `disposition="skipped"`, `outcome="blocked"` — the vocabulary the sequential
