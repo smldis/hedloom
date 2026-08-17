@@ -226,8 +226,28 @@ detached work does.
   holds. Whether a given mount delivers that is the open question in
   `journal.claim()`, and a model cannot answer it — only `/proc/mounts` can.
   `O_APPEND` atomicity is assumed, which NFS does not provide.
-* **Dask.** The kernel decides readiness and nothing else; `hedloom_exec`
-  imports neither it nor `hedloom_flow`. The graph kernel's own stop-admitting
-  and cancellation logic is a separate protocol and is not covered here.
+* **Dask, and the cluster.** No `SpecCluster` surface is modelled: not placement
+  annotation, not the resource budget, not the lockout that annotating every
+  task prevents. Deliberately — a model of Dask's scheduler would only be as
+  good as this author's reading of Dask, and would "prove" things about a
+  scheduler that does not exist. Those claims are cited to `distributed` source
+  lines in `dask-scheduling-rules.md` and measured in probes, which is the
+  right kind of evidence for someone else's implementation.
+
+  Worth stating explicitly, though, because it is a dependency in the other
+  direction: **what keeps the shipped protocol safe today is supplied by
+  `graph.py`.** One task per invocation, `pure=False` so Dask cannot decide two
+  invocations are one call, and a key made unique before submission — together
+  those are why one controller never produces two live callers for one
+  identity, which is the precondition every counterexample above needs. Retries
+  do not break it (a retry is sequential, not concurrent). Two controllers, or
+  pooled placement writing journals from farm nodes, do.
+
+  What *is* worth modelling on that side is `_stop_admitting` — hedloom's own
+  protocol over Dask rather than Dask itself, and one whose comment already
+  admits a race: a task can acquire a thread after the `call_stack()` snapshot
+  and before the `cancel`. That needs only a three-state abstraction of a task
+  (queued, running, done) to ask whether every invocation lands in the report
+  exactly once and whether the bounded loss is as bounded as the comment says.
 * **Liveness.** Only safety invariants and deadlock. The model says a bad state
   is unreachable, not that a run finishes.
