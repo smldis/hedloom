@@ -154,7 +154,9 @@ Each step is falsifiable on its own; stop at the first one that fails.
 
 `dask-jobqueue` is now an optional extra, `hedloom-run[pooled]`, resolved at
 **0.9.0**. It asks only for `distributed>=2022.02.0`, so it composes with the
-`distributed==2026.7.1` pin rather than arguing with it — checked, not assumed.
+`distributed` floor rather than arguing with it — checked, not assumed. (That
+floor is `>=2023.9.2`, where `Client.register_plugin` arrives, which is the call
+pooled placement needs; it was a hard `==2026.7.1` pin when this was written.)
 
 It is separate from `[dask]` on purpose: those extras answer different
 questions, and a farm sweep placing one job per corner needs the scheduler

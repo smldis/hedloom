@@ -6,7 +6,13 @@ What was missing is the other half of the same decision: a Dask cluster opens
 listening sockets, and on a shared submit host those are not private.
 
 Two facts make this an option rather than a footnote. Both were measured
-against `distributed==2026.7.1`, the version `hedloom-run[dask]` pins:
+against `distributed==2026.7.1`. That was once the version `hedloom-run[dask]`
+pinned; the extra now takes a floor (`>=2023.9.2`) instead, because a site does
+not always get to choose its `distributed` and a hard pin turns "a version
+behind" into "cannot install". The measurements below are therefore evidence
+from one version rather than a guarantee about every version, and
+`tests/test_cluster.py` is what holds them: it asserts what a cluster *does*,
+so a release that moves this seam fails on the symptom.
 
 * A `Scheduler` **always** starts an HTTP server. `Scheduler.__init__` calls
   `start_http_server(...)` unconditionally; `dashboard=False` only skips
@@ -58,11 +64,75 @@ fails on the symptom rather than on an import.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from hedloom_run.site import EXPOSURES, PLACEMENT_RESOURCE, Site, SiteError
 
 __all__ = ["EXPOSURES", "cluster_for", "local_cluster", "spec_cluster"]
+
+
+_DASHBOARD_IMPORT = "distributed.dashboard"
+
+
+def _blames_the_dashboard(error: BaseException) -> bool:
+    """Whether this failure, or anything under it, is the dashboard import.
+
+    The chain has to be walked rather than the message read, because the two
+    halves of a cluster report the same cause differently. The scheduler's
+    surfaces as `Cluster failed to start: module 'distributed.dashboard' has no
+    attribute 'scheduler'`, which says so. A worker's surfaces as `Worker failed
+    to start.` — nothing at all — with the `AttributeError` about
+    `distributed.dashboard.worker` only as its `__cause__`.
+
+    Matching on the top-level message would translate one and let the other
+    through under a name that explains nothing.
+    """
+
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if _DASHBOARD_IMPORT in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _built(build: Callable[[], Any], dashboard: str) -> Any:
+    """Build a cluster, and translate the one failure nobody can read.
+
+    A scheduler that serves a dashboard imports `distributed.dashboard.scheduler`
+    lazily, and that import needs bokeh. Without it — or with a bokeh that does
+    not match this `distributed` — the failure surfaces as
+
+        AttributeError: module 'distributed.dashboard' has no attribute 'scheduler'
+
+    which names neither bokeh nor the dashboard, and arrives from a cluster the
+    caller never asked to have a dashboard at all, because `"network"` is the
+    default. Worse, it is *intermittent*: the import is lazy, so two clusters
+    built at once can have one succeed and one fail. A study that ran yesterday
+    fails today with a message about an attribute.
+
+    Newer `distributed` degrades to a reduced status page instead of raising,
+    which is why this is not caught by pinning one version and is exactly the
+    kind of thing a floor rather than a pin lets a site meet. So it is
+    translated here rather than left to be recognised.
+    """
+
+    try:
+        return build()
+    except Exception as error:
+        if not _blames_the_dashboard(error):
+            raise
+        raise SiteError(
+            f"this cluster asked for dashboard = {dashboard!r} and Dask could "
+            "not build one: its dashboard needs bokeh, which is either missing "
+            "or does not match the installed distributed. Dask reports this as "
+            f"an attribute error on {_DASHBOARD_IMPORT}, which names neither. "
+            "Either install bokeh, or declare dashboard = 'none' in the "
+            "profile's [kernel] table — the choice changes how a run can be "
+            "watched and nothing about what it computes."
+        ) from error
 
 
 def _silent(base: Any) -> Any:
@@ -148,16 +218,19 @@ def local_cluster(
         # Deliberately passes no address: naming Dask's default here would
         # copy a value that is theirs to change, and this branch promises to
         # be indistinguishable from not using this module at all.
-        return LocalCluster(**options)
+        return _built(lambda: LocalCluster(**options), dashboard)
 
     if dashboard == "loopback":
         # Both servers. The worker's is a second listener and defaults to every
         # interface exactly as the scheduler's does, so binding only the
         # scheduler would leave the study half exposed and look closed.
-        return LocalCluster(
-            **options,
-            dashboard_address="127.0.0.1:0",
-            worker_dashboard_address="127.0.0.1:0",
+        return _built(
+            lambda: LocalCluster(
+                **options,
+                dashboard_address="127.0.0.1:0",
+                worker_dashboard_address="127.0.0.1:0",
+            ),
+            dashboard,
         )
 
     # `LocalCluster` hardcodes its scheduler class (`deploy/local.py`), so it
@@ -242,9 +315,12 @@ def spec_cluster(
         name: {"cls": worker_cls, "options": {**worker_common, **dict(options)}}
         for name, options in workers.items()
     }
-    return SpecCluster(
-        scheduler={"cls": scheduler_cls, "options": scheduler},
-        workers=spec,
+    return _built(
+        lambda: SpecCluster(
+            scheduler={"cls": scheduler_cls, "options": scheduler},
+            workers=spec,
+        ),
+        dashboard,
     )
 
 

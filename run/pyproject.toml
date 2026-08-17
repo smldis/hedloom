@@ -13,7 +13,23 @@ dependencies = ["hedloom-exec"]
 [project.optional-dependencies]
 # The Dask kernel is an explicit import: a plan small enough to walk in one
 # thread should not have to install a scheduler to run.
-dask = ["distributed==2026.7.1"]
+#
+# A floor, not a pin. This was `==2026.7.1` for as long as the kernel's Dask
+# behaviour was being established, which was right then and wrong now: a site
+# does not always get to choose its `distributed`, and a hard pin turns "your
+# cluster is a version behind" into "you cannot install this at all".
+#
+# The floor is where `Client.register_plugin` arrives (2023.9.2), which pooled
+# placement needs; `register_worker_plugin` before it is a different call. Run
+# against 2023.9.2, 2024.8.0 and 2026.7.1 — the whole `run` and façade suites
+# pass on all three.
+#
+# No upper bound. One would trade a real, immediate inability to install
+# against a hypothetical future break, and the behavioural tests in
+# `tests/test_cluster.py` are what would actually notice such a break: they
+# assert what a cluster *does* — no HTTP server, `inproc://` addresses — rather
+# than which arguments Dask was handed.
+dask = ["distributed>=2023.9.2"]
 
 # Pooled LSF placement, where invocations reach a second cluster whose workers
 # are themselves LSF jobs. Separate from `dask` rather than folded into it,

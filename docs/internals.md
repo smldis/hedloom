@@ -59,7 +59,9 @@ authored config, which bakes a machine path into the outer plan's identity.
   that annotating every task exists to prevent. Start here.
 - [`dask-scheduling-rules.md`](dask-scheduling-rules.md)
   — the same subject as ten rules, each cited to a line of
-  `distributed==2026.7.1` so an upgrade can be re-checked.
+  `distributed` 2026.7.1 so an upgrade can be re-checked. The extra takes a
+  floor rather than a pin, so those citations are a dated reading rather than a
+  description of whatever you have installed.
 - [`attempt-claim-protocol.md`](attempt-claim-protocol.md)
   — the claim, the journal and the two durable writes that publish a result,
   with a TLA+ model of them in [`attempt-claim/`](attempt-claim). Says which

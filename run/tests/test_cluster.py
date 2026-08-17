@@ -241,6 +241,13 @@ def test_silence_belongs_to_the_cluster_that_asked_for_it(tmp_path):
     holds it by building both kinds at the same time.
     """
 
+    # Half of what this asserts is that a cluster built beside a silent one
+    # *still listens*, and a listening cluster cannot be built at all without
+    # bokeh — Dask's dashboard import fails, and under this test's concurrency
+    # it fails for some of the threads and not others. Skipping is honest;
+    # failing would report a missing optional dependency as a broken seam.
+    pytest.importorskip("bokeh", reason="a listening cluster needs a dashboard")
+
     from distributed.node import ServerNode
 
     untouched = ServerNode.start_http_server
@@ -277,3 +284,58 @@ def test_silence_belongs_to_the_cluster_that_asked_for_it(tmp_path):
     assert ServerNode.start_http_server is untouched, (
         "silence is a subclass, so the shared base is never modified at all"
     )
+
+
+def test_a_missing_bokeh_is_reported_as_a_missing_bokeh():
+    """The dashboard's real failure mode, said in words that name it.
+
+    A scheduler serving a dashboard imports `distributed.dashboard.scheduler`
+    lazily, and that needs bokeh. Without it the failure arrives as an
+    `AttributeError` about a missing attribute on a module the caller has never
+    heard of — from a cluster they never asked to have a dashboard, since
+    `"network"` is the default. It cost a farm run to recognise once.
+
+    Both halves are covered because they do not report it the same way: the
+    scheduler's message says `distributed.dashboard`, and a worker's says only
+    "Worker failed to start." with the cause underneath.
+    """
+
+    from hedloom_run.cluster import _blames_the_dashboard
+
+    scheduler_side = RuntimeError(
+        "Cluster failed to start: module 'distributed.dashboard' has no "
+        "attribute 'scheduler'"
+    )
+    assert _blames_the_dashboard(scheduler_side)
+
+    worker_side = RuntimeError("Worker failed to start.")
+    worker_side.__cause__ = AttributeError(
+        "module 'distributed.dashboard' has no attribute 'worker'"
+    )
+    assert _blames_the_dashboard(worker_side), (
+        "a worker reports this only in its cause; matching the message alone "
+        "would let it through under a name that explains nothing"
+    )
+
+    unrelated = RuntimeError("Worker failed to start.")
+    unrelated.__cause__ = OSError("address already in use")
+    assert not _blames_the_dashboard(unrelated), (
+        "an unrelated startup failure must not be blamed on bokeh"
+    )
+
+
+def test_the_bokeh_diagnosis_survives_a_cycle_in_the_cause_chain():
+    """Walking a chain must terminate even when the chain does not.
+
+    `__context__` can point back at an exception already seen, and this walk
+    runs while a cluster is failing to start — the worst moment to hang.
+    """
+
+    from hedloom_run.cluster import _blames_the_dashboard
+
+    first = RuntimeError("one")
+    second = RuntimeError("two")
+    first.__cause__ = second
+    second.__cause__ = first
+
+    assert not _blames_the_dashboard(first)

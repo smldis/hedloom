@@ -80,7 +80,18 @@ placement name before anything runs.
 
 `distributed` is an optional dependency (`pip install hedloom-run[dask]`), reached
 by explicit import: a plan small enough to walk in one thread should not need a
-scheduler. What Dask still cannot tell you is whether a corner is `PEND` or
+scheduler. It takes a **floor**, `>=2023.9.2` — where `Client.register_plugin`
+arrives — rather than a pin: a site does not always get to choose its
+`distributed`, and a hard pin turns "a version behind" into "cannot install".
+Verified against 2023.9.2, 2024.8.0 and 2026.7.1.
+
+If your `distributed` has no matching **bokeh**, its dashboard cannot be built,
+and Dask says so as `AttributeError: module 'distributed.dashboard' has no
+attribute 'scheduler'` — naming neither bokeh nor the dashboard, from a cluster
+you never asked to have one, since `"network"` is the default. Worse, the import
+is lazy, so under concurrency one cluster can fail while its neighbour succeeds.
+That is translated into a message that names bokeh and offers
+`dashboard = "none"`. What Dask still cannot tell you is whether a corner is `PEND` or
 `RUN` — that needs a watcher over the attempt records, which is
 `hedloom_exec.watch` and which `hedloom.Study.submit(watch=True)` now runs for
 the duration of a run.

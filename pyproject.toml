@@ -11,7 +11,8 @@ requires-python = ">=3.11"
 dependencies = ["hedloom-flow", "hedloom-exec", "hedloom-run"]
 
 [project.optional-dependencies]
-dask = ["distributed==2026.7.1"]
+# A floor rather than a pin; `hedloom-run` carries the reasoning.
+dask = ["distributed>=2023.9.2"]
 # Pooled LSF placement. Deferred through to `hedloom-run`, which is the unit
 # that owns binding and is the only one allowed to import Dask at all.
 pooled = ["hedloom-run[pooled]"]
