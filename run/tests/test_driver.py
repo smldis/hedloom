@@ -41,7 +41,14 @@ def summary(members):
     }
 
 
-def document(temperatures=(27, 125)):
+def document(temperatures=(27, 125), stragglers=()):
+    """``stragglers`` are corners nothing summarises, so nothing depends on them.
+
+    They are what tells "this run stopped" apart from "this dependent could not
+    run": a failure always blocks whatever named its result, and only
+    ``stop_on_failure`` decides whether unrelated work goes ahead.
+    """
+
     keys = ["tt", "ss"]
     return {
         "schema_version": 2,
@@ -58,7 +65,9 @@ def document(temperatures=(27, 125)):
         ],
         "invocations": [
             corner(key, value) for key, value in zip(keys, temperatures)
-        ] + [summary(keys)],
+        ] + [summary(keys)] + [
+            corner(key, value) for key, value in stragglers
+        ],
     }
 
 
@@ -132,9 +141,17 @@ def test_a_failure_blocks_its_successors_rather_than_running_them(tmp_path):
     assert report.blocked
 
 
-def test_continuing_past_a_failure_is_possible_but_not_the_default(tmp_path):
+def test_continuing_past_a_failure_still_refuses_to_run_its_dependents(tmp_path):
+    """`stop_on_failure=False` continues; it does not run work with no inputs.
+
+    This once ran `summary` against a result that did not exist, spending an
+    attempt and publishing a failure that blamed `summarize` for an absent
+    upstream artifact. The graph kernel always refused that, and a study has to
+    mean the same thing under either kernel.
+    """
+
     report = run_plan(
-        document(),
+        document(stragglers=(("late", 27),)),
         transport(failing=125),
         plan_id="p",
         root=str(tmp_path),
@@ -142,7 +159,28 @@ def test_continuing_past_a_failure_is_possible_but_not_the_default(tmp_path):
     )
 
     by_key = {item.authored_key: item for item in report.outcomes}
-    assert by_key["summary"].outcome != "blocked"
+    assert by_key["ss"].outcome == "failed"
+    # Nothing depends on this one, so continuing means it runs.
+    assert by_key["late"].outcome == "succeeded"
+    # This one named the failure as an input, so it cannot run at all.
+    assert by_key["summary"].outcome == "blocked"
+    assert by_key["summary"].error is None
+
+
+def test_stopping_also_holds_back_work_that_had_nothing_to_do_with_it(tmp_path):
+    """The other half of the same scope: the default stops the whole run."""
+
+    report = run_plan(
+        document(stragglers=(("late", 27),)),
+        transport(failing=125),
+        plan_id="p",
+        root=str(tmp_path),
+    )
+
+    by_key = {item.authored_key: item for item in report.outcomes}
+    assert by_key["ss"].outcome == "failed"
+    assert by_key["late"].outcome == "blocked"
+    assert by_key["summary"].outcome == "blocked"
 
 
 def test_progress_is_reportable_while_the_run_proceeds(tmp_path):
