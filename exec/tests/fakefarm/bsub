@@ -1,18 +1,73 @@
 #!/usr/bin/env python3
 """A fake `bsub` that records the submission and runs the command locally.
 
-It reproduces LSF's command-line shape and exit-status behaviour, not its
-scheduling. That is enough to exercise the real subprocess layer — argument
-construction, process binding, exit codes, output capture — without a farm.
+It reproduces LSF's command-line shape, its exit-status behaviour, its queue
+*visibility*, and the one guarantee the attempt protocol leans on hardest —
+that an interactive job dies with the client that submitted it. What it does
+not reproduce is LSF's scheduler: there is no fair share, no real contention,
+and `FAKE_LSF_PEND_SECONDS` stands in for a queue wait.
+
+Two things are deliberately *derived* rather than written down, because a fake
+that has to be told the truth can be told a convenient lie:
+
+* **A job is live only while this process is.** The record carries this `bsub`
+  client's pid and `bjobs` checks it, so killing the client makes the job vanish
+  from the queue exactly as owner-bound lifetime says it should. The child is
+  bound the same way, by `PR_SET_PDEATHSIG`, so it really does die rather than
+  being orphaned and left running.
+* **A finished job leaves the queue.** `bjobs` reports PEND and RUN and nothing
+  else, which is what real `bjobs` does without `-a`. Reporting a finished job
+  as RUN — which this fake used to do — hides the whole `submit_lost` branch of
+  `hedloom_exec.attempt`, because discovery would answer "still there" for work
+  that had already ended.
+
+Environment:
+
+    FAKE_LSF_STATE          directory for job records; without it nothing is
+                            recorded and `bjobs` cannot answer
+    FAKE_LSF_PEND_SECONDS   seconds to sit in PEND before running, so a watcher
+                            has a transition to see
+
+Not modelled, and the next thing to add if it is wanted: a slot limit, so jobs
+pend because the farm is busy rather than because a number said so.
 """
 
+import ctypes
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
 
 STATE = os.environ.get("FAKE_LSF_STATE")
+PEND_SECONDS = float(os.environ.get("FAKE_LSF_PEND_SECONDS", "0") or 0)
+
+# Options this fake understands as taking a value. `-app` is here because
+# `build_argv` emits it: without it the application profile's name was parsed
+# as the first word of the command, which silently ran the wrong thing.
+VALUED = ("-J", "-W", "-q", "-n", "-R", "-app", "-M")
+
+PR_SET_PDEATHSIG = 1
+
+
+def bind_to_parent():
+    """Make the child die with this `bsub`, which is what `-I` promises.
+
+    Linux only. Elsewhere the `finally` below still terminates the child on an
+    orderly exit; what cannot be covered without this is a client that is killed
+    outright, which is the case the attempt protocol's crash window is about.
+    """
+
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    except OSError:
+        return None
+
+    def bind():
+        libc.prctl(PR_SET_PDEATHSIG, ctypes.c_ulong(signal.SIGKILL))
+
+    return bind
 
 
 def write_record(path, record):
@@ -33,7 +88,7 @@ def main(argv):
         if token == "-I":
             interactive = True
             index += 1
-        elif token in ("-J", "-W", "-q", "-n", "-R"):
+        elif token in VALUED and index + 1 < len(argv):
             options[token] = argv[index + 1]
             index += 2
         elif token.startswith("-"):
@@ -56,20 +111,44 @@ def main(argv):
         "name": name,
         "options": options,
         "command": command,
-        "started_at_ns": time.time_ns(),
+        # Whose lifetime this job is bound to. `bjobs` reads it rather than
+        # trusting `state`, so a client that is killed cannot leave a job
+        # looking alive.
+        "owner_pid": os.getpid(),
+        "state": "PEND",
+        "submitted_at_ns": time.time_ns(),
     }
     if STATE:
         os.makedirs(STATE, exist_ok=True)
         record_path = os.path.join(STATE, f"{name}.json")
         write_record(record_path, record)
 
+    if PEND_SECONDS:
+        time.sleep(PEND_SECONDS)
+
+    record["state"] = "RUN"
+    record["started_at_ns"] = time.time_ns()
+    if record_path is not None:
+        write_record(record_path, record)
+
+    child = subprocess.Popen(command, preexec_fn=bind_to_parent())
+    if record_path is not None:
+        # Recorded so a test can ask the kernel whether the work itself died,
+        # rather than inferring it from output that never arrived.
+        record["job_pid"] = child.pid
+        write_record(record_path, record)
     try:
-        completed = subprocess.run(command)
+        returncode = child.wait()
     finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
         if record_path is not None:
             record["ended_at_ns"] = time.time_ns()
+            record["state"] = "DONE" if child.returncode == 0 else "EXIT"
+            record["returncode"] = child.returncode
             write_record(record_path, record)
-    return completed.returncode
+    return returncode
 
 
 if __name__ == "__main__":

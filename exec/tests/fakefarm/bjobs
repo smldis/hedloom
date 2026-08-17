@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
-"""A fake `bjobs -J <name> -noheader`, reading the fake farm's state."""
+"""A fake `bjobs`, answering only about jobs that are actually still there.
+
+Two call shapes, because the unit makes two different requests and a fake that
+answers one of them leaves the other untested:
+
+    bjobs -J <name> -noheader          `LSFInteractiveTransport.discover`
+    bjobs -noheader -o "job_name stat" `watch.LSFStatusReader.states`
+
+The second is why the watcher was never exercised against this fake: it was not
+implemented, so `states()` read the non-zero exit as "no unfinished job found"
+and reported nothing, for every run.
+
+Liveness is derived, never trusted. A record is live if its state is PEND or RUN
+*and* the `bsub` client that owns it still exists. So:
+
+* a finished job is absent, as it is from real `bjobs` without `-a`;
+* a job whose client was killed is absent, which is owner-bound lifetime;
+* a record with no `owner_pid` is live, which is how a test plants the orphan
+  that `discover` exists to find.
+"""
 
 import json
 import os
@@ -8,22 +27,81 @@ import sys
 STATE = os.environ.get("FAKE_LSF_STATE")
 
 
+def owner_alive(record):
+    pid = record.get("owner_pid")
+    if pid is None:
+        # A leftover from a run this fake did not start. Real LSF cannot tell
+        # the difference either; that is the situation discovery is for.
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def live_jobs():
+    if not STATE or not os.path.isdir(STATE):
+        return []
+    jobs = []
+    for entry in sorted(os.listdir(STATE)):
+        if not entry.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(STATE, entry)) as handle:
+                record = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if record.get("state") not in ("PEND", "RUN"):
+            continue
+        if not owner_alive(record):
+            continue
+        jobs.append(record)
+    return jobs
+
+
 def main(argv):
-    name = None
+    wanted = None
+    listing = False
     for index, token in enumerate(argv):
         if token == "-J" and index + 1 < len(argv):
-            name = argv[index + 1]
-    if not name or not STATE:
+            wanted = argv[index + 1]
+        if token == "-o":
+            listing = True
+
+    if not STATE:
+        sys.stderr.write("bjobs: FAKE_LSF_STATE is not set\n")
+        return 255
+
+    jobs = live_jobs()
+
+    if listing:
+        # `-o "job_name stat"`, one row per job, which is what the reader asks
+        # for so that a pending job's missing execution host cannot shift the
+        # columns it parses.
+        for record in jobs:
+            sys.stdout.write(f"{record['name']} {record['state']}\n")
+        if not jobs:
+            sys.stderr.write("No unfinished job found\n")
+            return 255
+        return 0
+
+    if wanted is None:
         sys.stderr.write("bjobs: no job name given\n")
         return 255
-    path = os.path.join(STATE, f"{name}.json")
-    if not os.path.exists(path):
-        sys.stderr.write(f"Job <{name}> is not found\n")
-        return 255
-    with open(path) as handle:
-        record = json.load(handle)
-    sys.stdout.write(f"9001 {os.environ.get('USER', 'user')} RUN normal {record['name']}\n")
-    return 0
+
+    for record in jobs:
+        if record["name"] == wanted:
+            user = os.environ.get("USER", "user")
+            queue = record.get("options", {}).get("-q", "normal")
+            sys.stdout.write(
+                f"9001 {user} {record['state']} {queue} {record['name']}\n"
+            )
+            return 0
+    sys.stderr.write(f"Job <{wanted}> is not found\n")
+    return 255
 
 
 if __name__ == "__main__":

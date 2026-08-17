@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
-"""A fake `bkill -J <name>`, removing the fake farm's record."""
+"""A fake `bkill -J <name>`, ending a job rather than forgetting it.
 
+It used to delete the record, which made cancellation and never-having-run
+indistinguishable — and lost the timestamps a test reads to measure how much
+farm a pass spent. Marking it ended has the same effect on `bjobs`, which
+reports only PEND and RUN, while leaving the evidence in place.
+
+Killing the owning `bsub` client is what actually stops the work: the child is
+bound to it with `PR_SET_PDEATHSIG`, so the command dies with its client exactly
+as it would on a real interactive job.
+"""
+
+import json
 import os
+import signal
 import sys
+import time
 
 STATE = os.environ.get("FAKE_LSF_STATE")
 
@@ -15,11 +28,29 @@ def main(argv):
     if not name or not STATE:
         return 255
     path = os.path.join(STATE, f"{name}.json")
-    if os.path.exists(path):
-        os.remove(path)
-        sys.stdout.write(f"Job <{name}> is being terminated\n")
-        return 0
-    return 255
+    if not os.path.exists(path):
+        return 255
+    with open(path) as handle:
+        record = json.load(handle)
+    if record.get("state") not in ("PEND", "RUN"):
+        sys.stderr.write(f"Job <{name}> has already finished\n")
+        return 255
+
+    pid = record.get("owner_pid")
+    if pid is not None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    record["state"] = "EXIT"
+    record["ended_at_ns"] = time.time_ns()
+    record.setdefault("returncode", 130)
+    temporary = f"{path}.{os.getpid()}.tmp"
+    with open(temporary, "w") as handle:
+        json.dump(record, handle)
+    os.replace(temporary, path)
+    sys.stdout.write(f"Job <{name}> is being terminated\n")
+    return 0
 
 
 if __name__ == "__main__":
