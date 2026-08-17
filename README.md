@@ -57,9 +57,10 @@ whose only job is to agree with the first one.
 ## What it does not change
 
 `hedloom-exec` still owns one attempt's durable record and imports neither this
-package nor Dask. `hedloom-run` still owns binding and readiness, so `submit` on a
-Dask client is the same run on a different kernel. Reuse, identity, placement,
-licences, the watcher — untouched. This unit composes; it does not reimplement.
+package nor Dask. `hedloom-run` still owns binding and readiness and both of its
+kernels, so a session is the same run with a scheduler deciding readiness rather
+than a loop. Reuse, identity, placement, licences, the watcher — untouched. This
+unit composes; it does not reimplement.
 
 ```console
 PYTHONPATH=src:flow/src:exec/src:run/src python -m pytest -q
@@ -75,11 +76,77 @@ complete plan-to-record path without a simulator:
 python examples/farm_smoke.py examples/farm-smoke.site.toml
 ```
 
-The Plan sweeps two points, each with explicit `start` and `count` parameters.
+The Plan sweeps four points, each with explicit `start` and `count` parameters.
 For each point one `/bin/sh` command generates a numeric file and a second
-POSIX-shell command consumes it, producing four visible `bsub -I` jobs and two
+POSIX-shell command consumes it, producing eight visible `bsub -I` jobs and four
 deterministic summaries. It then submits the same Plan again and
-requires all four invocations to be reused without new jobs. Results live under
+requires all eight invocations to be reused without new jobs. Results live under
 `examples/_runs/farm-smoke/`. The profile explicitly requests queue `reg`, one
 core per job, and a one-minute walltime; copy the TOML and change those site
 facts when needed.
+
+Both submissions run inside one session, which is the whole of what a study
+author has to hold:
+
+```python
+with session(site, watch=True) as farm:
+    first = farm.submit(subject)
+    second = farm.submit(subject)      # reuse, same cluster, same watcher
+```
+
+The session owns the cluster, the client and one queue watcher, and gives them
+back when the block ends — which matters, because under owner-bound lifetime
+leaving it ends any farm job still in flight. There is no kernel to choose:
+capacity is the site's, and a site that declares none has capacity one. Ask for
+`sequential=True` to run one at a time with no scheduler at all (this is what
+keeps `distributed` an optional extra), or `locally=True` to debug the whole
+study in this process without touching the farm. Either can be narrowed for a
+single run without a second profile:
+
+```python
+with session(site, {"placement": {"lsf": {"max_jobs": 1, "queue": "express"}}}) as farm:
+    ...
+```
+
+An override changes how a run executes and never what it means, so an overridden
+run lands on the same attempt identities and the two reuse each other's work.
+
+## Two studies at once
+
+What the first test does not ask is what happens when something else is already
+running. `examples/farm_multi_client.py` does, using the same operations:
+
+```console
+python examples/farm_multi_client.py --queue reg --max-jobs 2
+```
+
+Its site is built in Python rather than read from a profile — the other half of
+the smoke test. A profile is right when a queue, a walltime and a farm share
+belong to an installation and get copied per site; here the site *is* the
+experiment, three arrangements differing in one declared number, so arguments
+are both shorter and more honest than three TOML files.
+
+Each arrangement is measured from the attempt journals rather than from the
+process that started the work — one interval per job, between the
+`submit_intent` written before the transport is touched and the receipt written
+when `bsub -I` returns:
+
+* **One session, two studies.** A session is one cluster, and a placement's
+  budget belongs to that cluster's workers, so `submit_all` cannot put more on
+  the farm than the site declared however many studies it is given. Eight jobs
+  are wanted, `max_jobs` is two, and no more than two are ever in flight.
+* **One session, the same study twice.** Dask keys belong to the scheduler, so
+  identical work submitted twice is one task: four jobs, not eight. The attempt
+  claim is never consulted here — there is only ever one caller — so this is
+  Dask's idempotence, not hedloom's. Both reports say `claimed`.
+* **Two sessions, the same study.** Different key namespaces, so both callers
+  really do reach the attempt protocol and the journal claim is what prevents
+  the duplicate. The loser is refused by name rather than made to wait. This is
+  also the arrangement where the cap does *not* hold: each session has its own
+  cluster and therefore its own budget, so two controllers can put twice
+  `max_jobs` on the farm.
+
+A fourth pass resubmits all of it from one session and must spend nothing.
+`tests/test_farm_multi_client_example.py` runs the whole thing against the fake
+`bsub`, checking the same numbers from the submission records rather than from
+the journals, so the two instruments have to agree.
