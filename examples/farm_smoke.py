@@ -1,6 +1,6 @@
 """Run four independent, two-job Hedloom chains on an LSF farm.
 
-    python examples/farm_smoke.py examples/farm-smoke.site.toml [--dask]
+    python examples/farm_smoke.py examples/farm-smoke.site.toml
 
 Each point first generates an integer range, then passes that declared artifact
 to a summarizing farm job after a different authored delay. The four chains are
@@ -28,11 +28,11 @@ from hedloom import (  # noqa: E402
     operation,
     parameter,
     plan,
+    session,
     shell,
     study,
     sweep,
 )
-from hedloom_run.cluster import cluster_for  # noqa: E402
 
 NUMBER_LIST = artifact("number-list")
 POINTS = (
@@ -124,11 +124,16 @@ def build():
     return draft.finish(outputs=outputs)
 
 
-def run(subject, site, *, client=None) -> int:
-    """Submit twice, proving the second pass spends no farm work."""
+def run(subject, farm) -> int:
+    """Submit twice, proving the second pass spends no farm work.
+
+    Both submissions go to one session, so they share one cluster, one farm
+    budget and one queue watcher — and the second pass proves reuse without
+    paying to start any of that again.
+    """
 
     print("first submission (must launch eight LSF jobs):")
-    first = subject.submit(site=site, client=client, watch=True)
+    first = farm.submit(subject)
     if not first.succeeded:
         print(first.summary())
         return 1
@@ -140,7 +145,7 @@ def run(subject, site, *, client=None) -> int:
         print(summary.read_text(), end="")
 
     print("\nsecond submission (must reuse all eight; no new LSF jobs):")
-    second = subject.submit(site=site, client=client, watch=True)
+    second = farm.submit(subject)
     if not second.succeeded or len(second.report.reused) != 8:
         print(second.summary())
         return 1
@@ -152,29 +157,19 @@ def run(subject, site, *, client=None) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("site", type=Path, help="farm Site profile")
-    parser.add_argument(
-        "--dask",
-        action="store_true",
-        help="give readiness and concurrency to the site's Dask cluster",
-    )
     args = parser.parse_args()
 
     site = Site.from_file(args.site)
     subject = study(build())
     print(subject.summary(), "\n")
 
-    if not args.dask:
-        return run(subject, site)
-
-    from distributed import Client
-
-    cluster = cluster_for(site)
-    try:
-        with Client(cluster) as client:
-            print(f"dashboard: {client.dashboard_link}")
-            return run(subject, site, client=client)
-    finally:
-        cluster.close()
+    # There is no kernel to choose. The site says how much farm this study may
+    # spend and the session opens exactly that, for as long as the two runs
+    # below need it; a site that declares nothing has capacity one, which is
+    # one invocation at a time. Add `sequential=True` for that without a
+    # scheduler, or `locally=True` to debug the whole thing on this host.
+    with session(site, watch=True) as farm:
+        return run(subject, farm)
 
 
 if __name__ == "__main__":
