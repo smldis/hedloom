@@ -100,8 +100,9 @@ Each configuration runs in about a second and explores a few hundred states.
 | `MCClaimedPublication` | nothing; adds the repair below | no violation, no deadlock, 250 distinct states |
 | `MCNoLock` | `LockHonoured` | **`LiveJobHasDurableTrace` violated** in 9 states; `AtMostOneLive` in 11 |
 | `MCRecordFirst` | `PublishOrder` | **`TerminalHasEvidence` violated** in 10 states, no crash needed |
-| `MCStaleDiscovery` | `DiscoveryIsAccurate` | no violation — see below |
-| `MCDetached` | `DiscoveryIsAccurate` and `OwnerBoundLifetime` | **`LiveJobHasDurableTrace` violated** in 10 states; `AtMostOneLive` in 12 |
+| `MCStaleDiscovery` | `DiscoveryIsAccurate`, and the refusal | no violation — see below |
+| `MCDetached` | `DiscoveryIsAccurate`, `OwnerBoundLifetime`, and the refusal | **`LiveJobHasDurableTrace` violated** in 10 states; `AtMostOneLive` in 12 |
+| `MCPooled` | `DiscoveryIsAccurate` and `OwnerBoundLifetime`, **keeping** the refusal | no violation — pooled placement as shipped |
 
 Trace lengths for `AtMostOneLive` are from a run with the other invariants
 removed, since TLC stops at whichever is violated first.
@@ -215,6 +216,45 @@ and discovery that cannot see it — is what the `attached` disposition and
 unreachable today because nothing detaches. The model agrees, and adds that
 `discovery_is_authoritative` is a claim that starts mattering on the same day
 detached work does.
+
+### That day arrived: pooled placement
+
+**Updated 2026-08-17.** Pooled LSF placement is the thing that detaches, so the
+paragraph above stopped being about a hypothetical. It also exposed a fidelity
+gap: `Decide` recorded `submit_lost` whenever discovery came up empty, but
+`launch_or_attach` does not — it raises `UnrecoverableAttempt` when the
+transport declares `discovery_is_authoritative = False`, because a transport
+that cannot confirm acceptance must not be read as denying it. The model was
+checking a caller that guesses; the code refuses. `RefusesWhenBlind` is now that
+branch, and `MCStaleDiscovery` and `MCDetached` deny it, which is what preserves
+their findings above.
+
+`MCPooled` is the same substrate as `MCDetached` with the refusal kept — pooled
+placement exactly as shipped — and **every invariant holds**. Set against
+`MCDetached` still failing, that isolates what buys the safety:
+
+> On a pooled substrate, neither discovery nor owner-bound lifetime is doing the
+> work. **Refusing to guess is.** It is the only thing standing between the
+> crash window and a duplicate farm job.
+
+Which makes `discovery_is_authoritative = False` on `LSFPooledTransport` a
+load-bearing declaration rather than a disclaimer. Setting it to `True` for a
+substrate that cannot really answer would not degrade recovery — it would
+reintroduce `MCDetached` exactly.
+
+**What it costs, which no invariant here measures.** The refusal is permanent.
+A pooled invocation caught in the crash window can never be resumed: its phase
+stays `intended`, so every later `launch_or_attach` raises again, and no rerun
+of the study will get past it without someone editing the journal. Direct
+placement recovers here — the job died with its client, discovery is
+authoritative, `submit_lost` is the truth, and the work is simply resubmitted.
+Pooled placement trades that recoverability for safety.
+
+That trade is reasoned, not model-checked, and the model cannot check it as it
+stands: a caller refused the *claim* never retries, so TLC cannot distinguish
+"stuck because the transport is blind" from "stuck because it lost a race and
+this model has no retry loop". Making it checkable means giving `Claim` a retry,
+which is a bigger change than this finding needs.
 
 ## What is not modelled
 

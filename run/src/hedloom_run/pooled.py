@@ -241,6 +241,22 @@ class LSFPooledTransport:
     and `hedloom_exec.attempt` must refuse to guess rather than risk running
     the same work twice. That is a real cost of pooling and it is recorded here
     rather than papered over.
+
+    A TLA+ check of the attempt protocol on this substrate (`MCPooled.cfg`,
+    2026-08-17) says that refusal is not a formality: with it, every invariant
+    holds; deny it and the same configuration reproduces `MCDetached`, where a
+    caller crashing mid-submission leaves its work running and the next caller
+    starts a second copy. Neither discovery nor owner-bound lifetime is
+    protecting a pooled attempt — **refusing to guess is the only thing that
+    is**. Declaring this `True` to make recovery smoother would not degrade the
+    guarantee, it would remove it.
+
+    The price is recoverability, and it is worth saying plainly: a pooled
+    invocation caught in the crash window is *permanently* unrecoverable. Its
+    phase stays `intended`, so every later attempt raises again and no rerun
+    gets past it without someone editing the journal. A direct placement
+    recovers there, because its job died with its client and "not found" is the
+    truth. Pooling buys throughput with recoverability.
     """
 
     def __init__(self, pool: str, *, settings: Mapping[str, Any] | None = None) -> None:

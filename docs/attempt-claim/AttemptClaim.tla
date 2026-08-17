@@ -27,7 +27,7 @@
 (*   * A crash kills that caller's farm job. That is owner-bound lifetime,  *)
 (*     and it is an assumption about the transport, not a theorem.         *)
 (*                                                                         *)
-(* Four constants make load-bearing assumptions switchable, so that denying *)
+(* Five constants make load-bearing assumptions switchable, so that denying *)
 (* one and re-running TLC shows what it was holding up. See the MC*.cfg     *)
 (* files and `docs/attempt-claim-protocol.md`.                             *)
 (***************************************************************************)
@@ -41,7 +41,8 @@ CONSTANTS
     DiscoveryIsAccurate, \* TRUE: `discover` sees a live job iff one exists
     OwnerBoundLifetime,  \* TRUE: a dead caller's farm job dies with it
     PublishUnderClaim,   \* FALSE: as shipped. TRUE: hold the claim through publication
-    PublishOrder         \* "manifest-first" (shipped) | "record-first" (mutation)
+    PublishOrder,        \* "manifest-first" (shipped) | "record-first" (mutation)
+    RefusesWhenBlind     \* TRUE: as shipped -- a blind transport raises rather than guessing
 
 NoOne     == "no-one"
 NoOutcome == "no-outcome"
@@ -167,9 +168,19 @@ Decide(c) ==
           /\ IF DiscoveryFinds
                THEN /\ log' = Append(log, "submit_receipt")
                     /\ pc' = [pc EXCEPT ![c] = AfterLaunch]
-               ELSE /\ log' = Append(log, "submit_lost")
-                    /\ pc' = [pc EXCEPT ![c] = "intent"]
-          /\ UNCHANGED holder
+                    /\ UNCHANGED holder
+               \* `UnrecoverableAttempt`. A transport that cannot confirm or
+               \* deny acceptance is not allowed to be read as denying it, so
+               \* the caller refuses rather than guessing. This is the branch
+               \* the protocol document called unreachable "because nothing
+               \* detaches" -- pooled placement is the thing that detaches.
+               ELSE IF RefusesWhenBlind /\ ~DiscoveryIsAccurate
+                 THEN /\ pc' = [pc EXCEPT ![c] = "refused"]
+                      /\ holder' = ReleasedBy(c)
+                      /\ UNCHANGED log
+                 ELSE /\ log' = Append(log, "submit_lost")
+                      /\ pc' = [pc EXCEPT ![c] = "intent"]
+                      /\ UNCHANGED holder
        \/ \* nothing was ever accepted: this call submits it once
           /\ published = NoOutcome
           /\ Phase = "unsubmitted"
@@ -272,8 +283,18 @@ Crash(c) ==
     /\ live' = IF OwnerBoundLifetime THEN [live EXCEPT ![c] = FALSE] ELSE live
     /\ UNCHANGED <<log, published, recorded, seen>>
 
-(* An orphaned job -- one that outlived the caller that submitted it -- runs  *)
-(* to completion on its own. Only reachable when lifetime is not owner-bound. *)
+(* An orphaned job -- one that outlived the caller that submitted it -- stops *)
+(* on its own, at some later point. Only reachable when lifetime is not       *)
+(* owner-bound.                                                               *)
+(*                                                                            *)
+(* This is also the delayed reaping a pooled worker does, and deliberately the *)
+(* same action: a pooled invocation's command is killed when its worker hits   *)
+(* `death_timeout` after the scheduler its caller owned went away. Finishing   *)
+(* and being reaped differ in why `live` clears, not in when it may clear --   *)
+(* both are "after an unbounded but finite delay, during which other callers   *)
+(* may do anything" -- and no invariant here distinguishes work that completed *)
+(* from work that was killed. Modelling them as two actions would double the   *)
+(* state space to say the same thing twice.                                    *)
 OrphanFinishes(c) ==
     /\ pc[c] = "dead"
     /\ live[c]
