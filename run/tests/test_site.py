@@ -199,7 +199,7 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
     )
     # Two numbers about two machines: local concurrency on the submit host, and
     # how many jobs this user may have in flight on the farm.
-    assert site.placements == {"lsf": 200, "local": 32}
+    assert site.capacity == {"lsf": 200, "local": 32}
 
 
 def test_a_farm_placement_without_a_cap_is_refused(tmp_path):
@@ -225,7 +225,7 @@ def test_local_exists_even_where_a_profile_never_mentions_it(tmp_path):
 
     site = Site(root=str(tmp_path), placements={"lsf": 8}, threads=3)
 
-    assert site.placements["local"] == 3
+    assert site.capacity["local"] == 3
     spec = site.cluster_spec()
     assert spec["lsf"] == {"nthreads": 8, "resources": {"placement:lsf": 8}}
     assert spec["local"] == {"nthreads": 3, "resources": {"placement:local": 3}}
@@ -240,8 +240,12 @@ def test_max_jobs_is_profile_vocabulary_not_a_bsub_argument(tmp_path):
     )
     site = Site.from_file(tmp_path / "site.toml")
 
-    assert site.placements["lsf"] == 4
+    assert site.capacity["lsf"] == 4
     assert not hasattr(site.transports["lsf"], "max_jobs")
+    # It stays in the declaration, because a run may override it there; what it
+    # must never do is reach the transport as a `bsub` setting.
+    assert site.placements["lsf"]["max_jobs"] == 4
+    assert "max_jobs" not in site.transports["lsf"].defaults
 
 
 def test_an_invocation_overrides_a_profile_memory_default(tmp_path):
@@ -333,3 +337,120 @@ def test_a_relative_root_is_anchored_before_anything_uses_it(tmp_path, monkeypat
     assert Path(site.workspace_root).is_absolute()
     assert Path(site.address_spaces["here"]).is_absolute()
     assert Path(site.root) == tmp_path / "records"
+
+
+def test_a_python_site_declares_a_placement_once(tmp_path):
+    """The budget and the substrate are one declaration, not two that must agree.
+
+    A caller used to pass `transports=` and `placements=` separately, naming the
+    placement twice; a typo produced a budget with no way to reach it, found
+    much later as `UnsupportedPlacement`.
+    """
+
+    site = Site(
+        root=str(tmp_path),
+        placements={
+            "lsf": {
+                "kind": "lsf-interactive",
+                "queue": "reg",
+                "walltime": "1",
+                "max_jobs": 2,
+            }
+        },
+        threads=3,
+    )
+
+    assert site.capacity == {"lsf": 2, "local": 3}
+    assert site.transports["lsf"].name == "lsf-interactive"
+    assert site.transports["lsf"].defaults["queue"] == "reg"
+
+
+def test_a_profile_and_a_python_site_are_the_same_declaration(tmp_path):
+    """One vocabulary, two notations. The refusals have to reach both."""
+
+    (tmp_path / "site.toml").write_text(
+        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        'kind = "lsf-interactive"\nqueue = "reg"\nwalltime = "1"\nmax_jobs = 2\n'
+        "\n[kernel]\nthreads = 3\n",
+        encoding="utf-8",
+    )
+    from_file = Site.from_file(tmp_path / "site.toml")
+    in_python = Site(
+        root=str(tmp_path / "attempts"),
+        placements={
+            "lsf": {
+                "kind": "lsf-interactive",
+                "queue": "reg",
+                "walltime": "1",
+                "max_jobs": 2,
+            }
+        },
+        threads=3,
+    )
+
+    assert from_file.capacity == in_python.capacity
+    assert from_file.placements == in_python.placements
+    assert (
+        from_file.transports["lsf"].defaults == in_python.transports["lsf"].defaults
+    )
+
+
+def test_an_override_changes_how_a_run_executes_and_nothing_it_declares(tmp_path):
+    """`reuse.py` settles that placement is not identity-bearing, so this is safe."""
+
+    site = Site(
+        root=str(tmp_path),
+        placements={
+            "lsf": {
+                "kind": "lsf-interactive",
+                "queue": "reg",
+                "walltime": "1",
+                "cores": 1,
+                "max_jobs": 8,
+            }
+        },
+        threads=4,
+        dashboard="network",
+    )
+    thrifty = site.overridden(
+        {"placement": {"lsf": {"max_jobs": 1, "queue": "express"}},
+         "kernel": {"dashboard": "none"}}
+    )
+
+    assert thrifty.capacity["lsf"] == 1
+    assert thrifty.transports["lsf"].defaults["queue"] == "express"
+    assert thrifty.dashboard == "none"
+    assert thrifty.root == site.root, "an override must not move the record"
+    # The original is untouched: an override derives a site, it does not edit one.
+    assert site.capacity["lsf"] == 8
+    assert site.transports["lsf"].defaults["queue"] == "reg"
+
+
+def test_an_override_refuses_what_would_change_meaning(tmp_path):
+    site = Site(root=str(tmp_path), placements={"local": 2})
+
+    with pytest.raises(SiteError, match="never what it means"):
+        site.overridden({"study": {"root": "/somewhere/else"}})
+    with pytest.raises(SiteError, match="does not offer"):
+        site.overridden({"placement": {"lsf": {"max_jobs": 1}}})
+
+
+def test_served_in_process_keeps_the_placements_and_drops_the_substrate(tmp_path):
+    """For debugging a farm study here: same names, same budgets, no farm."""
+
+    site = Site(
+        root=str(tmp_path),
+        placements={
+            "lsf": {
+                "kind": "lsf-interactive",
+                "walltime": "1",
+                "max_jobs": 4,
+            }
+        },
+        threads=2,
+    )
+    here = site.served_in_process()
+
+    assert here.capacity == site.capacity, "the Plan still resolves to these names"
+    assert "lsf" not in here.transports, "nothing may leave the process"
+    assert here.placements["lsf"]["kind"] == "in-process"

@@ -104,10 +104,36 @@ class Site:
     transports: Mapping[str, Transport] = field(default_factory=dict)
     workspace_root: str | None = None
     address_spaces: Mapping[str, str] = field(default_factory=dict)
-    placements: Mapping[str, int] = field(default_factory=dict)
-    """How many invocations each placement may have in flight at once.
+    placements: Mapping[str, int | Mapping[str, Any]] = field(default_factory=dict)
+    """Each placement this site offers: its budget, and how to reach it.
 
-    The number that makes a placement real at run time. Each entry becomes one
+    Two forms, and the second is the same vocabulary a profile's `[placement.x]`
+    table uses — deliberately, so that a site written in Python and a site read
+    from TOML are the same declaration in two notations rather than two code
+    paths that must agree:
+
+        placements={"local": 4}                        # a bare budget
+        placements={"lsf": {"kind": "lsf-interactive", # a whole placement
+                            "queue": "reg", "walltime": "1",
+                            "cores": 1, "max_jobs": 2}}
+
+    A mapping that names a `kind` also builds that placement's transport, so the
+    budget and the substrate are declared once, together, and cannot be given
+    inconsistent names. Before this, Python callers had to pass `transports=`
+    and `placements=` separately, naming the placement twice with nothing
+    checking that the two agreed — a typo produced a budget with no transport,
+    found much later as `UnsupportedPlacement`.
+
+    `transports=` remains for substrates no mapping can describe: an in-process
+    placement needs callables, which is what `with_transports` supplies. An
+    explicitly supplied transport wins over one built from a declaration.
+
+    After construction every entry reads as a declaration, with `max_jobs`
+    filled in and validated. A site keeps what it was told and `capacity`
+    derives the numbers from it, because keeping the declaration is what lets a
+    single run override *how* a placement is reached without restating it.
+
+    `max_jobs` is the number that makes a placement real at run time. Each is one
     Dask worker whose threads are that placement's budget and nothing else's,
     and every task the graph kernel submits asks for one unit of the placement
     it resolved to. A local invocation therefore cannot occupy a thread meant
@@ -175,14 +201,38 @@ class Site:
                 for name, location in self.address_spaces.items()
             },
         )
+        # A bare budget is the one-key declaration `{"max_jobs": cap}`, so both
+        # notations reach the same validator and produce the same refusals.
+        declared = {
+            name: (dict(options) if isinstance(options, Mapping) else {"max_jobs": options})
+            for name, options in self.placements.items()
+        }
+        describes = {
+            name: options for name, options in declared.items() if "kind" in options
+        }
+        if describes:
+            object.__setattr__(
+                self,
+                "transports",
+                # Explicit wins: an in-process placement's callables cannot be
+                # described by a mapping and must not be displaced by one.
+                {**_transports_from(describes), **dict(self.transports)},
+            )
         # Every plan can name `local`, because that is what an operation
         # declaring no policy resolves to at authoring time. A site that never
         # mentions it still has to be able to run it, so the capacity exists
         # whether or not the profile said so — otherwise the commonest plan of
         # all asks for a placement the cluster does not offer.
-        placements = {name: int(cap) for name, cap in self.placements.items()}
-        placements.setdefault("local", self.threads or 1)
-        object.__setattr__(self, "placements", placements)
+        caps = _placements_from(declared, self.threads)
+        declared.setdefault("local", {})
+        object.__setattr__(
+            self,
+            "placements",
+            {
+                name: {**options, "max_jobs": caps.get(name, self.threads or 1)}
+                for name, options in declared.items()
+            },
+        )
         # Refused here rather than when a cluster is built: a profile naming an
         # exposure this installation cannot honour is a configuration error,
         # and finding it at construction means finding it before a study runs.
@@ -209,6 +259,102 @@ class Site:
             dashboard=self.dashboard,
         )
 
+    @property
+    def capacity(self) -> dict[str, int]:
+        """How many invocations each placement may have in flight at once."""
+
+        return {
+            name: int(options["max_jobs"])
+            for name, options in self.placements.items()
+        }
+
+    def overridden(self, patch: Mapping[str, Mapping[str, Any]]) -> "Site":
+        """A site that runs work differently and means exactly the same by it.
+
+        The patch speaks the profile's own vocabulary — `placement` and
+        `kernel` — and merges into each placement's declaration, so one run can
+        spend less of the farm, ask for another queue, or open no dashboard
+        without a second profile and without editing the first.
+
+        Why this is safe rather than a back door into the Plan: none of it is
+        identity-bearing. `reuse.py` settles that deliberately — "queue,
+        walltime, cores, and host do not change what a deterministic operation
+        produces, so changing them must not invalidate a result" — so an
+        overridden run lands on the same attempt identities as a plain one, and
+        the two reuse each other's work. Anything in `IDENTITY_KEYS` belongs to
+        the author and cannot be reached from here.
+
+        `study` is refused rather than accepted: relocating the record changes
+        what a run reuses, which is a different installation and not a
+        different way of running this one.
+        """
+
+        unknown = sorted(set(patch) - {"placement", "kernel"})
+        if unknown:
+            raise SiteError(
+                f"a run may override {', '.join(unknown)} nowhere: an override "
+                "says how this run executes, never what it means. It may carry "
+                "'placement' and 'kernel'. Roots belong to the site, because "
+                "moving them changes what is reused; inputs, commands and "
+                "outputs belong to the Plan."
+            )
+        placements = {
+            name: dict(options) for name, options in self.placements.items()
+        }
+        for name, options in (patch.get("placement") or {}).items():
+            if name not in placements:
+                raise SiteError(
+                    f"the override names placement {name!r}, which this site "
+                    f"does not offer. It offers: {', '.join(sorted(placements))}"
+                )
+            placements[name] = {**placements[name], **dict(options)}
+        kernel = patch.get("kernel") or {}
+        # A transport built from a declaration is rebuilt from the patched one;
+        # anything supplied by hand is kept, since no mapping describes it.
+        described = {
+            name
+            for name, options in self.placements.items()
+            if options.get("kind") not in (None, "in-process")
+        }
+        return Site(
+            root=self.root,
+            transports={
+                name: transport
+                for name, transport in self.transports.items()
+                if name not in described
+            },
+            workspace_root=self.workspace_root,
+            address_spaces=self.address_spaces,
+            placements=placements,
+            threads=kernel.get("threads", self.threads),
+            dashboard=kernel.get("dashboard", self.dashboard),
+        )
+
+    def served_in_process(self) -> "Site":
+        """The same placements, every one of them run by the authored body here.
+
+        For debugging a farm study on the submit host: the placement names, the
+        budgets and therefore the Plan are untouched, but nothing leaves the
+        process. Identity is untouched too, which is the point and also the
+        catch — a local run publishes attempts a later farm run will reuse. That
+        is sound exactly as far as the author's declared inputs go; a result
+        that depends on the machine needs that fact in `identity_env`, which is
+        what it is for.
+        """
+
+        return Site(
+            root=self.root,
+            transports={},
+            workspace_root=self.workspace_root,
+            address_spaces=self.address_spaces,
+            placements={
+                name: {**options, "kind": "in-process"}
+                for name, options in self.placements.items()
+            },
+            threads=self.threads,
+            dashboard=self.dashboard,
+        )
+
     def cluster_spec(self) -> dict[str, dict[str, Any]]:
         """One worker per placement, sized by that placement's own cap.
 
@@ -228,7 +374,7 @@ class Site:
                 "nthreads": cap,
                 "resources": {f"{PLACEMENT_RESOURCE}{name}": cap},
             }
-            for name, cap in self.placements.items()
+            for name, cap in self.capacity.items()
         }
 
     def resolve(self, address: Mapping[str, Any]) -> Path:
@@ -312,10 +458,10 @@ class Site:
                 name: anchored(location)
                 for name, location in (data.get("address_space") or {}).items()
             },
-            transports=_transports_from(data.get("placement") or {}),
-            placements=_placements_from(
-                data.get("placement") or {}, (data.get("kernel") or {}).get("threads")
-            ),
+            # Handed over whole. The constructor builds the transports and the
+            # budgets from this one table, so a profile and a `Site(...)` written
+            # by hand cannot diverge in what a placement means.
+            placements=data.get("placement") or {},
             threads=(data.get("kernel") or {}).get("threads"),
             dashboard=(data.get("kernel") or {}).get("dashboard", "network"),
         )
