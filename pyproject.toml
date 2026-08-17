@@ -26,7 +26,8 @@ hedloom-exec = { workspace = true }
 hedloom-run  = { workspace = true }
 
 [dependency-groups]
-dev = ["hedloom-flow[dask]", "hedloom-run[pooled]", "pytest", "setuptools>=69"]
+dev = ["hedloom-flow[dask]", "hedloom-run[pooled]", "bokeh", "pytest",
+       "setuptools>=69"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
