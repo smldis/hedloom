@@ -35,59 +35,58 @@ The invariant:
 No identity, no reuse, no Plan content is touched — the same promise the choice
 of kernel already makes.
 
-**Why "none" needs a private seam.** There is no supported way to ask
-`distributed` for a scheduler that does not listen, so this suppresses
-`ServerNode.start_http_server` while the cluster is built. Both the scheduler
-and the workers create their servers there, so one override silences all of
-them, and `ServerNode` being their shared base is what makes it a single seam
-rather than a sweep.
+**How "none" is built.** There is no argument that asks `distributed` for a
+scheduler which does not listen, but there is no need for one: `SpecCluster`
+takes the scheduler and worker classes as data, so a subclass overriding
+`start_http_server` gives silence that belongs to *this* cluster. Both the
+scheduler and the workers bind there, so one override covers both.
 
-Depending on a private method is defensible only if the *behaviour* is what is
-tested. `tests/test_cluster.py` asserts that a silent cluster holds no HTTP
-server and that work still runs, so an upgrade that moves the seam fails on the
-symptom rather than on an import.
+This replaced suppressing that method on the shared `ServerNode` base while a
+cluster was built. A patch has to be undone, which meant process-wide state, a
+lock and a depth count to survive two constructions at once, and a window in
+which any cluster built concurrently by anything else in the process was
+silenced without asking. It was found by two silent clusters in two threads
+leaving the seam open for the rest of the process. Substituting a class has none
+of those properties and needs no state at all.
+
+Overriding a method Dask does not document as an extension point is still
+defensible only if the *behaviour* is what is tested. `tests/test_cluster.py`
+asserts that a silent cluster holds no HTTP server, that a normal one built
+beside it does, and that work still runs — so an upgrade that moves the seam
+fails on the symptom rather than on an import.
 """
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Any, Iterator, Mapping
+from typing import Any, Mapping
 
 from hedloom_run.site import EXPOSURES, PLACEMENT_RESOURCE, Site, SiteError
 
 __all__ = ["EXPOSURES", "cluster_for", "local_cluster", "spec_cluster"]
 
 
-def _no_http_server(
-    self: Any,
-    routes: Any,
-    dashboard_address: Any,
-    default_port: int = 0,
-    ssl_options: Any = None,
-) -> None:
-    """Stand in for `ServerNode.start_http_server`, which always binds."""
+def _silent(base: Any) -> Any:
+    """A subclass of `base` that never starts its HTTP server.
 
-    return None
+    `ServerNode.start_http_server` is where a scheduler and every worker bind,
+    so overriding it in a subclass silences both — and silences *only these*
+    clusters. That is the whole difference from suppressing it on the shared
+    base class, which was the first thing tried here: a patch has to be undone,
+    which means process-wide state, a lock and a depth count to survive two
+    constructions at once, and a window in which a cluster built concurrently by
+    anything else in the process is silenced without asking.
 
-
-@contextmanager
-def _without_http_servers() -> Iterator[None]:
-    """Hold the seam open only while a cluster is being built.
-
-    Scoped in time rather than in space: the patch is global, but a scheduler
-    and its workers create their servers during construction, so covering the
-    construction covers their whole lives. Anything built afterwards — by this
-    process, or by a library sharing it — listens normally.
+    None of which is needed, because `SpecCluster` takes the scheduler and
+    worker classes as data. Substituting a class is a supported extension point;
+    the patch was a workaround for not having looked for one.
     """
 
-    from distributed.node import ServerNode
+    def start_http_server(self: Any, *arguments: Any, **options: Any) -> None:
+        return None
 
-    original = ServerNode.start_http_server
-    ServerNode.start_http_server = _no_http_server
-    try:
-        yield
-    finally:
-        ServerNode.start_http_server = original
+    return type(f"Silent{base.__name__}", (base,), {
+        "start_http_server": start_http_server,
+    })
 
 
 def local_cluster(
@@ -161,11 +160,20 @@ def local_cluster(
             worker_dashboard_address="127.0.0.1:0",
         )
 
-    with _without_http_servers():
-        # `dashboard_address=None` as well as the suppression: it is what makes
-        # the scheduler skip connecting bokeh routes to an application the
-        # patch never built.
-        return LocalCluster(**options, dashboard_address=None)
+    # `LocalCluster` hardcodes its scheduler class (`deploy/local.py`), so it
+    # cannot be told to be silent. It is a `SpecCluster` underneath and this
+    # branch is one worker with no processes — which `spec_cluster` expresses
+    # exactly — so the silent shape is built there rather than by reaching into
+    # Dask's internals to reproduce it here.
+    return spec_cluster(
+        {
+            "local": {
+                "nthreads": threads,
+                "resources": (options.get("resources") or None),
+            }
+        },
+        dashboard="none",
+    )
 
 
 def spec_cluster(
@@ -224,21 +232,18 @@ def spec_cluster(
     else:
         scheduler.update(dashboard=False, dashboard_address=None)
 
+    # Silence is a property of these two classes, not of this process. See
+    # `_silent`: it is why nothing here has to be undone afterwards.
+    scheduler_cls = _silent(Scheduler) if dashboard == "none" else Scheduler
+    worker_cls = _silent(Worker) if dashboard == "none" else Worker
     spec = {
-        name: {"cls": Worker, "options": {**worker_common, **dict(options)}}
+        name: {"cls": worker_cls, "options": {**worker_common, **dict(options)}}
         for name, options in workers.items()
     }
-    build = lambda: SpecCluster(  # noqa: E731 - one expression, used twice
-        scheduler={"cls": Scheduler, "options": scheduler},
+    return SpecCluster(
+        scheduler={"cls": scheduler_cls, "options": scheduler},
         workers=spec,
     )
-
-    if dashboard == "none":
-        # `SpecCluster` starts the scheduler and every worker inside
-        # `__init__`, so covering construction covers all of them.
-        with _without_http_servers():
-            return build()
-    return build()
 
 
 def cluster_for(site: Site, *, dashboard: str | None = None) -> Any:

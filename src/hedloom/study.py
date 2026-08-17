@@ -33,7 +33,7 @@ from hedloom_run.site import Site
 
 from hedloom.binding import BoundTransport
 
-__all__ = ["Study", "StudyRun", "submit"]
+__all__ = ["Study", "StudyRun", "start_watcher", "submit"]
 
 _WATCH_INTERVAL_SECONDS = 10.0
 _WATCH_JOIN_SECONDS = 1.0
@@ -116,6 +116,9 @@ class Study:
         *,
         site: Site,
         client: Any = None,
+        override: Mapping[str, Mapping[str, Any]] | None = None,
+        sequential: bool = False,
+        locally: bool = False,
         watch: bool = False,
         stop_on_failure: bool = True,
         on_event: Callable[[InvocationOutcome], None] | None = None,
@@ -123,15 +126,67 @@ class Study:
     ) -> StudyRun:
         """Run this study, honouring every placement the Plan resolved.
 
-        ``client`` gives readiness to Dask; without one the study is walked in
-        one thread, which is right for a plan small enough not to need a
-        cluster and wrong for a sweep. The cluster is the caller's because its
-        shape — how many concurrent jobs this site tolerates — is an
-        operational decision a library must not make silently.
+        Concurrency is the site's: this opens the compute the site declares for
+        as long as the run needs it, spends up to each placement's `max_jobs`,
+        and gives it back. A site that declares nothing has capacity one, which
+        is one invocation at a time — there was never a second mode to choose,
+        only a second implementation of the same capacity.
 
-        ``stop_on_failure`` is explicit because the kernels stop at different
-        boundaries: the sequential reference blocks plan-order successors,
-        while Dask stops work that has not acquired a worker thread.
+        ``override``, ``sequential`` and ``locally`` are the session's, and mean
+        exactly what they mean there; this is the one-run form of
+
+            with session(site) as farm:
+                farm.submit(study)
+
+        which is what to use for several runs, so they share one cluster, one
+        budget and one watcher.
+
+        ``client`` is the escape hatch for a caller who already holds one, and
+        skips all of that. Nothing here needs it.
+
+        ``stop_on_failure`` also stops work that has not started, as well as the
+        dependents a failure blocks in any case.
+        """
+
+        if client is None:
+            from hedloom.session import session
+
+            with session(
+                site,
+                override,
+                sequential=sequential,
+                locally=locally,
+                watch=watch,
+                _watch_reader=_watch_reader,
+            ) as live:
+                return live.submit(
+                    self, stop_on_failure=stop_on_failure, on_event=on_event
+                )
+
+        return self._run(
+            site=site,
+            client=client,
+            watch=watch,
+            stop_on_failure=stop_on_failure,
+            on_event=on_event,
+            _watch_reader=_watch_reader,
+        )
+
+    def _run(
+        self,
+        *,
+        site: Site,
+        client: Any = None,
+        watch: bool = False,
+        stop_on_failure: bool = True,
+        on_event: Callable[[InvocationOutcome], None] | None = None,
+        _watch_reader: LSFStatusReader | None = None,
+    ) -> StudyRun:
+        """Bind this study to a site and walk it, on the given client or here.
+
+        The seam a `Session` drives. It owns no lifetime of its own: whatever
+        cluster, client or watcher this needs has already been opened by
+        whoever called it, which is why the same body serves one run and many.
         """
 
         document = self.document
@@ -281,6 +336,9 @@ def submit(
     *,
     site: Site,
     client: Any = None,
+    override: Mapping[str, Mapping[str, Any]] | None = None,
+    sequential: bool = False,
+    locally: bool = False,
     watch: bool = False,
     stop_on_failure: bool = True,
 ) -> StudyRun:
@@ -289,6 +347,9 @@ def submit(
     return study.submit(
         site=site,
         client=client,
+        override=override,
+        sequential=sequential,
+        locally=locally,
         watch=watch,
         stop_on_failure=stop_on_failure,
     )

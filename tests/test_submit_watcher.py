@@ -246,6 +246,7 @@ def test_a_raised_run_still_stops_and_joins_its_poller(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="kernel escaped"):
         local_study().submit(
             site=Site(root=str(tmp_path / "attempts")),
+            sequential=True,
             watch=True,
             _watch_reader=ReplayReader(AssertionError("local work called bjobs")),
         )

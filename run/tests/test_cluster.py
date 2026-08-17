@@ -10,6 +10,7 @@ every existing installation. `"network"` must pass no address at all, because
 the moment it names one it has taken over a default that belongs to Dask.
 """
 
+import threading
 import pytest
 
 from hedloom_run.cluster import cluster_for, local_cluster, spec_cluster
@@ -215,3 +216,52 @@ def test_the_seam_is_restored_for_whatever_is_built_next():
         assert after.scheduler.http_server is not None
     finally:
         after.close()
+
+
+def test_silence_belongs_to_the_cluster_that_asked_for_it(tmp_path):
+    """Silence must not leak to clusters built beside a silent one.
+
+    This is what suppressing `ServerNode.start_http_server` process-wide could
+    not give. Two silent constructions at once each restored the other's patch
+    and left the seam open, so every later cluster was silenced without asking —
+    found as an unrelated test, asserting a normal cluster has an HTTP server,
+    beginning to fail. Substituting a subclass has no such window, and this
+    holds it by building both kinds at the same time.
+    """
+
+    from distributed.node import ServerNode
+
+    untouched = ServerNode.start_http_server
+    site = Site(root=str(tmp_path), placements={"local": 1})
+    built: list[tuple[str, object]] = []
+
+    def build(exposure: str) -> None:
+        built.append(
+            (exposure, spec_cluster(site.cluster_spec(), dashboard=exposure))
+        )
+
+    threads = [
+        threading.Thread(target=build, args=(exposure,))
+        for exposure in ("none", "none", "loopback", "none", "loopback")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    try:
+        silent = [c for exposure, c in built if exposure == "none"]
+        listening = [c for exposure, c in built if exposure == "loopback"]
+        assert len(silent) == 3 and len(listening) == 2
+        for cluster in silent:
+            assert not hasattr(cluster.scheduler, "http_server")
+        for cluster in listening:
+            assert cluster.scheduler.http_server is not None, (
+                "a cluster built beside a silent one must still listen"
+            )
+    finally:
+        for _, cluster in built:
+            cluster.close()
+
+    assert ServerNode.start_http_server is untouched, (
+        "silence is a subclass, so the shared base is never modified at all"
+    )

@@ -485,6 +485,7 @@ def _stop_admitting(
 def _collect_preserved(
     futures: Sequence[Any],
     *,
+    client: Any,
     by_future_key: Mapping[str, PlannedInvocation],
     completed: dict[str, _Step],
     on_event: Callable[[InvocationOutcome], None] | None,
@@ -496,7 +497,7 @@ def _collect_preserved(
     from distributed import as_completed
 
     deferred: BaseException | None = None
-    for future in as_completed(list(futures)):
+    for future in as_completed(list(futures), loop=client.loop):
         item = by_future_key[future.key]
         try:
             step = future.result()
@@ -605,7 +606,7 @@ def run_plan_graph(
     known_in_flight: tuple[str | None, ...] = ()
     normal_exit = False
     try:
-        for future in as_completed(list(futures.values())):
+        for future in as_completed(list(futures.values()), loop=client.loop):
             step = future.result()
             completed[step.outcome.invocation_id] = step
             if on_event:
@@ -622,6 +623,7 @@ def run_plan_graph(
                 known_in_flight = stopped.in_flight
                 _collect_preserved(
                     stopped.preserved,
+                    client=client,
                     by_future_key=by_future_key,
                     completed=completed,
                     on_event=on_event,
@@ -647,6 +649,7 @@ def run_plan_graph(
                 )
                 _collect_preserved(
                     stopped.preserved,
+                    client=client,
                     by_future_key=by_future_key,
                     completed=completed,
                     on_event=on_event,

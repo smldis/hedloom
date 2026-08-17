@@ -109,7 +109,12 @@ def test_the_body_that_runs_is_the_one_the_plan_names(site):
 def test_stop_on_failure_defaults_true_and_reaches_both_kernels(
     site, monkeypatch
 ):
-    """The façade must not silently choose either kernel's failure scope."""
+    """The façade must not silently choose either kernel's failure scope.
+
+    Which kernel runs is asked for, not inferred from an omitted argument: a
+    site declaring capacity and quietly running one at a time is
+    indistinguishable from a busy farm.
+    """
 
     study_module = importlib.import_module("hedloom.study")
     graph_module = importlib.import_module("hedloom_run.graph")
@@ -126,7 +131,7 @@ def test_stop_on_failure_defaults_true_and_reaches_both_kernels(
     monkeypatch.setattr(study_module, "run_plan", fake_run)
     monkeypatch.setattr(graph_module, "run_plan_graph", fake_graph)
     subject = study(build())
-    subject.submit(site=site, stop_on_failure=False)
+    subject.submit(site=site, sequential=True, stop_on_failure=False)
     subject.submit(site=site, client=object(), stop_on_failure=False)
 
     assert calls == [("sequential", False), ("graph", False)]
@@ -292,3 +297,139 @@ def test_an_unedited_source_reuses_what_read_it(reading_site):
 def test_a_command_renders_as_something_an_operator_can_read():
     assert str(shell("ngspice", "-b", Path("/tmp/x.cir"))) == "ngspice -b /tmp/x.cir"
     assert isinstance(shell("true"), Shell)
+
+
+def test_an_overridden_run_lands_on_the_same_attempts(site):
+    """The safety claim under `session(site, override)`, end to end.
+
+    Placement is a scheduling concern and identity a semantic one, so a run that
+    spent less of the site must be reusable by one that did not. If an override
+    ever reached identity, this reruns instead of reusing.
+    """
+
+    thrifty = study(build()).submit(
+        site=site, override={"kernel": {"threads": 1}}
+    )
+    plain = study(build()).submit(site=site)
+
+    assert thrifty.succeeded, thrifty.summary()
+    assert all(item.reused for item in plain.report.outcomes), plain.summary()
+
+
+def test_locally_runs_a_farm_study_here_and_needs_no_scheduler(tmp_path):
+    """The debugging pair: no farm, no scheduler, and the same identities."""
+
+    farm_site = Site(
+        root=str(tmp_path / "attempts"),
+        workspace_root=str(tmp_path / "work"),
+        placements={
+            "lsf": {"kind": "lsf-interactive", "walltime": "1", "max_jobs": 4}
+        },
+    )
+    with plan(default_policy=local()) as draft:
+        outputs = notes.options(key="notes")(("ab",))
+    subject = study(draft.finish(outputs=outputs))
+
+    # No `bsub` on PATH and no cluster: if either were reached this would fail.
+    debugged = subject.submit(site=farm_site, locally=True)
+
+    assert debugged.succeeded, debugged.summary()
+    assert debugged["ab:measure"].value == 6
+
+
+def test_a_session_holds_one_cluster_for_several_runs(site):
+    from hedloom import session
+
+    subject = study(build())
+    with session(site) as farm:
+        first = farm.submit(subject)
+        second = farm.submit(subject)
+        assert farm.client is not None, "a non-sequential session holds a client"
+
+    assert first.succeeded, first.summary()
+    assert all(item.reused for item in second.report.outcomes), second.summary()
+
+
+def test_a_sequential_session_builds_no_cluster_and_runs_studies_in_turn(site):
+    """`sequential=True` is what keeps `distributed` optional, so it must not
+    reach it — and it must not run several studies at once either, which would
+    exceed the capacity it promised."""
+
+    from hedloom import session
+
+    with session(site, sequential=True) as farm:
+        assert farm.client is None
+        runs = farm.submit_all({"one": study(build()), "two": study(build())})
+
+    assert set(runs) == {"one", "two"}
+    assert all(run.succeeded for run in runs.values())
+
+
+def test_dask_globals_survive_a_session(site):
+    """A session's client must not become the process default.
+
+    Two clients whose lifetimes interleave restore `dask.config` out of order and
+    leave the scheduler pointing at one that has gone, which broke an unrelated
+    `dask.compute` test when the examples did this by hand.
+    """
+
+    dask = pytest.importorskip("dask")
+    from hedloom import session
+
+    before = dask.config.get("scheduler", None)
+    with session(site) as farm:
+        farm.submit(study(build()))
+    assert dask.config.get("scheduler", None) == before
+
+
+@operation(config={"word": parameter(str)},
+           outputs={"note": file("note.txt", kind="text-file")})
+def refuses_one_word(out, *, word: str) -> None:
+    if word == "bad":
+        raise RuntimeError("this corner fails")
+    out.note.write_text(word)
+
+
+@flow
+def pairs(words):
+    return {
+        word: measure(refuses_one_word(word=word))
+        for word in sweep(words, key=lambda item: item)
+    }
+
+
+def _one_failing_branch():
+    with plan(default_policy=local()) as draft:
+        outputs = pairs.options(key="pairs")(("bad", "good"))
+    return study(draft.finish(outputs=outputs))
+
+
+@pytest.mark.parametrize("kernel", [{"sequential": True}, {}])
+def test_both_kernels_block_a_dependent_and_let_others_finish(tmp_path, kernel):
+    """A failure blocks what named its result, whatever stop_on_failure says.
+
+    The sequential kernel used to *run* the dependent: its input did not exist,
+    so it spent an attempt and published `failed` with a TypeError blaming the
+    operation for an absent upstream artifact. On a farm that is a real `bsub -I`
+    spent on work that could not succeed. The graph kernel always refused it, and
+    a study has to mean the same thing under either.
+    """
+
+    site = Site(
+        root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}"),
+        workspace_root=str(tmp_path / f"work-{'seq' if kernel else 'graph'}"),
+    )
+    run = _one_failing_branch().submit(
+        site=site, stop_on_failure=False, **kernel
+    )
+
+    outcomes = {item.authored_key: item for item in run.report.outcomes}
+    assert outcomes["bad:refuses_one_word"].outcome == "failed"
+    assert outcomes["bad:measure"].outcome == "blocked"
+    assert outcomes["bad:measure"].disposition == "skipped"
+    assert outcomes["bad:measure"].error is None, (
+        "a blocked invocation never ran, so it has no error of its own"
+    )
+    # The branch that has nothing to do with the failure still finishes.
+    assert outcomes["good:refuses_one_word"].outcome == "succeeded"
+    assert outcomes["good:measure"].value == 4
