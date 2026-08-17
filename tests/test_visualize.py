@@ -7,7 +7,7 @@ refuses instead of inventing one.
 
 import pytest
 
-from hedloom import artifact, file, flow, local, operation, parameter, plan, returned, study, sweep
+from hedloom import artifact, file, flow, local, operation, parameter, returned, study, sweep
 from hedloom.visualize import RefusedComputation, lower, structure
 
 TEXT = artifact("text-file")
@@ -32,14 +32,13 @@ def notes(words):
     return {"sizes": last}
 
 
+@study(default_policy=local())
 def build(words=("ab", "cde")):
-    with plan(default_policy=local()) as draft:
-        outputs = notes.options(key="notes")(words)
-    return draft.finish(outputs=outputs)
+    return notes.named("notes")(words)
 
 
 def test_the_plan_lowers_to_a_graph_with_the_shape_it_declared():
-    lowering = lower(study(build()))
+    lowering = lower(build())
 
     assert len(lowering.invocations) == 4
     assert list(lowering.outputs) == ["sizes"]
@@ -49,7 +48,7 @@ def test_computing_a_lowering_refuses_instead_of_answering():
     """The whole reason this is safe to expose."""
 
     dask = pytest.importorskip("dask")
-    lowering = lower(study(build()))
+    lowering = lower(build())
 
     with pytest.raises(Exception) as raised:
         dask.compute(*lowering.outputs.values())
@@ -62,7 +61,7 @@ def test_computing_a_lowering_refuses_instead_of_answering():
 
 
 def test_structure_speaks_the_vocabulary_the_study_was_authored_in():
-    shape = structure(study(build()))
+    shape = structure(build())
 
     labels = {node["label"] for node in shape["nodes"]}
     assert {"ab:write_note", "ab:measure", "cde:write_note", "cde:measure"} <= labels
@@ -72,7 +71,7 @@ def test_structure_speaks_the_vocabulary_the_study_was_authored_in():
 
 
 def test_every_edge_joins_two_declared_nodes():
-    shape = structure(study(build()))
+    shape = structure(build())
 
     known = {node["id"] for node in shape["nodes"]}
     assert shape["edges"], "a plan with inputs must have edges"
@@ -87,7 +86,7 @@ def test_structure_needs_neither_dask_nor_graphviz(monkeypatch):
     import sys
 
     monkeypatch.setitem(sys.modules, "graphviz", None)
-    assert structure(study(build()))["nodes"]
+    assert structure(build())["nodes"]
 
 
 def test_a_drawing_sizes_itself_to_whatever_holds_it():
@@ -126,7 +125,7 @@ def test_the_drawing_is_labelled_the_way_the_study_was_authored():
     pytest.importorskip("graphviz")
     from hedloom.visualize import _authored_digraph, structure
 
-    body = _authored_digraph(structure(study(build())), rankdir="TB").source
+    body = _authored_digraph(structure(build()), rankdir="TB").source
 
     for authored in ("ab:write_note", "cde:measure"):
         assert authored in body, authored
@@ -138,4 +137,4 @@ def test_an_unknown_view_is_refused_rather_than_guessed(tmp_path):
     from hedloom.visualize import render
 
     with pytest.raises(ValueError, match="authored"):
-        render(study(build()), str(tmp_path / "x.svg"), view="sideways")
+        render(build(), str(tmp_path / "x.svg"), view="sideways")

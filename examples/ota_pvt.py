@@ -70,7 +70,6 @@ from hedloom import (  # noqa: E402
     materialization,
     operation,
     parameter,
-    plan,
     returned,
     shell,
     study,
@@ -398,7 +397,7 @@ def ota_pvt_study(base, edits, definition, limits, points):
         )
         measurements.append(measure_ac(raw, definition, point_id=point.key))
 
-    evaluation = evaluate_pvt.options(key="evaluate-pvt")(
+    evaluation = evaluate_pvt.named("evaluate-pvt")(
         measurements,
         decompositions,
         limits,
@@ -407,32 +406,33 @@ def ota_pvt_study(base, edits, definition, limits, points):
     return {"evaluation": evaluation.evaluation}
 
 
-def build(points=PVT_POINTS):
-    with plan(default_policy=local()) as draft:
-        outputs = ota_pvt_study.options(key="ota-pvt-study")(
-            input_artifact(
-                address("repository-relative", BASE_DIRECTORY_LOCATOR),
-                artifact=SIDE_CAR_BASE,
-                materialized_as=REPOSITORY_DIRECTORY_TREE,
-            ),
-            input_artifact(
-                address("repository-relative", PVT_EDITS_LOCATOR),
-                artifact=SIDE_CAR_EDITS,
-                materialized_as=REPOSITORY_PYTHON_SOURCE,
-            ),
-            input_artifact(
-                address("repository-relative", MEASUREMENT_DEFINITION_LOCATOR),
-                artifact=MEASUREMENT_DEFINITION,
-                materialized_as=REPOSITORY_JSON,
-            ),
-            input_artifact(
-                address("repository-relative", SPEC_LIMITS_LOCATOR),
-                artifact=SPEC_LIMITS,
-                materialized_as=REPOSITORY_JSON,
-            ),
-            points,
-        )
-    return draft.finish(outputs=outputs)
+@study(default_policy=local())
+def pvt(points=PVT_POINTS):
+    """The study: every declared input, then the flow that consumes them."""
+
+    return ota_pvt_study.named("ota-pvt-study")(
+        input_artifact(
+            address("repository-relative", BASE_DIRECTORY_LOCATOR),
+            artifact=SIDE_CAR_BASE,
+            materialized_as=REPOSITORY_DIRECTORY_TREE,
+        ),
+        input_artifact(
+            address("repository-relative", PVT_EDITS_LOCATOR),
+            artifact=SIDE_CAR_EDITS,
+            materialized_as=REPOSITORY_PYTHON_SOURCE,
+        ),
+        input_artifact(
+            address("repository-relative", MEASUREMENT_DEFINITION_LOCATOR),
+            artifact=MEASUREMENT_DEFINITION,
+            materialized_as=REPOSITORY_JSON,
+        ),
+        input_artifact(
+            address("repository-relative", SPEC_LIMITS_LOCATOR),
+            artifact=SPEC_LIMITS,
+            materialized_as=REPOSITORY_JSON,
+        ),
+        points,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +666,7 @@ def main() -> int:
         address_spaces={"repository-relative": str(_REPO)},
     )
 
-    subject = study(build())
+    subject = pvt()
     print(subject.summary(), "\n")
 
     run = subject.submit(site=site, watch=True)

@@ -13,6 +13,7 @@ import pytest
 
 from hedloom import (
     Site,
+    Study,
     address,
     artifact,
     codec,
@@ -76,10 +77,9 @@ def notes(words):
     return {"sizes": sizes[-1]}
 
 
+@study(default_policy=local())
 def build(words=("ab", "cde")):
-    with plan(default_policy=local()) as draft:
-        outputs = notes.options(key="notes")(words)
-    return draft.finish(outputs=outputs)
+    return notes.named("notes")(words)
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ def site(tmp_path):
 
 
 def test_the_plan_is_complete_before_anything_is_spent(tmp_path):
-    subject = study(build())
+    subject = build()
     document = subject.document
 
     assert document["schema_version"] == 3
@@ -99,7 +99,7 @@ def test_the_plan_is_complete_before_anything_is_spent(tmp_path):
 
 
 def test_the_body_that_runs_is_the_one_the_plan_names(site):
-    run = study(build()).submit(site=site)
+    run = build().submit(site=site)
 
     assert run.succeeded, run.summary()
     assert run["ab:measure"].value == 6
@@ -130,7 +130,7 @@ def test_stop_on_failure_defaults_true_and_reaches_both_kernels(
 
     monkeypatch.setattr(study_module, "run_plan", fake_run)
     monkeypatch.setattr(graph_module, "run_plan_graph", fake_graph)
-    subject = study(build())
+    subject = build()
     subject.submit(site=site, sequential=True, stop_on_failure=False)
     subject.submit(site=site, client=object(), stop_on_failure=False)
 
@@ -159,7 +159,7 @@ def test_the_module_submit_threads_stop_on_failure(site):
 
 
 def test_a_declared_file_lands_where_the_operation_said(site):
-    run = study(build()).submit(site=site)
+    run = build().submit(site=site)
 
     address = run["ab:write_note"].artifacts["note"]["address"]
     assert Path(address).name == "note.txt"
@@ -167,7 +167,7 @@ def test_a_declared_file_lands_where_the_operation_said(site):
 
 
 def test_the_plan_carries_what_implements_each_operation(tmp_path):
-    document = study(build()).document
+    document = build().document
     # Named from this module, whatever pytest imported it as.
     definitions = {
         item["identity"]["name"]: item for item in document["operations"]
@@ -181,15 +181,15 @@ def test_the_plan_carries_what_implements_each_operation(tmp_path):
 
 
 def test_a_second_run_reuses_everything(site):
-    study(build()).submit(site=site)
-    again = study(build()).submit(site=site)
+    build().submit(site=site)
+    again = build().submit(site=site)
 
     assert all(item.reused for item in again.report.outcomes), again.summary()
 
 
 def test_one_edited_point_reruns_only_its_own_branch(site):
-    study(build()).submit(site=site)
-    edited = study(build(words=("ab", "xyz"))).submit(site=site)
+    build().submit(site=site)
+    edited = build(words=("ab", "xyz")).submit(site=site)
 
     outcomes = {item.authored_key: item for item in edited.report.outcomes}
     assert outcomes["ab:write_note"].reused
@@ -200,15 +200,17 @@ def test_one_edited_point_reruns_only_its_own_branch(site):
 
 def test_a_sweep_keys_every_call_inside_it(tmp_path):
     keys = {
-        item["authored_key"] for item in study(build()).document["invocations"]
+        item["authored_key"] for item in build().document["invocations"]
     }
     assert {"ab:write_note", "ab:measure", "cde:write_note", "cde:measure"} == keys
 
 
 def test_a_body_may_ask_for_a_command_to_be_run(site):
-    with plan(default_policy=local()) as draft:
-        outputs = {"copy": copy_via_shell.options(key="copy")(word="hello").copy}
-    run = study(draft.finish(outputs=outputs)).submit(site=site)
+    @study(default_policy=local())
+    def copies():
+        return {"copy": copy_via_shell.named("copy")(word="hello").copy}
+
+    run = copies().submit(site=site)
 
     assert run.succeeded, run.summary()
     address = run["copy"].artifacts["copy"]["address"]
@@ -232,15 +234,14 @@ def test_a_workspace_offers_only_declared_file_outputs(tmp_path):
         workspace.undeclared
 
 
+@study(default_policy=local())
 def _reads_a_source():
-    with plan(default_policy=local()) as draft:
-        given = input_artifact(
-            address("fixtures", "given.txt"),
-            artifact=TEXT,
-            materialized_as=FIXTURE_MATERIALIZATION,
-        )
-        outputs = {"size": measure_source.options(key="read")(given).size}
-    return draft.finish(outputs=outputs)
+    given = input_artifact(
+        address("fixtures", "given.txt"),
+        artifact=TEXT,
+        materialized_as=FIXTURE_MATERIALIZATION,
+    )
+    return {"size": measure_source.named("read")(given).size}
 
 
 @pytest.fixture
@@ -268,7 +269,7 @@ def test_a_declared_source_reaches_the_body_that_asked_for_it(reading_site):
     to read an external file was to write its path into a second file by hand.
     """
 
-    run = study(_reads_a_source()).submit(site=reading_site)
+    run = _reads_a_source().submit(site=reading_site)
 
     assert run.succeeded, run.summary()
     assert run["read"].value == 5
@@ -277,19 +278,19 @@ def test_a_declared_source_reaches_the_body_that_asked_for_it(reading_site):
 def test_editing_a_source_reruns_the_work_that_read_it(reading_site, fixtures):
     """Delivery and staleness read the same file, so they cannot disagree."""
 
-    first = study(_reads_a_source()).submit(site=reading_site)
+    first = _reads_a_source().submit(site=reading_site)
     assert first["read"].value == 5
 
     (fixtures / "given.txt").write_text("abcdefgh")
-    again = study(_reads_a_source()).submit(site=reading_site)
+    again = _reads_a_source().submit(site=reading_site)
 
     assert not again.report.outcomes[0].reused, again.summary()
     assert again["read"].value == 8
 
 
 def test_an_unedited_source_reuses_what_read_it(reading_site):
-    study(_reads_a_source()).submit(site=reading_site)
-    again = study(_reads_a_source()).submit(site=reading_site)
+    _reads_a_source().submit(site=reading_site)
+    again = _reads_a_source().submit(site=reading_site)
 
     assert all(item.reused for item in again.report.outcomes), again.summary()
 
@@ -307,10 +308,10 @@ def test_an_overridden_run_lands_on_the_same_attempts(site):
     ever reached identity, this reruns instead of reusing.
     """
 
-    thrifty = study(build()).submit(
+    thrifty = build().submit(
         site=site, override={"kernel": {"threads": 1}}
     )
-    plain = study(build()).submit(site=site)
+    plain = build().submit(site=site)
 
     assert thrifty.succeeded, thrifty.summary()
     assert all(item.reused for item in plain.report.outcomes), plain.summary()
@@ -326,9 +327,7 @@ def test_locally_runs_a_farm_study_here_and_needs_no_scheduler(tmp_path):
             "lsf": {"kind": "lsf-interactive", "walltime": "1", "max_jobs": 4}
         },
     )
-    with plan(default_policy=local()) as draft:
-        outputs = notes.options(key="notes")(("ab",))
-    subject = study(draft.finish(outputs=outputs))
+    subject = build(("ab",))
 
     # No `bsub` on PATH and no cluster: if either were reached this would fail.
     debugged = subject.submit(site=farm_site, locally=True)
@@ -340,7 +339,7 @@ def test_locally_runs_a_farm_study_here_and_needs_no_scheduler(tmp_path):
 def test_a_session_holds_one_cluster_for_several_runs(site):
     from hedloom import session
 
-    subject = study(build())
+    subject = build()
     with session(site) as farm:
         first = farm.submit(subject)
         second = farm.submit(subject)
@@ -359,7 +358,7 @@ def test_a_sequential_session_builds_no_cluster_and_runs_studies_in_turn(site):
 
     with session(site, sequential=True) as farm:
         assert farm.client is None
-        runs = farm.submit_all({"one": study(build()), "two": study(build())})
+        runs = farm.submit_all({"one": build(), "two": build()})
 
     assert set(runs) == {"one", "two"}
     assert all(run.succeeded for run in runs.values())
@@ -378,7 +377,7 @@ def test_dask_globals_survive_a_session(site):
 
     before = dask.config.get("scheduler", None)
     with session(site) as farm:
-        farm.submit(study(build()))
+        farm.submit(build())
     assert dask.config.get("scheduler", None) == before
 
 
@@ -398,10 +397,9 @@ def pairs(words):
     }
 
 
+@study(default_policy=local())
 def _one_failing_branch():
-    with plan(default_policy=local()) as draft:
-        outputs = pairs.options(key="pairs")(("bad", "good"))
-    return study(draft.finish(outputs=outputs))
+    return pairs.named("pairs")(("bad", "good"))
 
 
 @pytest.mark.parametrize("kernel", [{"sequential": True}, {}])
@@ -433,3 +431,55 @@ def test_both_kernels_block_a_dependent_and_let_others_finish(tmp_path, kernel):
     # The branch that has nothing to do with the failure still finishes.
     assert outcomes["good:refuses_one_word"].outcome == "succeeded"
     assert outcomes["good:measure"].value == 4
+
+
+def test_a_study_is_a_function_and_calling_it_spends_nothing(tmp_path):
+    """What `@study` leaves behind, and what it costs to call.
+
+    The decorated name is a family rather than one study, because the arguments
+    are what distinguish its members. Calling it plans — which reads the
+    registry, records invocations, and touches no site.
+    """
+
+    subject = build(("ab", "cde"))
+
+    assert isinstance(subject, Study)
+    assert len(subject.document["invocations"]) == 4
+    assert not (tmp_path / "attempts").exists()
+    assert build(("ab", "cde")).document == subject.document
+
+
+def test_the_draft_form_and_the_decorated_form_are_one_plan():
+    """`plan()` remains the escape hatch, and must not mean anything else."""
+
+    with plan(default_policy=local()) as draft:
+        outputs = notes.named("notes")(("ab", "cde"))
+    explicit = study(draft.finish(outputs=outputs))
+
+    assert explicit.document == build().document
+
+
+def test_calling_the_family_is_what_produces_a_study():
+    """The mistake this shape invites, answered with what to type instead."""
+
+    with pytest.raises(AttributeError, match=r"call it first, as build\(\.\.\.\)\.submit"):
+        build.submit
+
+    with pytest.raises(AttributeError):
+        build.no_such_attribute
+
+
+def test_a_finished_plan_cannot_be_given_a_default_policy():
+    """It has already been authored; the policies in it are settled."""
+
+    with plan(default_policy=local()) as draft:
+        outputs = notes.named("notes")(("ab",))
+    finished = draft.finish(outputs=outputs)
+
+    with pytest.raises(TypeError, match="already carries its policies"):
+        study(finished, default_policy=local())
+
+
+def test_study_refuses_what_it_can_neither_plan_nor_pair():
+    with pytest.raises(TypeError, match="a strategy to plan or a finished Plan"):
+        study(42)

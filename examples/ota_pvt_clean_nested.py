@@ -93,7 +93,6 @@ from hedloom import (  # noqa: E402
     materialization,
     operation,
     parameter,
-    plan,
     returned,
     shell,
     study,
@@ -325,22 +324,21 @@ def corner_sweep(base, edits, definition, limits, jobs):
         raw = simulate_ac(run, point_id=job["name"], analysis="ac")
         measured.append(measure_ac(raw, definition, point_id=job["name"]))
 
-    evaluation = evaluate_pvt.options(key="evaluate")(
+    evaluation = evaluate_pvt.named("evaluate")(
         measured, limits, point_ids=[job["name"] for job in jobs]
     )
     return {"evaluation": evaluation.evaluation}
 
 
-def build_corner_study(jobs: list[dict[str, Any]]):
-    """Author stage two. Ordinary authoring — the jobs are just a value here."""
+@study(default_policy=local())
+def corner_study(jobs: list[dict[str, Any]]):
+    """Stage two. Ordinary authoring — the jobs are just a value here."""
 
-    with plan(default_policy=local()) as draft:
-        sources = _declare_sources()
-        outputs = corner_sweep.options(key="corners")(
-            sources["base"], sources["edits"], sources["definition"],
-            sources["limits"], jobs,
-        )
-    return draft.finish(outputs=outputs)
+    sources = _declare_sources()
+    return corner_sweep.named("corners")(
+        sources["base"], sources["edits"], sources["definition"],
+        sources["limits"], jobs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -387,9 +385,10 @@ def run_corner_study(
     decided to run is recorded rather than inferred from what happened.
     """
 
-    corner_plan = build_corner_study(list(jobs))
-    document = corner_plan.to_data()
-    out.plan.write_text(json.dumps(document, indent=2, default=str), encoding="utf-8")
+    inner = corner_study(list(jobs))
+    out.plan.write_text(
+        json.dumps(inner.document, indent=2, default=str), encoding="utf-8"
+    )
 
     # The inner site resolves the same address space the outer one does. The
     # repository root is recovered from a delivered path and the locator it was
@@ -401,7 +400,7 @@ def run_corner_study(
         address_spaces={"repository-relative": str(repository)},
     )
 
-    run = study(corner_plan).submit(
+    run = inner.submit(
         site=site,
         on_event=lambda outcome: print(
             f"      inner | {outcome.authored_key:28} "
@@ -499,30 +498,29 @@ def report(result, jobs, base, edits, definition, limits, out):
 def pvt_study(base, edits, definition, limits, *, records_root, workspace_root):
     """Read the edit file, expand it, plan and run it, and write the report."""
 
-    described = load_edit_file.options(key="load")(edits)
-    jobs = expand_jobs.options(key="expand")(described)
-    result = run_corner_study.options(key="corners")(
+    described = load_edit_file.named("load")(edits)
+    jobs = expand_jobs.named("expand")(described)
+    result = run_corner_study.named("corners")(
         base, edits, definition, limits, jobs,
         records_root=records_root, workspace_root=workspace_root,
     )
-    written = report.options(key="report")(
+    written = report.named("report")(
         result.result, jobs, base, edits, definition, limits
     )
     return {"report": written.report, "verdict": written.verdict}
 
 
-def build(*, records_root: str, workspace_root: str):
-    """Author stage one. Nothing about the corners is read here."""
+@study(default_policy=local())
+def pvt(*, records_root: str, workspace_root: str):
+    """Stage one. Nothing about the corners is read here."""
 
-    with plan(default_policy=local()) as draft:
-        sources = _declare_sources()
-        outputs = pvt_study.options(key="ota-pvt")(
-            sources["base"], sources["edits"], sources["definition"],
-            sources["limits"],
-            records_root=records_root,
-            workspace_root=workspace_root,
-        )
-    return draft.finish(outputs=outputs)
+    sources = _declare_sources()
+    return pvt_study.named("ota-pvt")(
+        sources["base"], sources["edits"], sources["definition"],
+        sources["limits"],
+        records_root=records_root,
+        workspace_root=workspace_root,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -765,11 +763,9 @@ def main() -> int:
         address_spaces={"repository-relative": str(_REPO)},
     )
 
-    subject = study(
-        build(
-            records_root=str(work / "corner-attempts"),
-            workspace_root=str(work / "corner-work"),
-        )
+    subject = pvt(
+        records_root=str(work / "corner-attempts"),
+        workspace_root=str(work / "corner-work"),
     )
     print(subject.summary(), "\n")
     print("No corner appears above: stage one cannot name them, because the\n"

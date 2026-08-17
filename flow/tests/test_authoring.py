@@ -25,6 +25,7 @@ from hedloom_flow import (
     operation,
     parameter,
     plan,
+    planned,
     submit,
 )
 
@@ -653,7 +654,7 @@ def test_definition_declarations_and_submit_boundary_fail_early():
         submit(object())
 
 
-def test_policy_and_key_options_compose_immutably_in_either_order():
+def test_a_policy_and_a_name_compose_immutably_in_either_order():
     override = named_policy("lsf")(queue="short")
 
     @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
@@ -661,8 +662,8 @@ def test_policy_and_key_options_compose_immutably_in_either_order():
         raise AssertionError("must not run")
 
     policy_view = simulate.options(policy=override)
-    policy_then_key = policy_view.options(key="policy-first")
-    key_view = simulate.options(key="key-first")
+    policy_then_key = policy_view.named("policy-first")
+    key_view = simulate.named("key-first")
     key_then_policy = key_view.options(policy=override)
 
     assert policy_view.policy is override
@@ -717,15 +718,15 @@ def test_keyed_nested_flows_repeat_and_survive_an_unkeyed_sibling_insertion():
 
     @flow(name="authoring.identities.inner")
     def inner(raw):
-        return consume.options(key="consumer")(raw)
+        return consume.named("consumer")(raw)
 
     @flow(name="authoring.identities.outer")
     def outer(deck):
         raw = [
-            produce.options(key="producer-left")(deck),
-            produce.options(key="producer-right")(deck),
+            produce.named("producer-left")(deck),
+            produce.named("producer-right")(deck),
         ]
-        return inner.options(key="inner")(raw)
+        return inner.named("inner")(raw)
 
     @flow(name="authoring.identities.noise_flow")
     def noise_flow(deck):
@@ -736,21 +737,22 @@ def test_keyed_nested_flows_repeat_and_survive_an_unkeyed_sibling_insertion():
             deck = _source("input.spice", DECK)
             if insert_sibling:
                 noise_flow(deck)
-            report = outer.options(key="outer")(deck)
+            report = outer.named("outer")(deck)
         return draft.finish(outputs={"report": report})
 
     baseline = build(insert_sibling=False)
     repeated = build(insert_sibling=False)
     inserted = build(insert_sibling=True)
 
-    outer_view = outer.options(key="original")
-    changed_outer_view = outer_view.options(key="changed")
+    outer_view = outer.named("original")
+    changed_outer_view = outer_view.named("changed")
     assert isinstance(outer_view, FlowCall)
     assert outer_view.key == "original"
     assert changed_outer_view.key == "changed"
     with pytest.raises(FrozenInstanceError):
         outer_view.key = "mutated"
-    with pytest.raises(TypeError, match="policy"):
+    # A flow has no policy to take, because it is a scope rather than work.
+    with pytest.raises(AttributeError, match="options"):
         outer.options(policy=local())
 
     assert baseline.to_data() == repeated.to_data()
@@ -807,24 +809,24 @@ def test_duplicate_keys_share_one_operation_and_flow_namespace_per_scope():
 
     @flow
     def keyed_scope(deck):
-        return produce.options(key="reused")(deck)
+        return produce.named("reused")(deck)
 
     with plan() as draft:
         deck = _source("input.spice", DECK)
-        produce.options(key="op-duplicate")(deck)
+        produce.named("op-duplicate")(deck)
         with pytest.raises(AuthoringError, match="already used"):
-            produce.options(key="op-duplicate")(deck)
+            produce.named("op-duplicate")(deck)
 
-        leaf.options(key="flow-duplicate")(deck)
+        leaf.named("flow-duplicate")(deck)
         with pytest.raises(AuthoringError, match="already used"):
-            leaf.options(key="flow-duplicate")(deck)
+            leaf.named("flow-duplicate")(deck)
 
-        produce.options(key="cross-kind")(deck)
+        produce.named("cross-kind")(deck)
         with pytest.raises(AuthoringError, match="already used"):
-            leaf.options(key="cross-kind")(deck)
+            leaf.named("cross-kind")(deck)
 
-        keyed_scope.options(key="scope-a")(deck)
-        keyed_scope.options(key="scope-b")(deck)
+        keyed_scope.named("scope-a")(deck)
+        keyed_scope.named("scope-b")(deck)
         leaf(deck)
     normalized = draft.finish(outputs={})
 
@@ -856,8 +858,8 @@ def test_keyed_calls_and_edges_do_not_consume_unkeyed_counters():
 
     with plan() as draft:
         deck = _source("input.spice", DECK)
-        keyed_raw = produce.options(key="keyed-producer")(deck)
-        consume.options(key="keyed-consumer")(keyed_raw)
+        keyed_raw = produce.named("keyed-producer")(deck)
+        consume.named("keyed-consumer")(keyed_raw)
         unkeyed_raw = produce(deck)
         unkeyed_report = consume(unkeyed_raw)
     normalized = draft.finish(outputs={"report": unkeyed_report})
@@ -899,9 +901,9 @@ def test_duplicate_operation_rollback_does_not_leak_or_consume_counters():
     with plan() as draft:
         deck = _source("input.spice", DECK)
         accepted(deck)
-        accepted.options(key="reserved")(deck)
+        accepted.named("reserved")(deck)
         with pytest.raises(AuthoringError, match="already used"):
-            rejected.options(key="reserved")(deck)
+            rejected.named("reserved")(deck)
         accepted(deck)
     normalized = draft.finish(outputs={})
 
@@ -929,13 +931,13 @@ def test_failing_keyed_flow_restores_keys_graph_and_every_unkeyed_counter():
 
     @flow(name="authoring.rollback.failing")
     def failing(deck):
-        raw = produce.options(key="step")(deck)
+        raw = produce.named("step")(deck)
         consume(raw)
         raise RuntimeError("planned failure")
 
     @flow(name="authoring.rollback.success")
     def success(deck):
-        return produce.options(key="step")(deck)
+        return produce.named("step")(deck)
 
     @flow(name="authoring.rollback.unkeyed")
     def unkeyed(deck):
@@ -944,8 +946,8 @@ def test_failing_keyed_flow_restores_keys_graph_and_every_unkeyed_counter():
     with plan() as draft:
         deck = _source("input.spice", DECK)
         with pytest.raises(RuntimeError, match="planned failure"):
-            failing.options(key="boundary")(deck)
-        keyed = success.options(key="boundary")(deck)
+            failing.named("boundary")(deck)
+        keyed = success.named("boundary")(deck)
         raw = produce(deck)
         report = consume(raw)
         later = unkeyed(deck)
@@ -988,9 +990,9 @@ def test_invalid_authored_key_syntax_fails_before_graph_mutation(invalid_key):
     with plan() as draft:
         deck = _source("input.spice", DECK)
         with pytest.raises(AuthoringError, match="authored key"):
-            produce.options(key=invalid_key)(deck)
+            produce.named(invalid_key)(deck)
         with pytest.raises(AuthoringError, match="authored key"):
-            wrapper.options(key=invalid_key)(deck)
+            wrapper.named(invalid_key)(deck)
         result = produce(deck)
     normalized = draft.finish(outputs={"raw": result})
 
@@ -1050,3 +1052,128 @@ def test_reading_a_handle_is_refused_as_both_kinds_of_mistake():
 
     assert issubclass(HandleUsedAsValue, AuthoringError)
     assert issubclass(HandleUsedAsValue, TypeError)
+
+
+def test_planned_builds_exactly_what_the_draft_form_builds():
+    """The claim that licenses `@planned`: it is the same plan, spelled shorter.
+
+    If these two ever diverge, the decorator has become a second way to mean
+    something slightly different — which is the thing it exists to remove.
+    """
+
+    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
+    def simulate(deck):
+        raise AssertionError("must not run")
+
+    @planned
+    def decorated(locator):
+        deck = input_artifact(
+            address("test-address-space", locator),
+            artifact=DECK,
+            materialized_as=TEST_MATERIALIZATION,
+        )
+        return {"raw": simulate.named("sim")(deck).raw}
+
+    with plan() as draft:
+        deck = input_artifact(
+            address("test-address-space", "corner.cir"),
+            artifact=DECK,
+            materialized_as=TEST_MATERIALIZATION,
+        )
+        outputs = {"raw": simulate.named("sim")(deck).raw}
+    explicit = draft.finish(outputs=outputs)
+
+    assert decorated("corner.cir").to_data() == explicit.to_data()
+
+
+def test_a_planned_family_takes_arguments_and_can_be_called_again():
+    """One decorated function, many plans — and no draft to have used up."""
+
+    @operation(config={"key": parameter(str)}, outputs={"raw": RAW})
+    def produce(*, key):
+        raise AssertionError("must not run")
+
+    @planned
+    def build(key):
+        return produce.named(key)(key=key)
+
+    first = build("left")
+    second = build("right")
+    again = build("left")
+
+    assert first.to_data() == again.to_data(), "the same arguments are the same plan"
+    assert first.to_data() != second.to_data()
+    assert build.__name__ == "build"
+
+
+def test_a_planned_body_that_raises_leaves_nothing_behind():
+    """A failed plan must not poison the next one authored in this process."""
+
+    @operation(outputs={"raw": RAW})
+    def produce():
+        raise AssertionError("must not run")
+
+    @planned
+    def broken():
+        produce.named("recorded")()
+        raise ValueError("the author's own mistake")
+
+    @planned
+    def sound():
+        return produce.named("recorded")()
+
+    with pytest.raises(ValueError, match="the author's own mistake"):
+        broken()
+
+    # The scope was closed on the way out, so this records from a clean draft
+    # rather than joining a half-authored one.
+    assert len(sound().invocations) == 1
+
+
+def test_a_planned_result_that_is_not_a_mapping_is_named_output():
+    """The same rule a flow's return value follows, at the root."""
+
+    @operation(outputs={"raw": RAW})
+    def produce():
+        raise AssertionError("must not run")
+
+    @planned
+    def single():
+        return produce.named("only")()
+
+    assert [item.name for item in single().outputs] == ["output"]
+
+
+def test_a_planned_default_policy_reaches_every_call_inside_it():
+    @operation(outputs={"raw": RAW})
+    def produce():
+        raise AssertionError("must not run")
+
+    declared = named_policy("lsf")(queue="short")
+
+    @planned(default_policy=declared)
+    def build():
+        return produce.named("only")()
+
+    (invocation,) = build().invocations
+    assert invocation.policy == declared
+
+
+def test_one_plan_at_a_time_still_holds_when_the_scope_is_a_decorator():
+    """Hiding the `with` must not quietly permit what it refused."""
+
+    @operation(outputs={"raw": RAW})
+    def produce():
+        raise AssertionError("must not run")
+
+    @planned
+    def inner():
+        return produce.named("inner")()
+
+    @planned
+    def outer():
+        inner()
+        return produce.named("outer")()
+
+    with pytest.raises(PlanningScopeError, match="nested plan contexts"):
+        outer()

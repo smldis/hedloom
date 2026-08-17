@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+import functools
 from hashlib import blake2b
 import inspect
 from types import MappingProxyType
@@ -210,15 +211,22 @@ class Operation:
     def __name__(self) -> str:
         return self._function.__name__
 
-    def options(
-        self, *, policy: Policy | None = None, key: str | None = None
-    ) -> OperationCall:
-        """Return an immutable call view with policy and/or authored identity."""
+    def named(self, key: str) -> OperationCall:
+        """Name this call, so its identity survives edits to the plan around it.
 
-        if policy is not None:
-            _require_policy(policy, "call policy")
-        normalized_key = _optional_authored_key(key)
-        return OperationCall(self, policy, normalized_key)
+        An unnamed invocation is numbered in authored order, which means
+        inserting work above it renumbers it and silently discards every result
+        below. The name is not decoration: it reaches the attempt identity, so
+        two runs agree about what is already done only if their names agree.
+        """
+
+        return OperationCall(self, None, _require_authored_key(key))
+
+    def options(self, *, policy: Policy) -> OperationCall:
+        """Return an immutable call view carrying a call policy."""
+
+        _require_policy(policy, "call policy")
+        return OperationCall(self, policy, None)
 
     def __call__(self, *args: Any, **kwargs: Any) -> InvocationResult:
         return self._plan_call(None, None, args, kwargs)
@@ -258,16 +266,16 @@ class OperationCall:
     def identity(self) -> OperationIdentity:
         return self.operation.identity
 
-    def options(
-        self, *, policy: Policy | None = None, key: str | None = None
-    ) -> OperationCall:
-        """Compose an immutable override while retaining omitted options."""
+    def named(self, key: str) -> OperationCall:
+        """Compose a name onto this call view, retaining its policy."""
 
-        selected_policy = self.policy if policy is None else policy
-        selected_key = self.key if key is None else _optional_authored_key(key)
-        if selected_policy is not None:
-            _require_policy(selected_policy, "call policy")
-        return OperationCall(self.operation, selected_policy, selected_key)
+        return OperationCall(self.operation, self.policy, _require_authored_key(key))
+
+    def options(self, *, policy: Policy) -> OperationCall:
+        """Compose a policy onto this call view, retaining its name."""
+
+        _require_policy(policy, "call policy")
+        return OperationCall(self.operation, policy, self.key)
 
     def __call__(self, *args: Any, **kwargs: Any) -> InvocationResult:
         return self.operation._plan_call(self.policy, self.key, args, kwargs)
@@ -289,8 +297,11 @@ class Flow:
     def __name__(self) -> str:
         return self._function.__name__
 
-    def options(self, *, key: str) -> FlowCall:
-        """Return an immutable keyed call view; flows have no policy option."""
+    def named(self, key: str) -> FlowCall:
+        """Name this flow's scope; the names inside it are scoped by this one.
+
+        Flows take no policy, so this is the only call option they have.
+        """
 
         return FlowCall(self, _require_authored_key(key))
 
@@ -319,7 +330,7 @@ class FlowCall:
     def identity(self) -> FlowIdentity:
         return self.flow.identity
 
-    def options(self, *, key: str) -> FlowCall:
+    def named(self, key: str) -> FlowCall:
         return FlowCall(self.flow, _require_authored_key(key))
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -641,7 +652,16 @@ class PlanDraft:
         return False
 
     def finish(self, *, outputs: Mapping[str, Any]) -> Plan:
-        """Freeze the authored graph as a validated immutable C1 ``Plan``."""
+        """Freeze the authored graph as a validated immutable C1 ``Plan``.
+
+        The explicit form. ``@planned`` is the ordinary one, and does this for
+        you from a strategy's return value.
+        """
+
+        return self._finish(outputs, prefix=None)
+
+    def _finish(self, outputs: Any, *, prefix: str | None) -> Plan:
+        """Freeze this draft. ``prefix`` names an output that arrives unnamed."""
 
         if not self._entered:
             raise PlanningScopeError("enter the draft with 'with plan() as draft:'")
@@ -651,7 +671,7 @@ class PlanDraft:
             raise AuthoringError("cannot finish a plan context that exited with an error")
         if self._finished:
             raise AuthoringError("this plan draft has already been finished")
-        named_outputs = self._named_outputs(outputs, prefix=None, boundary_id=None)
+        named_outputs = self._named_outputs(outputs, prefix=prefix, boundary_id=None)
         normalized = Plan(
             operations=tuple(self._operations.values()),
             flows=tuple(self._flows.values()),
@@ -966,7 +986,9 @@ class PlanDraft:
 
     def _require_active(self) -> None:
         if _ACTIVE_DRAFT.get() is not self or self._token is None:
-            raise PlanningScopeError("use this operation or flow inside 'with plan():'")
+            raise PlanningScopeError(
+                "use this operation or flow inside the plan that is being authored"
+            )
         if self._finished:
             raise AuthoringError("this plan draft has already been finished")
 
@@ -1078,9 +1100,54 @@ _ACTIVE_DRAFT: ContextVar[PlanDraft | None] = ContextVar(
 
 
 def plan(*, default_policy: Policy | None = None) -> PlanDraft:
-    """Create the sole explicit mutable planning scope."""
+    """Create the sole explicit mutable planning scope.
+
+    The escape hatch, for a plan assembled across several strategies. Prefer
+    ``@planned``, which is the same thing without a draft to carry around.
+    """
 
     return PlanDraft(default_policy)
+
+
+def planned(
+    strategy: Callable[..., Any] | None = None,
+    *,
+    default_policy: Policy | None = None,
+) -> Any:
+    """Decorate a strategy so that calling it returns a finished ``Plan``.
+
+    A ``@flow`` is already "a function whose return value names its outputs".
+    This makes the root scope the same thing, so there is one shape to learn
+    instead of two — and no draft, no output variable escaping a ``with`` block,
+    and no ``finish`` that has to be called *after* the block it belongs to::
+
+        @planned
+        def sweep(name):
+            return corners.named(name)(POINTS)
+
+        sweep("north")   # -> Plan
+
+    Arguments pass through to the strategy, so one decorated function is a
+    family of plans. What it returns is what ``finish(outputs=...)`` would have
+    been given: a mapping of names, or a single result, named ``output``.
+    """
+
+    def decorate(function: Callable[..., Any]) -> Callable[..., Plan]:
+        if not callable(function):
+            raise AuthoringError("@planned must decorate a callable")
+
+        @functools.wraps(function)
+        def build(*args: Any, **kwargs: Any) -> Plan:
+            draft = PlanDraft(default_policy)
+            with draft:
+                produced = function(*args, **kwargs)
+            return draft._finish(produced, prefix="output")
+
+        return build
+
+    if strategy is None:
+        return decorate
+    return decorate(strategy)
 
 
 def input_artifact(
@@ -1100,7 +1167,7 @@ def submit(*args: Any, **kwargs: Any) -> None:
     """Mark the deliberately unimplemented executor boundary."""
 
     raise NotImplementedError(
-        "execution is outside this planning spike; construct a Plan with 'with plan()'"
+        "execution is outside this planning spike; construct a Plan with '@planned'"
     )
 
 
@@ -1108,7 +1175,9 @@ def _active_draft(action: str) -> PlanDraft:
     draft = _ACTIVE_DRAFT.get()
     if draft is None:
         raise PlanningScopeError(
-            f"{action} calls require an active plan; use 'with plan() as draft:'"
+            f"{action} calls require an active plan: author them inside a "
+            f"'@planned' function (or '@study'), or an explicit "
+            f"'with plan() as draft:'"
         )
     return draft
 
@@ -1355,5 +1424,6 @@ __all__ = [
     "operation",
     "parameter",
     "plan",
+    "planned",
     "submit",
 ]

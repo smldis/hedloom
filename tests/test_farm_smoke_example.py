@@ -6,7 +6,7 @@ from pathlib import Path
 
 from distributed import Client, get_task_stream
 
-from hedloom import Site, study
+from hedloom import Site
 from hedloom_exec.planned import plan_bundles
 from hedloom_run.cluster import cluster_for
 
@@ -72,7 +72,7 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
     monkeypatch.setenv("FAKE_LSF_STATE", str(fake_state))
 
     site = Site.from_file(profile)
-    subject = study(farm_smoke.build())
+    subject = farm_smoke.farm_sweep()
     plan_order = [item.authored_key for item in plan_bundles(subject.document)]
     completion_order = []
     cluster = cluster_for(site)
