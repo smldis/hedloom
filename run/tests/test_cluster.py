@@ -74,7 +74,9 @@ def test_network_is_what_a_site_gets_without_declaring_anything(
     cluster_for(site)
     scheduler = spec_recorded.kwargs["scheduler"]["options"]
     assert scheduler["dashboard_address"] == ":8787"
-    # A bare Scheduler would take 8786 and collide with whatever is there.
+    # These workers are objects in this process. TCP would add a scheduler
+    # listener and one worker listener per placement for no benefit.
+    assert scheduler["protocol"] == "inproc"
     assert scheduler["port"] == 0
 
 
@@ -168,6 +170,11 @@ def test_a_silent_cluster_holds_no_http_server():
 
     cluster = local_cluster(threads=2, dashboard="none")
     try:
+        assert cluster.scheduler_address.startswith("inproc://")
+        assert all(
+            worker.address.startswith("inproc://")
+            for worker in cluster.workers.values()
+        )
         assert getattr(cluster.scheduler, "http_server", None) is None
         for worker in cluster.workers.values():
             assert getattr(worker, "http_server", None) is None
@@ -195,6 +202,11 @@ def test_a_silent_cluster_is_still_silent_when_it_has_two_workers():
         dashboard="none",
     )
     try:
+        assert cluster.scheduler_address.startswith("inproc://")
+        assert all(
+            worker.address.startswith("inproc://")
+            for worker in cluster.workers.values()
+        )
         assert getattr(cluster.scheduler, "http_server", None) is None
         for worker in cluster.workers.values():
             assert getattr(worker, "http_server", None) is None

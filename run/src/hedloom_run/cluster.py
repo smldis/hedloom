@@ -212,9 +212,11 @@ def spec_cluster(
             "a cluster needs at least one placement to build a worker for"
         )
 
-    # A bare `Scheduler` defaults to LSF-free port 8786 and would collide with
-    # anything already there; `LocalCluster` passes 0 for the same reason.
-    scheduler: dict[str, Any] = {"port": 0}
+    # Scheduler and workers are objects in this process, so their comm channel
+    # should be too. A bare `Scheduler` otherwise defaults to TCP even when its
+    # workers are in-process, opening one scheduler socket and one per worker.
+    # `LocalCluster(processes=False)` selects `inproc` for this same shape.
+    scheduler: dict[str, Any] = {"protocol": "inproc", "port": 0}
     worker_common: dict[str, Any] = {}
 
     if dashboard == "network":
