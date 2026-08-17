@@ -78,6 +78,7 @@ __all__ = [
     "parameter",
     "plan",
     "planned",
+    "pooled",
     "returned",
     "session",
     "shell",
@@ -129,6 +130,33 @@ def lsf(**options: Any) -> Policy:
     """
 
     return named_policy("lsf")(**options)
+
+
+def pooled(**options: Any) -> Policy:
+    """Place this work on a shared pool of reusable LSF workers, not its own job.
+
+    The trade, stated plainly. A pool pays queue dispatch once per *worker*
+    rather than once per invocation, and holds no `bsub` client process on the
+    submit host per corner in flight — which is the ceiling that actually binds
+    a wide sweep. What it gives up is everything that needs a corner to *be* a
+    job: per-corner resource requests, per-corner `bkill`, per-corner
+    accounting, and per-corner licence arbitration. The farm sees the pool's
+    workers, never your corners, so the watcher can no longer tell you that one
+    particular corner is queued.
+
+    Worth it when an operation's median queue wait is a significant fraction of
+    its median runtime — roughly a third, as a starting rule — and its corners
+    are uniform enough to share one worker shape. Below that, `lsf()` is the
+    better deal. It is a per-operation judgement, which is why it is authored
+    here and not on the study.
+
+    Names the placement `pool`, as `lsf()` names `lsf`. A site that offers
+    several pools of different shapes — the usual case, since one pool has one
+    worker shape — names them itself, and `named_policy("pool_bigmem")()`
+    reaches any of them.
+    """
+
+    return named_policy("pool")(**options)
 
 
 @dataclass(frozen=True, slots=True)

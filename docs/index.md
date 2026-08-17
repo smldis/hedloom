@@ -109,6 +109,29 @@ def simulate_ac(...):
     return shell("ngspice", "-b", "-r", out.raw, deck)
 ```
 
+`pooled()` is the third choice, and it is a trade rather than an upgrade. It
+sends the command to a *shared* set of LSF workers the study holds open, so the
+queue is paid once per worker instead of once per corner — which matters when
+an operation has many short invocations and the wait to start is a large
+fraction of the time to run:
+
+```python
+@operation(..., policy=pooled())
+def extract_metric(...):
+    return shell("python", "-m", "metrics", raw)
+```
+
+What it costs is everything that needs a corner to *be* a job: per-corner
+resource requests, per-corner `bkill`, per-corner accounting, per-corner
+licence arbitration, and the watcher's ability to tell you that one particular
+corner is queued. The farm sees the pool's workers, never your corners. As a
+starting rule, pool an operation when its median queue wait is above roughly a
+third of its median runtime and its corners are uniform enough to share one
+worker shape — otherwise `lsf(...)` is the better deal.
+
+Placement is not identity-bearing, so moving an operation between the three
+reuses everything it already produced rather than recomputing it.
+
 The rule underneath all of this:
 
 > **A body decides what runs; it never decides *whether* it runs.**
@@ -373,12 +396,26 @@ walltime = "1"
 cores = 1
 max_jobs = 4
 
+[placement.pool]          # only if some operation asks for pooled()
+kind = "lsf-pooled"
+queue = "short"
+cores = 1
+memory_mb = 4000
+walltime = "2:00"
+workers = 20              # LSF jobs the pool holds open
+max_jobs = 20             # invocations in flight against it
+
 [kernel]
 threads = 2
 dashboard = "network"     # "network" | "loopback" | "none"
 ```
 
-(`examples/farm-smoke.site.toml`)
+(`examples/farm-smoke.site.toml`, which declares no pool)
+
+A pooled placement takes a narrower vocabulary than a direct one — no
+`licences`, no raw `resources` — and says so rather than accepting them and
+quietly ignoring them: those describe what *one invocation* needs, and a pool's
+workers are claimed before any invocation is routed to them.
 
 ### The two numbers, which are about two different machines
 
@@ -387,7 +424,7 @@ dashboard = "network"     # "network" | "loopback" | "none"
 | `[placement.*] max_jobs` | how many of **that placement's** invocations may be in flight | the share of the farm this study may spend |
 | `[kernel] threads` | local concurrency on the **submit host** | how much in-process work this host should do at once |
 
-`max_jobs` is **required** for an `lsf-interactive` placement, and it is
+`max_jobs` is **required** for both LSF placement kinds, and it is
 deliberately **not** your site's MAX JOB policy. That policy counts every job
 running under your user from every source, so declaring all of it here means
 your own submissions and hedloom's queue behind each other — and when it is

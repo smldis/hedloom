@@ -116,6 +116,19 @@ class Site:
         placements={"lsf": {"kind": "lsf-interactive", # a whole placement
                             "queue": "reg", "walltime": "1",
                             "cores": 1, "max_jobs": 2}}
+        placements={"pool": {"kind": "lsf-pooled",     # reusable farm workers
+                             "queue": "short", "cores": 1, "memory_mb": 4000,
+                             "walltime": "2:00",
+                             "workers": 20, "max_jobs": 20}}
+
+    The two LSF kinds differ in what one farm job *is*. `lsf-interactive`
+    submits one `bsub -I` per invocation, so a corner is an individually
+    visible, cancellable, accountable job. `lsf-pooled` holds `workers` jobs
+    open and routes many invocations through them, paying queue dispatch once
+    per worker instead of once per corner — and giving up everything that needs
+    a corner to be a job. See `hedloom_run.pooled` for when that trade is worth
+    taking; it is a per-operation judgement, not a site-wide one, which is why
+    both kinds normally appear in the same profile.
 
     A mapping that names a `kind` also builds that placement's transport, so the
     budget and the substrate are declared once, together, and cannot be given
@@ -479,23 +492,42 @@ def _transports_from(
     """
 
     from hedloom_exec.lsf import LSFInteractiveTransport, PLACEMENT_OPTIONS
+    from hedloom_run.pooled import LSFPooledTransport, POOL_OPTIONS
 
     built: dict[str, Transport] = {}
     kernel_keys = {"kind", "max_jobs"}
     mechanic_keys = {"timeout"}
     for name, options in placements.items():
         settings = dict(options)
+        kind = settings.get("kind")
+        # The vocabulary is per kind, because the kinds genuinely differ. A
+        # pool cannot honour `licences` or `resources`: its workers are claimed
+        # before any invocation is routed to them, so a per-corner request
+        # would be accepted and then silently ignored, which is worse than
+        # being refused.
+        vocabulary = POOL_OPTIONS if kind == "lsf-pooled" else PLACEMENT_OPTIONS
         unknown = sorted(
-            set(settings) - kernel_keys - mechanic_keys - set(PLACEMENT_OPTIONS)
+            set(settings) - kernel_keys - mechanic_keys - set(vocabulary)
         )
         if unknown:
             raise SiteError(
                 f"placement {name!r} declares unknown option "
                 f"{', '.join(unknown)}; transport options are "
-                f"{', '.join(PLACEMENT_OPTIONS)}"
+                f"{', '.join(vocabulary)}"
             )
-        kind = settings.get("kind")
-        if kind == "lsf-interactive":
+        if kind == "lsf-pooled":
+            # Data only. The pooled transport must ship to a readiness worker,
+            # so it holds no client; the live one is built on the worker by
+            # `hedloom_run.pooled.PooledClientPlugin`. See that module for why
+            # that is a rule rather than a convenience.
+            built[name] = LSFPooledTransport(
+                name,
+                settings={
+                    key: value for key, value in settings.items()
+                    if key in POOL_OPTIONS
+                },
+            )
+        elif kind == "lsf-interactive":
             defaults = {
                 key: value for key, value in settings.items()
                 if key in PLACEMENT_OPTIONS
@@ -515,8 +547,9 @@ def _transports_from(
         else:
             raise SiteError(
                 f"placement {name!r} names an unknown kind {kind!r}; this site "
-                "can build 'lsf-interactive' from configuration, and "
-                "'in-process' placements must be given their implementations"
+                "can build 'lsf-interactive' and 'lsf-pooled' from "
+                "configuration, and 'in-process' placements must be given "
+                "their implementations"
             )
     return built
 
@@ -538,7 +571,7 @@ def _placements_from(
         kind = options.get("kind")
         declared = options.get("max_jobs")
         if declared is None:
-            if kind == "lsf-interactive":
+            if kind in ("lsf-interactive", "lsf-pooled"):
                 raise SiteError(
                     f"placement {name!r} declares no max_jobs. Each placement "
                     "becomes one worker whose threads are that placement's "
@@ -548,6 +581,15 @@ def _placements_from(
                     "is not the site's MAX JOB policy, which caps your jobs "
                     "from every source together. There is no safe default to "
                     "guess."
+                    + (
+                        " For a pool it is how many invocations may be in "
+                        "flight against it, which is a different number from "
+                        "'workers' — how many LSF jobs the pool holds open. "
+                        "Usually you want them equal; when they differ, the "
+                        "smaller one binds and the other is a lie."
+                        if kind == "lsf-pooled"
+                        else ""
+                    )
                 )
             declared = threads or 1
         if not isinstance(declared, int) or isinstance(declared, bool) or declared < 1:

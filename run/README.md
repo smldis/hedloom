@@ -92,7 +92,15 @@ folded into `[dask]`: a farm sweep placing one job per corner needs the
 scheduler and never needs a pool. It also belongs to this unit and no lower one,
 because a pooled transport holds a live Dask client and `hedloom-exec` imports
 neither Dask nor `hedloom_flow`. `LSFPooledTransport` there stays a refusing
-boundary; see `docs/pooled-placement-plan.md`.
+boundary; the implementation is `hedloom_run.pooled`.
+
+A pool is a *second* cluster, opened beside the readiness one by
+`hedloom.session(...)`, and the two are not interchangeable. The readiness
+cluster's scheduler and workers are objects in this process and talk over
+`inproc`; a pool's workers are LSF jobs on farm nodes and must reach their
+scheduler over the network, so that one is TCP and the exposure choices in
+`hedloom_run.cluster` do not transfer to it. Teardown order follows from the
+same fact: readiness workers hold clients into the pool, so they close first.
 
 ## What the cluster exposes
 

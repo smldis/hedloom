@@ -103,6 +103,7 @@ class Session:
         self.watch_reader = watch_reader
         self._cluster: Any = None
         self._client: Any = None
+        self._pools: dict[str, Any] = {}
         self._watcher: Any = None
 
     @property
@@ -138,6 +139,17 @@ class Session:
                 self._client = client(
                     self._cluster.scheduler_address, set_as_default=self.as_default
                 )
+                # A pooled placement needs a second cluster, whose workers are
+                # LSF jobs, and a client into it on every readiness worker. Both
+                # are opened here rather than by the kernel, for the same reason
+                # the readiness cluster is: how much farm a study may hold open
+                # is an operational decision with a lifetime, and this block is
+                # what owns lifetimes. A site declaring no pool opens none and
+                # does not import dask-jobqueue.
+                from hedloom_run.pooled import attach_pools, open_pools
+
+                self._pools = open_pools(self.site)
+                attach_pools(self._client, self._pools)
         except BaseException:
             self._release()
             raise
@@ -157,6 +169,17 @@ class Session:
             if self._cluster is not None:
                 self._cluster.close()
                 self._cluster = None
+            if self._pools:
+                # Last, and the order is load-bearing rather than tidy. Every
+                # readiness worker holds a client into these pools; closing a
+                # pool while one is live leaves it reconnecting to a scheduler
+                # that has gone, which fills the log with cancellations that
+                # read as a failure and are not one. The readiness cluster
+                # above takes those clients with it when it closes.
+                from hedloom_run.pooled import close_pools
+
+                close_pools(self._pools)
+                self._pools = {}
         finally:
             if self._watcher is not None:
                 stop, thread = self._watcher

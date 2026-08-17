@@ -220,7 +220,49 @@ Two findings worth carrying into the implementation:
 **Still farm-only:** `AttemptStatus.queue_seconds`, which is §6's whole
 decision input, and the dashboard-exposure question in §4.
 
+## 10. Built, 2026-08-17: design (i), all four spike steps
+
+The decision box below was taken as **design (i), command only**, and the spike
+sequence was run to the end. `hedloom_run.pooled` is the implementation.
+
+* **`Site` accepts `kind = "lsf-pooled"`**, with the §5 profile shape and a
+  vocabulary narrower than a direct placement's: no `licences`, no raw
+  `resources`, because a pool's workers are claimed before any invocation is
+  routed to them and a per-corner request would be accepted and then ignored.
+  `max_jobs` is required, as it is for `lsf-interactive`, and it is a different
+  number from `workers` — invocations in flight versus LSF jobs held open.
+* **`hedloom.pooled()`** is the authoring policy, beside `local()` and `lsf()`.
+  Placement stays per operation, which is what §6 said it had to be.
+* **`hedloom.session(...)` opens the pool**, registers the plugin on every
+  readiness worker, and closes readiness *before* the pool. A site declaring no
+  pool opens none and never imports `dask_jobqueue`.
+* **The transport holds no client.** It carries the pool name and what the pool
+  was asked for; the live client is built on the worker by the plugin and found
+  through `get_worker()`. `_require_shippable` still refuses a transport that
+  holds one, which is the guard that keeps this honest rather than a habit.
+* **Step 4, the mixed plan, runs**: some corners on their own `bsub -I`, some
+  through the pool, one plan, one run, one report — `tests/test_pooled_placement.py`.
+
+Three things the implementation had to settle that this plan did not anticipate:
+
+* **The readiness cluster is `inproc`; a pool must not be.** Those workers are
+  on farm nodes and reach the scheduler over the network, so `open_pools` passes
+  no protocol and no loopback binding. The exposure work in `hedloom_run.cluster`
+  assumed one host and does not transfer — §4's dashboard row, still open.
+* **`register_plugin` refuses a duck-typed plugin.** Real inheritance from
+  `distributed.WorkerPlugin` is required, so the plugin class is built by a
+  factory at call time — that is what lets this module import without Dask, so
+  a profile naming a pool can be *read* on a machine that will never run one.
+* **Pooled placement genuinely diverges from the sequential kernel**, and is the
+  first thing that does. A pooled invocation reaches its pool through a client a
+  Dask worker holds, and `sequential=True` has no worker. It is refused by name
+  rather than quietly run here, because succeeding would publish an attempt
+  record and teach the author that `sequential=True` means something it does not.
+
+What is still unmeasured is what it *buys*: that needs `queue_seconds` from a
+real farm, and §6's rule to apply to it.
+
 ---
 
-**Your call:** ☐ design (i), command only ☐ spike sequence as written
+**Your call:** ☑ design (i), command only ☑ spike sequence as written
 ☐ not until the watcher gives us queue_seconds ☐ other:
