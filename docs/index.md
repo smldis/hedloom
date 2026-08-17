@@ -52,7 +52,7 @@ def rc_sweep(corners):
     for corner in sweep(corners, key="key"):
         deck = write_deck(key=corner["key"], temp_c=corner["temp_c"])
         measured.append(corner_frequency(simulate(deck)))
-    return {"verdict": compare.options(key="compare")(measured).verdict}
+    return {"verdict": compare.named("compare")(measured).verdict}
 ```
 
 Because a flow body runs at planning time and produces a fixed graph, a Plan
@@ -64,15 +64,32 @@ conditional reapplication of a flow to committed state) is an open
 architectural question, not a feature quietly available through `submit` —
 see `docs/vision/open-concepts.md` at the repository root.
 
-A Plan is built inside a `plan(...)` block and finished with the flow's own
-outputs:
+A study is the same shape one level up: a function whose return value names the
+outputs, decorated so that calling it plans.
 
 ```python
-def build():
-    with plan(default_policy=local()) as draft:
-        outputs = rc_sweep.options(key="rc")(CORNERS)
-    return draft.finish(outputs=outputs)
+@study(default_policy=local())
+def rc_corners():
+    return rc_sweep.named("rc")(CORNERS)
+
+rc_corners()            # -> a Study, inspectable, nothing spent
 ```
+
+Arguments pass through, so one decorated function is a family of studies — a
+different corner list is a different study, not a different file.
+
+`default_policy` is where the work runs unless a call says otherwise. The
+explicit form is still there for a plan assembled from several strategies:
+
+```python
+with plan(default_policy=local()) as draft:
+    outputs = rc_sweep.named("rc")(CORNERS)
+subject = study(draft.finish(outputs=outputs))
+```
+
+Note that `finish` comes *after* the block: the draft has to be closed before it
+can be frozen. `@study` is the same two steps without that ordering to remember,
+which is why it is the ordinary form.
 
 ## Handles are references, never values
 
@@ -267,13 +284,28 @@ one the study was authored in.
 
 ## `study(...)`
 
-`study(plan_object)` pairs a finished Plan with the operation bodies declared
-in this process (every `@operation` this module has imported, keyed by the
-identity the Plan already recorded), or with an explicit
-`implementations={...}` mapping:
+`@study` pairs what a function authors with the operation bodies declared in
+this process — every `@operation` this module has imported, keyed by the
+identity the Plan already recorded — and calling the decorated function is what
+builds one:
 
 ```python
-subject = study(build())
+@study
+def corners(points):
+    return rc_sweep.named("rc")(points)
+
+subject = corners(CORNERS)
+```
+
+The registry is read when the function is *called*, not when it is decorated.
+An explicit `implementations={...}` mapping replaces it, and a finished `Plan`
+is accepted in place of a strategy for the `plan()` escape hatch.
+
+Calling `.submit` on the decorated name rather than on a study is the mistake
+this shape invites, so it is answered with the call to make instead:
+
+```python
+corners.submit(site)      # AttributeError: call it first, as corners(...).submit
 ```
 
 ## `.summary()` — before anything is spent
@@ -421,7 +453,7 @@ Two independent views, because they answer different questions:
 ```python
 import hedloom.visualize as visualize
 
-subject = study(build())
+subject = corners(CORNERS)
 print(json.dumps(visualize.structure(subject), indent=2))
 visualize.render(subject, "graph.svg")
 ```

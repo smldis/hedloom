@@ -12,7 +12,7 @@ from hedloom_flow import (
     materialization,
     operation,
     parameter,
-    plan,
+    planned,
 )
 
 
@@ -54,7 +54,7 @@ def reduce_characterization(measurements):
 def characterize_one_corner(design, *, corner, temperature_c):
     """Reuse one operation declaration behind a visible per-corner boundary."""
 
-    return estimate_corner_metrics.options(key="estimate-corner-metrics")(
+    return estimate_corner_metrics.named("estimate-corner-metrics")(
         design,
         corner=corner,
         temperature_c=temperature_c,
@@ -68,7 +68,7 @@ def characterize_design(design, *, include_extremes):
     corners = {}
     measurements = []
 
-    nominal = characterize_one_corner.options(key="corner-tt")(
+    nominal = characterize_one_corner.named("corner-tt")(
         design,
         corner="tt",
         temperature_c=27,
@@ -77,12 +77,12 @@ def characterize_design(design, *, include_extremes):
     measurements.append(nominal)
 
     if include_extremes:
-        slow = characterize_one_corner.options(key="corner-ss")(
+        slow = characterize_one_corner.named("corner-ss")(
             design,
             corner="ss",
             temperature_c=125,
         )
-        fast = characterize_one_corner.options(key="corner-ff")(
+        fast = characterize_one_corner.named("corner-ff")(
             design,
             corner="ff",
             temperature_c=-40,
@@ -91,28 +91,29 @@ def characterize_design(design, *, include_extremes):
         corners["ff"] = fast
         measurements.extend((slow, fast))
 
-    summary = reduce_characterization.options(key="reduce-characterization")(
+    summary = reduce_characterization.named("reduce-characterization")(
         measurements
     )
     return {"corners": corners, "summary": summary}
 
 
+@planned
 def build_characterization_plan(*, include_extremes: bool = True):
-    """Return one validated plan containing the complete authored graph."""
+    """One validated plan containing the complete authored graph.
 
-    with plan() as draft:
-        design = input_artifact(
-            address(
-                "repository-relative", "inputs/two-stage-opamp.json"
-            ),
-            artifact=DESIGN,
-            materialized_as=REPOSITORY_JSON,
-        )
-        outputs = characterize_design.options(key="characterize-design")(
-            design,
-            include_extremes=include_extremes,
-        )
-    return draft.finish(outputs=outputs)
+    `@planned` makes calling this build one: the body records rather than runs,
+    and what it returns names the plan's outputs.
+    """
+
+    design = input_artifact(
+        address("repository-relative", "inputs/two-stage-opamp.json"),
+        artifact=DESIGN,
+        materialized_as=REPOSITORY_JSON,
+    )
+    return characterize_design.named("characterize-design")(
+        design,
+        include_extremes=include_extremes,
+    )
 
 
 def main() -> None:

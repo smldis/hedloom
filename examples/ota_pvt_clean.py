@@ -26,16 +26,15 @@ the verdict, the corner table, the limits applied, and the provenance —
 including each declared source's content fingerprint, so the report says which
 inputs produced it rather than asserting a date.
 
-**It runs on Dask.** This is the one example that does. The cluster is built
-here rather than inside `submit`, because how many corners a site tolerates at
-once is an operational fact and a library choosing it silently would be
-choosing wrong somewhere. It comes from `cluster_for(site)`, which gives one
-worker per placement sized by that placement's own cap — the kernel annotates
-every task with the placement it resolved to, so a cluster that declares no
-capacity is refused up front rather than hanging. The corners then run concurrently instead of
-one after another, and the dashboard — opened before submission, since the
-sweep outlives a browser launch by only a few seconds — shows which corner is
-running under its authored key.
+**It runs on Dask.** This is the one example that opens the session by hand
+rather than letting `submit` do it, because it wants the dashboard link before
+anything is submitted. The session builds one worker per placement, sized by
+that placement's own cap — how many corners a site tolerates at once is an
+operational fact, so it comes from the site rather than from a library guess,
+and a placement that declares no capacity is refused up front rather than
+hanging. The corners then run concurrently instead of one after another, and the
+dashboard — opened before submission, since the sweep outlives a browser launch
+by only a few seconds — shows which corner is running under its authored key.
 
 Reuse and watching pull against each other, which is worth understanding rather
 than working around: a second run of an unchanged study reuses every record,
@@ -63,7 +62,6 @@ import subprocess
 import sys
 import time
 
-from distributed import Client
 
 DASHBOARD_HEAD_START = 5.0
 """Seconds given to the browser before the first corner is submitted."""
@@ -96,7 +94,6 @@ from hedloom import (  # noqa: E402
     address,
     artifact,
     artifacts,
-    cluster_for,
     codec,
     file,
     flow,
@@ -105,8 +102,8 @@ from hedloom import (  # noqa: E402
     materialization,
     operation,
     parameter,
-    plan,
     returned,
+    session,
     shell,
     study,
     sweep,
@@ -295,7 +292,7 @@ def evaluate_pvt(measurements, limits, *, point_ids):
 def pvt_study(base, edits, definition, limits, jobs):
     """One render for every corner, then one simulation and measurement each."""
 
-    prepared = prepare.options(key="prepare")(base, edits, jobs=jobs)
+    prepared = prepare.named("prepare")(base, edits, jobs=jobs)
 
     measured = []
     for job in sweep(jobs, key=lambda item: item["name"]):
@@ -307,14 +304,15 @@ def pvt_study(base, edits, definition, limits, jobs):
         )
         measured.append(measure_ac(raw, definition, point_id=job["name"]))
 
-    evaluation = evaluate_pvt.options(key="evaluate")(
+    evaluation = evaluate_pvt.named("evaluate")(
         measured, limits, point_ids=[job["name"] for job in jobs]
     )
     return {"evaluation": evaluation.evaluation}
 
 
-def build(edits_path: Path):
-    """Author the study, with the corners read from the edit file itself.
+@study(default_policy=local())
+def pvt(edits_path: Path):
+    """The study, with the corners read from the edit file itself.
 
     The edit file is opened here, while authoring, which is why the plan can
     name every corner before anything runs. Note what that costs: the author
@@ -324,31 +322,29 @@ def build(edits_path: Path):
     """
 
     jobs = jobs_of(load_editfile(edits_path))
-    with plan(default_policy=local()) as draft:
-        outputs = pvt_study.options(key="ota-pvt")(
-            input_artifact(
-                address("repository-relative", BASE_DIRECTORY_LOCATOR),
-                artifact=SIDE_CAR_BASE,
-                materialized_as=REPOSITORY_DIRECTORY_TREE,
-            ),
-            input_artifact(
-                address("repository-relative", PVT_EDITS_LOCATOR),
-                artifact=SIDE_CAR_EDITS,
-                materialized_as=REPOSITORY_PYTHON_SOURCE,
-            ),
-            input_artifact(
-                address("repository-relative", MEASUREMENT_DEFINITION_LOCATOR),
-                artifact=MEASUREMENT_DEFINITION,
-                materialized_as=REPOSITORY_JSON,
-            ),
-            input_artifact(
-                address("repository-relative", SPEC_LIMITS_LOCATOR),
-                artifact=SPEC_LIMITS,
-                materialized_as=REPOSITORY_JSON,
-            ),
-            jobs,
-        )
-    return draft.finish(outputs=outputs)
+    return pvt_study.named("ota-pvt")(
+        input_artifact(
+            address("repository-relative", BASE_DIRECTORY_LOCATOR),
+            artifact=SIDE_CAR_BASE,
+            materialized_as=REPOSITORY_DIRECTORY_TREE,
+        ),
+        input_artifact(
+            address("repository-relative", PVT_EDITS_LOCATOR),
+            artifact=SIDE_CAR_EDITS,
+            materialized_as=REPOSITORY_PYTHON_SOURCE,
+        ),
+        input_artifact(
+            address("repository-relative", MEASUREMENT_DEFINITION_LOCATOR),
+            artifact=MEASUREMENT_DEFINITION,
+            materialized_as=REPOSITORY_JSON,
+        ),
+        input_artifact(
+            address("repository-relative", SPEC_LIMITS_LOCATOR),
+            artifact=SPEC_LIMITS,
+            materialized_as=REPOSITORY_JSON,
+        ),
+        jobs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +638,7 @@ def main() -> int:
         threads=len(jobs),
     )
 
-    subject = study(build(_REPO / PVT_EDITS_LOCATOR))
+    subject = pvt(_REPO / PVT_EDITS_LOCATOR)
     print(subject.summary(), "\n")
 
     document = subject.document
@@ -651,15 +647,15 @@ def main() -> int:
     # invocation waiting on a simulator costs a blocked thread and nothing
     # scarce, and a process pool would only copy the transport further. The
     # shape comes from the site so that the capacity each worker declares and
-    # the placement each task asks for are one reading, not two.
-    cluster = cluster_for(site)
-    with cluster, Client(cluster) as client:
-        print(f"dashboard: {client.dashboard_link}")
-        if _open_dashboard(client.dashboard_link):
+    # the placement each task asks for are one reading, not two — which is why
+    # the session takes the site and nothing else.
+    with session(site, watch=True) as farm:
+        print(f"dashboard: {farm.client.dashboard_link}")
+        if _open_dashboard(farm.client.dashboard_link):
             # The corners finish faster than chromium starts; give it the head
             # start so the task stream has something to draw into.
             time.sleep(DASHBOARD_HEAD_START)
-        run = subject.submit(site=site, client=client, watch=True)
+        run = farm.submit(subject)
 
         report = render_report(
             run, jobs=jobs, fingerprints=site.fingerprints(document), document=document

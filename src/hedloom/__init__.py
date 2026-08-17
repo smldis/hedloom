@@ -18,6 +18,7 @@ only job was to agree with the first file.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from hedloom_flow import (  # noqa: F401 - the authoring surface, re-exported
@@ -37,6 +38,7 @@ from hedloom_flow import (  # noqa: F401 - the authoring surface, re-exported
     named_policy,
     parameter,
     plan,
+    planned,
 )
 from hedloom_flow import operation as _operation
 from hedloom_flow.authoring import file, returned, stdout, sweep  # noqa: F401
@@ -57,6 +59,7 @@ __all__ = [
     "Site",
     "SiteError",
     "Study",
+    "StudyBuilder",
     "StudyRun",
     "Workspace",
     "address",
@@ -74,6 +77,7 @@ __all__ = [
     "operation",
     "parameter",
     "plan",
+    "planned",
     "returned",
     "session",
     "shell",
@@ -127,7 +131,82 @@ def lsf(**options: Any) -> Policy:
     return named_policy("lsf")(**options)
 
 
-def study(plan_object: Plan, *, implementations: Mapping[str, Any] | None = None) -> Study:
-    """Pair a finished Plan with the bodies that implement it."""
+@dataclass(frozen=True, slots=True)
+class StudyBuilder:
+    """What ``@study`` leaves behind: call it to build one study.
 
-    return Study(plan_object, implementations or _IMPLEMENTATIONS)
+    A family rather than a study, because the decorated function takes the
+    arguments that distinguish one member from another. Calling it plans, which
+    costs nothing but Python; `submit` is still the only thing that spends.
+    """
+
+    build: Callable[..., Plan]
+    declared: Mapping[str, Any] | None = None
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Study:
+        return Study(self.build(*args, **kwargs), self.declared or _IMPLEMENTATIONS)
+
+    def __getattr__(self, name: str) -> Any:
+        # The mistake this API invites: `sweep.submit(...)` for `sweep().submit(...)`.
+        if name in {"submit", "plan", "document", "summary", "implementations"}:
+            called = getattr(self.build, "__name__", "this")
+            raise AttributeError(
+                f"{called!r} is a family of studies, not one: call it first, "
+                f"as {called}(...).{name}"
+            )
+        raise AttributeError(name)
+
+
+def study(
+    subject: Plan | Callable[..., Any] | None = None,
+    *,
+    default_policy: Policy | None = None,
+    implementations: Mapping[str, Any] | None = None,
+) -> Any:
+    """Pair the bodies that implement a plan with the plan itself.
+
+    The ordinary form is a decorator, and the decorated function *is* the study:
+    author inside it, return what the study produces, and call it to get one::
+
+        @study
+        def sweep(name):
+            return corners.named(name)(POINTS)
+
+        sweep("north").submit(site)
+
+    Nothing runs inside the body — an operation call records itself and hands
+    back a handle — so what comes back is a plan you can inspect before
+    spending anything.
+
+    `default_policy` is where every call in the study runs unless a call says
+    otherwise: `local()` for work that runs in this process, `lsf(...)` for work
+    that wants its own job.
+
+    A finished `Plan` is also accepted, for the `plan()` escape hatch.
+    """
+
+    if subject is None:
+        # `@study(default_policy=local())`, the decorator with arguments.
+        def decorate(function: Callable[..., Any]) -> StudyBuilder:
+            return study(
+                function,
+                default_policy=default_policy,
+                implementations=implementations,
+            )
+
+        return decorate
+    if isinstance(subject, Plan):
+        if default_policy is not None:
+            raise TypeError(
+                "a finished Plan already carries its policies; pass "
+                "default_policy where the plan is authored"
+            )
+        return Study(subject, implementations or _IMPLEMENTATIONS)
+    if callable(subject):
+        return StudyBuilder(
+            planned(subject, default_policy=default_policy), implementations
+        )
+    raise TypeError(
+        "study() takes a strategy to plan or a finished Plan, "
+        f"not {type(subject).__name__}"
+    )

@@ -32,7 +32,6 @@ from hedloom import (  # noqa: E402
     local,
     operation,
     parameter,
-    plan,
     returned,
     shell,
     study,
@@ -126,7 +125,7 @@ def rc_sweep(corners):
     for corner in sweep(corners, key="key"):
         deck = write_deck(key=corner["key"], temp_c=corner["temp_c"])
         measured.append(corner_frequency(simulate(deck)))
-    return {"verdict": compare.options(key="compare")(measured).verdict}
+    return {"verdict": compare.named("compare")(measured).verdict}
 
 
 def _read_ac_magnitudes(path: Path) -> list[tuple[float, float]]:
@@ -176,10 +175,11 @@ def _read_ac_magnitudes(path: Path) -> list[tuple[float, float]]:
     return points
 
 
-def build():
-    with plan(default_policy=local()) as draft:
-        outputs = rc_sweep.options(key="rc")(CORNERS)
-    return draft.finish(outputs=outputs)
+@study(default_policy=local())
+def rc_corners():
+    """The study: every corner swept, in this process."""
+
+    return rc_sweep.named("rc")(CORNERS)
 
 
 def main() -> int:
@@ -195,7 +195,7 @@ def main() -> int:
         address_spaces={"repository-relative": str(here)},
     )
 
-    subject = study(build())
+    subject = rc_corners()
     print(subject.summary(), "\n")
 
     run = subject.submit(site=site, watch=True)

@@ -3,7 +3,7 @@
 Author a study, see what it will do, and run it — from one file.
 
 ```python
-from hedloom import Site, artifact, file, flow, local, operation, plan, shell, study, sweep
+from hedloom import Site, artifact, file, flow, local, operation, shell, study, sweep
 
 DECK = artifact("spice-deck")
 
@@ -22,7 +22,11 @@ def sweep_corners(points):
     for point in sweep(points, key="key"):        # keyed scope per corner
         yield simulate(write_deck(temp_c=point["temp_c"]))
 
-subject = study(build_plan())
+@study
+def corners(points):
+    return sweep_corners.named("corners")(points)  # records; nothing runs
+
+subject = corners(POINTS)                         # planning, not spending
 print(subject.summary())                          # nothing spent yet
 run = subject.submit(site=Site.from_file("site.toml"), watch=True)
 print(run["cold:simulate"].artifacts["raw"]["address"])
@@ -49,8 +53,13 @@ whose only job is to agree with the first one.
 - **`shell(...)` is a launcher.** Returning a command instead of running one is
   what lets it reach a placement: locally it is a subprocess, on `lsf` it is one
   `bsub -I` job with that corner's queue, cores and licence.
-- **`sweep(points, key=...)`** keys every call inside the loop, so reuse cannot
-  be lost to renumbering — the trap that made unkeyed invocations dangerous.
+- **`@study` is the plan.** The decorated function *is* the study: calling it
+  records the work and hands back something inspectable, and `submit` is the
+  only thing that spends. A `@flow` is the same shape one level down, which is
+  why there is one thing to learn rather than two.
+- **`sweep(points, key=...)`** names every call inside the loop, so reuse cannot
+  be lost to renumbering — the trap that made unnamed invocations dangerous.
+  `.named("...")` does it by hand for a single call.
 - **`Site`** holds what is not the study: placements, roots, address spaces,
   threads. From TOML, with relative paths anchored to the profile.
 

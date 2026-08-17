@@ -307,7 +307,11 @@ def structure(study: Any) -> dict[str, Any]:
 
 
 def _main(argv: list[str]) -> int:  # pragma: no cover - operator convenience
-    """`python -m hedloom.visualize <module> <out.svg>` for a module exposing build()."""
+    """`python -m hedloom.visualize <module>[:name] <out.svg>`.
+
+    The name defaults to `build`, and may be anything that yields a study when
+    called: a `@study` family, or a function returning a `Plan`.
+    """
 
     import importlib
     import json
@@ -315,10 +319,13 @@ def _main(argv: list[str]) -> int:  # pragma: no cover - operator convenience
     if not argv:
         print(__doc__)
         return 2
-    module = importlib.import_module(argv[0])
+    target, _, attribute = argv[0].partition(":")
+    module = importlib.import_module(target)
+    from hedloom import Study
     from hedloom import study as _study
 
-    subject = _study(module.build())
+    built = getattr(module, attribute or "build")()
+    subject = built if isinstance(built, Study) else _study(built)
     if len(argv) > 1:
         render(subject, argv[1])
         print(f"wrote {argv[1]}")

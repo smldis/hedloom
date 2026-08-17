@@ -17,12 +17,18 @@ materialized output.
 
 Use `artifacts(kind)` for a required, non-empty ordered collection input. The
 normalized binding preserves member order and emits one positioned dependency
-edge per member. Use `.options(key="...")` on operation and flow calls when a
-call needs explicit identity within its containing flow boundary. Keys may be
-reused in distinct scopes, but operation and flow calls share one key namespace
+edge per member. Use `.named("...")` on operation and flow calls when a
+call needs explicit identity within its containing flow boundary. Names may be
+reused in distinct scopes, but operation and flow calls share one namespace
 inside any one scope.
 
-Keys identify Plan nodes only. They are not cache or scheduler keys, attempt or
+A plan is authored by a function: decorate it with `@planned` and calling it
+returns one finished `Plan`, with the return value naming the plan's outputs
+exactly as a `@flow`'s does. `plan()` remains available as an explicit draft for
+a plan assembled across several strategies; it must be closed before `finish`
+freezes it, which is the ordering `@planned` exists to remove.
+
+Names identify Plan nodes only. They are not cache or scheduler keys, attempt or
 runtime identities, or sequential slots. Cross-edit stability requires every
 relevant enclosing boundary and endpoint to be keyed: unkeyed boundaries and
 calls, external sources, and fallback edges retain deterministic authored-order

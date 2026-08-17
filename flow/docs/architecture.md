@@ -123,8 +123,8 @@ The user-authorized planning work established this bounded component:
   operation-output references are ephemeral;
 - optional output materialization capability is inspectable declaration data
   only and does not publish or change an output reference's value class;
-- `.options(policy=..., key=...)` is immutable; call policy outranks operation,
-  Plan, and local defaults;
+- `.named(...)` and `.options(policy=...)` are immutable and compose in either
+  order; call policy outranks operation, Plan, and local defaults;
 - explicit scoped keys provide stable identities for fully keyed nodes and
   operation-to-operation edges within stable keyed boundaries;
 - `submit(...)` refuses with `NotImplementedError` and confers no runtime

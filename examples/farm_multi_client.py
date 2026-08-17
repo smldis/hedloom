@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 for unit in ("flow", "exec", "run"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / unit / "src"))
 
-from hedloom import Site, plan, session, study  # noqa: E402
+from hedloom import Site, session, study  # noqa: E402
 from hedloom_exec.journal import AttemptJournal  # noqa: E402
 
 # The operations under test are the farm smoke test's, imported rather than
@@ -76,12 +76,16 @@ def points(prefix: str, base: int) -> tuple[dict[str, Any], ...]:
     )
 
 
-def study_for(name: str):
-    """One study. A different base gives different inputs, so different attempts."""
+@study
+def sweep_for(name: str):
+    """One study per name. A different base is different inputs, so new attempts.
 
-    with plan() as draft:
-        outputs = range_sweep.options(key=f"multi-{name}")(points(name, BASES[name]))
-    return study(draft.finish(outputs=outputs))
+    `@study` makes the function a family: calling it plans, and what comes back
+    is inspectable before anything is spent. Nothing in here runs — the flow
+    call records a scope and the operations inside it record invocations.
+    """
+
+    return range_sweep.named(f"multi-{name}")(points(name, BASES[name]))
 
 
 def site_for(root: Path, *, queue: str, cap: int) -> Site:
@@ -224,7 +228,7 @@ def shared_budget(site: Site, cap: int) -> bool:
     since = time.time()
     with session(site) as farm:
         runs = farm.submit_all(
-            {name: study_for(name) for name in ("north", "south")},
+            {name: sweep_for(name) for name in ("north", "south")},
             on_event=announce(),
         )
 
@@ -266,7 +270,7 @@ def same_work_twice(site: Site) -> bool:
     print("\n=== one session, the same study twice")
     print("    four jobs wanted, submitted twice")
     since = time.time()
-    subject = study_for("shared")
+    subject = sweep_for("shared")
     with session(site) as farm:
         runs = farm.submit_all(
             {"first": subject, "second": subject}, on_event=announce()
@@ -306,7 +310,7 @@ def two_controllers(site: Site) -> bool:
     print("\n=== two sessions, the same study")
     print("    four jobs wanted; the loser of each claim must not resubmit")
     since = time.time()
-    subject = study_for("contended")
+    subject = sweep_for("contended")
     runs: dict[str, Any] = {}
 
     def controller(label: str) -> None:
@@ -369,7 +373,7 @@ def all_reused(site: Site) -> bool:
     since = time.time()
     with session(site) as farm:
         runs = farm.submit_all(
-            {name: study_for(name) for name in BASES},
+            {name: sweep_for(name) for name in BASES},
             on_event=lambda outcome: None,
         )
 

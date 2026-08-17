@@ -27,7 +27,6 @@ from hedloom import (  # noqa: E402
     lsf,
     operation,
     parameter,
-    plan,
     session,
     shell,
     study,
@@ -118,10 +117,16 @@ def range_sweep(points):
     return summaries
 
 
-def build():
-    with plan() as draft:
-        outputs = range_sweep.options(key="farm-sweep")(POINTS)
-    return draft.finish(outputs=outputs)
+@study
+def farm_sweep():
+    """The study: one flow over the four points, and nothing else.
+
+    Decorated, so calling it plans. Nothing here runs — an operation call
+    records itself and hands back a handle — which is why the body can be read
+    as the shape of the work rather than as work.
+    """
+
+    return range_sweep.named("farm-sweep")(POINTS)
 
 
 def run(subject, farm) -> int:
@@ -160,7 +165,7 @@ def main() -> int:
     args = parser.parse_args()
 
     site = Site.from_file(args.site)
-    subject = study(build())
+    subject = farm_sweep()
     print(subject.summary(), "\n")
 
     # There is no kernel to choose. The site says how much farm this study may

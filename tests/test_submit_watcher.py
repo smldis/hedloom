@@ -12,7 +12,7 @@ from threading import Event, enumerate as threads
 
 import pytest
 
-from hedloom import Site, local, operation, plan, returned, study
+from hedloom import Site, local, operation, returned, study
 from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.transport import TransportError
 from hedloom_exec.watch import status_of
@@ -106,10 +106,9 @@ def local_value():
     return 7
 
 
+@study(default_policy=local())
 def local_study():
-    with plan(default_policy=local()) as draft:
-        output = local_value.options(key="corner")().value
-    return study(draft.finish(outputs={"value": output}))
+    return {"value": local_value.named("corner")().value}
 
 
 def test_a_local_study_never_calls_the_status_reader_and_keeps_completion_output(
@@ -188,10 +187,9 @@ def wait_for_watcher():
     return 41
 
 
+@study(default_policy=local())
 def waiting_study():
-    with plan(default_policy=local()) as draft:
-        output = wait_for_watcher.options(key="corner")().value
-    return study(draft.finish(outputs={"value": output}))
+    return {"value": wait_for_watcher.named("corner")().value}
 
 
 class RefusingReader:

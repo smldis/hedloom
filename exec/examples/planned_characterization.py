@@ -31,7 +31,7 @@ try:
         materialization,
         operation,
         parameter,
-        plan,
+        planned,
     )
 except ModuleNotFoundError:  # pragma: no cover - guidance, not logic
     sys.exit(
@@ -69,29 +69,34 @@ def summarize(measurements):
 @flow
 def characterize(design, *, corners):
     results = [
-        estimate.options(key=f"corner-{name}")(
+        estimate.named(f"corner-{name}")(
             design, corner=name, temperature_c=temperature
         )
         for name, temperature in corners.items()
     ]
-    return summarize.options(key="summary")(results)
+    return summarize.named("summary")(results)
+
+
+@planned
+def characterization(corners):
+    """The plan. Calling this builds one; nothing inside it runs."""
+
+    design = input_artifact(
+        address("repository-relative", "inputs/opamp.json"),
+        artifact=artifact("design"),
+        materialized_as=materialization(
+            address_space="repository-relative",
+            codec=codec("json", encoding="utf-8"),
+            access_scope="repository-checkout",
+        ),
+    )
+    return {"summary": characterize(design, corners=corners)}
 
 
 def build_plan(corners):
-    with plan() as draft:
-        design = input_artifact(
-            address("repository-relative", "inputs/opamp.json"),
-            artifact=artifact("design"),
-            materialized_as=materialization(
-                address_space="repository-relative",
-                codec=codec("json", encoding="utf-8"),
-                access_scope="repository-checkout",
-            ),
-        )
-        result = characterize(design, corners=corners)
-    normalized = draft.finish(outputs={"summary": result})
-    normalized.validate()
-    return normalized.to_data()
+    """The document, which is what this example's executor consumes."""
+
+    return characterization(corners).to_data()
 
 
 # Implementations. Deliberately arithmetic rather than a simulator: the slice
