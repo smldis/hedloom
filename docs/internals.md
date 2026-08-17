@@ -72,6 +72,11 @@ authored config, which bakes a machine path into the outer plan's identity.
   a sweep when one invocation fails. The "bounded loss" its own comment admits
   is a false report line, and the record has to answer for both what ran and
   what it produced.
+- [`binding-the-attempt-identity.md`](binding-the-attempt-identity.md)
+  — a proposed change, not implemented: resolve an invocation's attempt
+  identity in `binding.py` before submitting, so the kernel can ask the record
+  what happened instead of asking a future. Comes out of the two models above,
+  and closes the same gap the watcher and the Plan both work around.
 - [`review-before-the-farm.md`](review-before-the-farm.md)
   — a reading order for everything that changed since the rename, arranged by
   what reaches the farm, with the smallest first run.

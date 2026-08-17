@@ -113,16 +113,18 @@ Both have to come from the record, because the cancel destroyed the only other
 source of either. `MCRecordTruth` — record decides both — is clean across the
 whole state space.
 
-**What that would cost to build.** More than it sounds. `graph.py` does not know
-an invocation's attempt identity: it is chosen inside `execute` by
-`_select_sequence`, from the input digest, after `_run_one` is already on a
-worker. Reading the record from the controller means either returning the
-identity from `_run_one` or giving `hedloom_exec` a way to answer "what happened
-to this invocation" without one. There is also a cheaper honest option the model
-does not cover: keep the snapshot, but report the raced tasks under a
-disposition that does not claim anything — not `blocked`, not `failed` — naming
-the attempt directory to look in. That satisfies "do not lie" without plumbing
-identities, and it is in the house style of refusing to guess.
+**Why it cannot do that today.** `graph.py` does not know an invocation's
+attempt identity. It is chosen inside `execute` by `_select_sequence`, from the
+input digest, after `_run_one` is already on a worker — so the controller
+submits work it cannot name, and has nothing to fold a journal with.
+
+That is the actual defect, and it is not confined to this protocol:
+`watch.live_attempts` scans the attempt root for the same reason, and a Plan
+cannot say where a corner's record will land until the corner has run. The
+proposal is [`binding-the-attempt-identity.md`](binding-the-attempt-identity.md)
+— resolve identities in `binding.py`, where the invariant "the same results,
+under the same identities" is already stated and everything *except* the
+identities is already bound.
 
 ### The `processing()` mutation, as a state space
 

@@ -460,7 +460,11 @@ def _stop_admitting(
         # outcome have to come from the attempt record: the model shows that
         # fixing only the classification reports a succeeded corner as failed,
         # because `_collect_preserved` reads a future this call destroyed.
-        # See `docs/stop-admitting-protocol.md` before changing any of this.
+        #
+        # Which this kernel cannot do yet, because it cannot name the attempt:
+        # `_select_sequence` picks the identity inside `execute`, on the worker.
+        # The proposed change is `docs/binding-the-attempt-identity.md`; read it
+        # and `docs/stop-admitting-protocol.md` before changing any of this.
         client.cancel(list(cancelled.values()), force=False)
         for item in items:
             if item.invocation_id not in cancelled:
