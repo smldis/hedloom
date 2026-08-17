@@ -190,9 +190,11 @@ class AttemptJournal:
         overwrite records in the journal that every recovery, reuse and
         identity decision is read back from. The durable record starts lying.
 
-        Not at risk: manifest publication is an atomic `rename()` within one
-        directory, which NFS does guarantee. It is the claim half that is
-        suspect, not the publication half.
+        Not at risk from *this*: manifest publication is an atomic `rename()`
+        within one directory, which NFS does guarantee. But see the second
+        DEVNOTE on `publish_terminal` -- publication turns out to have a
+        separate problem, on any filesystem, and it is the one a TLA+ model of
+        this protocol found first.
 
         Not reachable today, which is why this is a flag and not a fix: one
         process runs the plan, the Dask cluster is in-process, and two separate
@@ -387,7 +389,39 @@ class AttemptJournal:
         The write-replace order matters: a crash between the two leaves a
         readable manifest and a non-terminal journal, which reconciliation can
         resolve. The reverse order would leave a terminal claim with no
-        evidence behind it.
+        evidence behind it -- and not only on a crash, since the window between
+        the two writes is itself such a state for any concurrent reader.
+
+        ==================================================================
+        DEVNOTE/TODO -- NO WRITER EXCLUSION HERE. Raised 2026-08-17 by the
+        TLA+ model in `docs/attempt-claim/`; see `docs/attempt-claim-protocol.md`.
+
+        This method runs *outside* `claim()`. `launch_or_attach` releases the
+        lock when it returns, and `execute` then calls `reconcile` for both the
+        `claimed` and the `attached` disposition -- so two callers holding one
+        identity can both be in here at once. `reconcile` guards on "is a
+        manifest already visible", but reads that guard unlocked, so both can
+        pass it before either publishes.
+
+        Two consequences, neither of which needs a crash:
+
+        * The journal and the manifest can end up naming different outcomes.
+          `execute` reports the outcome from the journal and the artifacts from
+          the manifest, so a result is returned under a verdict that is not its
+          own. TLC reaches this in 18 states with two callers.
+        * `manifest.json.partial` is a fixed name in the shared attempt
+          directory. Two publishers open it with `"w"`. The rename stays atomic
+          and the published file is never torn, but *whose* bytes it carries is
+          whoever wrote last, not whoever renamed.
+
+        The fix is to hold the claim until the terminal record is written, which
+        the model checks clean. It costs nothing in lock hold time: the claim is
+        already held across the whole blocking `bsub -I`.
+
+        Same exposure gate as the claim DEVNOTE above -- it needs two live
+        callers for one identity, which one controller with one task per
+        invocation never produces. Fix it before pooled placement lands.
+        ==================================================================
         """
 
         if outcome not in TERMINAL_OUTCOMES:

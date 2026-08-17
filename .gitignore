@@ -8,3 +8,6 @@ docs/_build/
 .pytest_cache/
 
 .claude/
+
+# Project-local toolchains (JRE, tla2tools) -- never installed into $HOME
+.toolchain/

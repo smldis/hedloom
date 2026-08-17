@@ -60,6 +60,13 @@ authored config, which bakes a machine path into the outer plan's identity.
 - [`dask-scheduling-rules.md`](dask-scheduling-rules.md)
   — the same subject as ten rules, each cited to a line of
   `distributed==2026.7.1` so an upgrade can be re-checked.
+- [`attempt-claim-protocol.md`](attempt-claim-protocol.md)
+  — the claim, the journal and the two durable writes that publish a result,
+  with a TLA+ model of them in [`attempt-claim/`](attempt-claim). Says which
+  assumptions are load-bearing by denying them one at a time: the lock, the
+  publish-before-record order, owner-bound lifetime. Records one finding —
+  publication runs unlocked — and one surprise: `discovery_is_authoritative`
+  is not carrying what it looks like it carries.
 - [`review-before-the-farm.md`](review-before-the-farm.md)
   — a reading order for everything that changed since the rename, arranged by
   what reaches the farm, with the smallest first run.
