@@ -158,17 +158,33 @@ If the reading leaves you willing, the least you can spend to learn the most:
    (the watcher refuses to work without it) and, in its last and most important
    check, that killing the `bsub` client takes the job with it. Nothing in the
    test suite can establish that one.
-2. `python examples/farm_smoke.py <profile>` — **sequential**, no `--dask`.
-   Eight jobs one at a time. Proves `bsub -I`, argv, identity, chaining,
-   artifacts and reuse against your real LSF, with no concurrency and no
-   scheduler involved. This is the run that would catch a wrong `bsub` line.
-3. `python examples/farm_smoke.py <profile> --dask` — adds the graph kernel and
-   `max_jobs`. Start with `max_jobs = 2` regardless of what you intend to use,
-   so a mistake queues nothing.
-4. Add `watch=True` last. It is the only part that has never met a real `bjobs`,
-   it refuses rather than guesses when the output is not what it expects, and
-   it cannot fail a run — but there is no reason to debug it and the kernel at
-   the same time.
+2. `python examples/farm_smoke.py <profile>` with **`max_jobs = 1`** in the
+   profile. Eight jobs, one in flight at a time. Proves `bsub -I`, argv,
+   identity, chaining, artifacts and reuse against your real LSF with nothing
+   concurrent to confuse a failure. This is the run that would catch a wrong
+   `bsub` line.
+3. The same command with `max_jobs = 2`, then higher. Concurrency is the
+   profile's, so this needs no second command and no flag — which is the point
+   of it being a site fact rather than a mode. Raise it slowly; a mistake at
+   `max_jobs = 2` queues nothing worth apologising for.
+
+**Updated 2026-08-17.** Steps 2 and 3 above were originally *"sequential, no
+`--dask`"* and *"add `--dask`"*. The example no longer has that flag, and there
+is no kernel to choose from the command line: `farm_smoke.py` opens
+`session(site, watch=True)` and the site's declared capacity decides how much
+runs at once. A profile declaring `max_jobs = 1` is the honest spelling of what
+step 2 was asking for. Two consequences for this ladder:
+
+* **A scheduler is now involved even at step 2.** `max_jobs = 1` bounds the
+  cluster to one in-flight job rather than removing the cluster. If you want
+  genuinely no scheduler — worth it once, if `bsub` itself is suspect — pass
+  `sequential=True` to `session(...)` in the example, which is the argument that
+  builds no cluster at all.
+* **The watcher is no longer something to add last.** It is on for the whole
+  run. It remains the part that has never met a real `bjobs`, and it still
+  refuses rather than guesses when the output is not what it expects and cannot
+  fail a run — but if you would rather debug the kernel first, drop `watch=True`
+  from the `session(...)` call for the first pass.
 
 ## What has never met a real farm
 

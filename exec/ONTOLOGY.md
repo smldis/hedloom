@@ -129,7 +129,8 @@ its siblings are reused and the superseded results stay nameable.
   since changed. Superseded work is retained and explainable, never silently
   overwritten.
 - `hedloom_exec.planned.plan_bundles(...)` derives content-addressed bundles from a
-  schema-2 Hedloom Flow Plan **document**. The coupling is to the portable
+  Hedloom Flow Plan **document**, at schema 2 or 3; a document at any other
+  schema is refused by version rather than misread. The coupling is to the portable
   plain-data artifact, not to the package: nothing imports `hedloom_flow`, and the
   base distribution stays dependency-free. An invocation's digest changes
   exactly when its own declaration or any ancestor's does, so reuse is

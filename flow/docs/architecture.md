@@ -118,9 +118,10 @@ The user-authorized planning work established this bounded component:
   IR with deterministic data and JSON inspection;
 - planning validates required and unexpected bindings, configuration types,
   artifact kinds, collection membership/order, output ownership, and key scope;
-- schema-2 source declarations record opaque addresses, codec identity/options,
+- source declarations record opaque addresses, codec identity/options,
   and assumed access scope; source references are artifacts and ordinary
-  operation-output references are ephemeral;
+  operation-output references are ephemeral (introduced at schema 2, carried
+  unchanged into the schema 3 emitted today);
 - optional output materialization capability is inspectable declaration data
   only and does not publish or change an output reference's value class;
 - `.named(...)` and `.options(policy=...)` are immutable and compose in either
@@ -207,7 +208,7 @@ serializable literal, an addressable artifact reference, or an ephemeral Dask
 value. It also required an explicit materialization operation before ephemeral
 data could cross into direct LSF.
 
-Current schema-2 Plan IR distinguishes addressed external artifact references
+Current Plan IR distinguishes addressed external artifact references
 from ephemeral operation-output references. It records opaque source addresses,
 codec contract identity/options, assumed access scope, and optional output
 materialization capability as canonical declaration data. It does not resolve

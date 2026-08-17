@@ -75,27 +75,44 @@ Adoption is recorded (2026-08-04, user direction; see
 measurements behind it), and `hedloom_run.graph.run_plan_graph` is a working
 kernel, exercised by this unit's own test suite (`tests/test_graph.py`) and by
 `hedloom/examples/ota_pvt_clean.py`, the one example in this repository that runs
-on it. What remains unmet: a real farm. Every placement any example or test
-has actually run is `local`; the LSF launcher reaching a real `bsub -I` job
-under the graph kernel is designed and untested against a real cluster.
+on it. What remains unmet is a real farm *under this kernel*. The sequential
+driver has reached one — `hedloom/examples/farm_smoke.py` submitted real
+`bsub -I` jobs, chained an artifact between them, and reused them on a second
+run — but nothing has yet put the graph kernel in front of a real queue, so
+concurrency, `max_jobs` as a bound, and failure isolation are exercised only
+against a fake `bsub` and a real client fixture.
 
-**Cluster shape matters, and the recommended one is unusual.** Use a local,
-threaded cluster on the submit host:
+**Cluster shape matters, and the recommended one is unusual.** Build it from
+the site profile, which is the only shape this kernel accepts:
 
 ```python
-from distributed import Client, LocalCluster
-cluster = LocalCluster(processes=False, threads_per_worker=32)
+from distributed import Client
+from hedloom_run.cluster import cluster_for
+
+cluster = cluster_for(site)
 ```
+
+That gives one in-process worker per placement, each holding threads that
+belong to that placement alone. A hand-built `LocalCluster` is not a lighter
+alternative to this: it applies one recipe to every worker, so it can express
+neither two workers that differ nor the per-placement capacities every task
+requests. Handing one to the graph kernel used to produce the worst failure
+this design can make — a task asking for a capacity no worker declares is not
+slow, it is *never scheduled*, so the sweep waits forever against an idle
+cluster with no exception and no log line. `run_plan_graph` now refuses such a
+cluster before submitting anything.
 
 Three measured reasons, recorded in `docs/vision/open-concepts.md`:
 
 * An invocation waiting on `bsub -I` costs about 16 KiB of thread and one
-  client process. Concurrency here is a safety rail, not a scarce resource,
-  and `threads_per_worker` *is* the rail — there is deliberately no limit
-  parameter in this module. Size it from the share of the farm this study may
-  spend — deliberately below the site's MAX JOB policy, which counts every job
-  running under your user from any source, so declaring all of it here means
-  hedloom and your own submissions wait for each other.
+  client process. A placement's thread count is therefore not a statement
+  about this host's CPUs but about how many of its jobs may be in flight,
+  which is why it is *derived* from that placement's `max_jobs` rather than
+  configured beside it: threads and declared capacity are independent gates,
+  and the smaller one binds silently. Size `max_jobs` from the share of the
+  farm this study may spend — deliberately below the site's MAX JOB policy,
+  which counts every job running under your user from any source, so declaring
+  all of it here means hedloom and your own submissions wait for each other.
 * Nothing secedes. A worker holding live `bsub -I` clients should read as
   running, and `secede()` would report it idle by excluding the task from the
   parallelism count.
@@ -114,8 +131,12 @@ by raising. Independent branches continue: one corner failing does not
 abandon the other forty-nine, which is what a sweep wants and what the
 sequential kernel cannot offer — a deliberate difference in the *scope* of a
 failure between the two kernels, not in what a result means. Task keys are
-named after the authored key rather than a digest, so an operator watching a
-sweep's dashboard sees corners, not hashes; tasks are submitted `pure=False`,
+`operation-authoredkey-digest`, so an operator watching a sweep's dashboard
+sees corners rather than hashes *and* Dask can learn a duration average per
+operation — it groups by everything before the first `-`, so keying by corner
+alone gave every task its own group, taught the scheduler nothing, and left
+every placement decision running on a flat 500 ms default; tasks are submitted
+`pure=False`,
 because reuse is `hedloom_exec`'s decision against declared inputs, never Dask's
 against call signatures.
 

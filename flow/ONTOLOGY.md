@@ -51,6 +51,11 @@ planning and runtime authority.
 - Plan IR is immutable, validates operation bindings and artifact dependencies,
   preserves nested flow boundaries, and provides deterministic plain-data and
   JSON inspection.
+- The emitted Plan schema is **3**, and it is the one version a `Plan` will
+  validate: a document declaring anything else is refused by version rather
+  than read as though the difference did not matter. Consumers may be wider —
+  `hedloom_exec.plan_bundles` accepts 2 and 3 — because a durable record
+  outlives the schema the document that produced it was written at.
 - `address(...)`, `codec(...)`, and `materialization(...)` declare opaque
   source addresses, representation identity/options, and assumed access scope
   as canonical data. Strict `input_artifact(...)` records an already-

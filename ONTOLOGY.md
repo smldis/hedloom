@@ -39,10 +39,16 @@ that survives. Editing `spec_limits.json` reran `evaluate-pvt` alone — fifteen
 invocations reused — and flipped the verdict to failing; restoring the file
 reused the original attempt rather than recomputing it.
 
-What it has not met: a farm. Every placement it has run is `local`, so the
-`shell` launcher reaching an `lsf` job is designed and untested. `ota_pvt.py`
-carries the one-line policy change that would place each corner on its own job,
-as a comment rather than a claim.
+What it has met of a farm, and what it has not, is worth splitting rather than
+totalling. `examples/farm_smoke.py` has run against a real LSF installation and
+proved the `shell` launcher reaching a real `bsub -I` job: argv, `-J` identity,
+an artifact chaining from one job into the next, failure recording and reuse.
+It ran **sequentially**, so it says nothing about the graph kernel, about
+`max_jobs` bounding anything against a real queue, or about the watcher's
+`bjobs` parsing, none of which have met a farm. Every simulator study here —
+`rc_corners.py`, both `ota_pvt` variants — still runs entirely at `local`
+placement; `ota_pvt.py` carries the one-line policy change that would place each
+corner on its own job as a comment rather than a claim.
 
 ## Current contracts
 
@@ -69,9 +75,27 @@ as a comment rather than a claim.
   depending on an author keying every call by hand, where a mistake is silent
   staleness rather than an error.
 - `study(plan).summary()` shows every invocation, its operation and its
-  placement, and spends nothing. `submit(site=...)` then runs it; passing a
-  `client` gives readiness to Dask, and without one the plan is walked in one
-  thread.
+  placement, and spends nothing. `submit(site=...)` then runs it, opening the
+  compute the site declares for as long as the run needs it and giving it back
+  afterwards. There is no kernel to choose: concurrency is each placement's own
+  `max_jobs`, and a site that declares none has capacity one. `sequential=True`
+  asks for one invocation at a time and builds no cluster, which is what keeps
+  `distributed` optional; `locally=True` additionally serves every placement by
+  its authored body in this process, for debugging a farm study on the submit
+  host. A caller who already holds a `distributed.Client` may pass it instead.
+- `session(site, override=None, ...)` is the form for more than one run: it owns
+  one cluster, one client and one queue watcher for a `with` block, so several
+  runs share a budget rather than each opening their own. Its lifetime is
+  deliberately visible, because leaving the block ends the runs inside it and,
+  under owner-bound lifetime, their farm jobs with them. `Session.submit_all`
+  runs several studies against that one cluster, which is what makes the shared
+  budget structural rather than a convention.
+- An override — `session(site, {"placement": {"lsf": {"max_jobs": 1}}})` —
+  changes how a run executes and never what it means. Nothing it may reach is
+  identity-bearing, so an overridden run lands on the same attempt identities as
+  a plain one and the two reuse each other's work. Roots are refused, because
+  moving the record changes what is reused, which is a different installation
+  rather than a different way of running this one.
 - `StudyRun` is addressable the way the study was authored: `run["cold:simulate"]`
   is that invocation's outcome, and `run.value` is the plan's conclusion.
 - A study may begin from a file it did not write. An operation declaring an

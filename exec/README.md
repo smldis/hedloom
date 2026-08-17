@@ -100,7 +100,8 @@ Third run — ss retuned to 150C
 
 The coupling is to the Plan *document*, not the package: nothing imports
 `hedloom_flow`, so the base distribution stays dependency-free and any producer of
-the same schema-2 document works. An invocation's digest changes exactly when
+the same document works — schema 2 or 3, both of which
+`plan_bundles` accepts. An invocation's digest changes exactly when
 its own declaration or any ancestor's does, which is what makes the edited
 corner and its reduction rerun while the untouched corners are reused.
 

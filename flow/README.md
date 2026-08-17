@@ -4,10 +4,15 @@ Hedloom Flow is the independently installable prototype for Python-native static
 operation and flow planning described in [`PLANNING.md`](PLANNING.md). It
 captures immutable definitions, explicit dependencies, nested flow boundaries,
 ordered collection fan-in, scoped authored keys, and deterministic,
-JSON-inspectable Plan IR without executing operation bodies. Schema-2 Plans
-can also declare an opaque address, codec contract, and assumed access scope
-for an already-materialized external source. Source references are classified
-as `artifact`; operation outputs remain `ephemeral`.
+JSON-inspectable Plan IR without executing operation bodies. A Plan can also
+declare an opaque address, codec contract, and assumed access scope for an
+already-materialized external source. Source references are classified as
+`artifact`; operation outputs remain `ephemeral`.
+
+Plans are emitted at **schema 3**, and a `Plan` refuses any other
+`schema_version` rather than validating a document it does not describe.
+`hedloom_exec.plan_bundles` reads schema 2 and 3, so a record written from an
+earlier document is still derivable.
 
 Use `address(...)`, `codec(...)`, and `materialization(...)` with the strict
 `input_artifact(..., artifact=..., materialized_as=...)` surface to record that
