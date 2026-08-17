@@ -444,8 +444,23 @@ def _stop_admitting(
     if cancelled:
         # A task can acquire a thread after the stack snapshot but before this
         # call. Dask cannot interrupt that Python thread: its `bsub -I` runs to
-        # completion and its journal is published normally. The bounded loss is
-        # only this run report's line for it, which is marked blocked below.
+        # completion and its journal is published normally.
+        #
+        # DEVNOTE -- 2026-08-17, from the TLA+ model in `docs/stop-admitting/`.
+        # The loss is not just this run report's line for it: the line is
+        # *false*. `blocked` says the work was never attempted, which is what
+        # makes a rerun look free, while the attempt record says it ran. Two
+        # artifacts of one run contradict each other and the durable one is the
+        # one not being read. TLC reaches it in seven states.
+        #
+        # The window cannot be closed from here -- there is no
+        # cancel-if-not-started, and after this call a future reports
+        # `cancelled` either way, so the classification cannot be recovered
+        # afterwards from Dask either. Both the classification *and* the
+        # outcome have to come from the attempt record: the model shows that
+        # fixing only the classification reports a succeeded corner as failed,
+        # because `_collect_preserved` reads a future this call destroyed.
+        # See `docs/stop-admitting-protocol.md` before changing any of this.
         client.cancel(list(cancelled.values()), force=False)
         for item in items:
             if item.invocation_id not in cancelled:

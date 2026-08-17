@@ -67,6 +67,11 @@ authored config, which bakes a machine path into the outer plan's identity.
   publish-before-record order, owner-bound lifetime. Records one finding —
   publication runs unlocked — and one surprise: `discovery_is_authoritative`
   is not carrying what it looks like it carries.
+- [`stop-admitting-protocol.md`](stop-admitting-protocol.md)
+  — the same treatment one layer up, for what `graph.py` does with the rest of
+  a sweep when one invocation fails. The "bounded loss" its own comment admits
+  is a false report line, and the record has to answer for both what ran and
+  what it produced.
 - [`review-before-the-farm.md`](review-before-the-farm.md)
   — a reading order for everything that changed since the rename, arranged by
   what reaches the farm, with the smallest first run.

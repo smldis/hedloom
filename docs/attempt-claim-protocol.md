@@ -244,10 +244,9 @@ detached work does.
   pooled placement writing journals from farm nodes, do.
 
   What *is* worth modelling on that side is `_stop_admitting` — hedloom's own
-  protocol over Dask rather than Dask itself, and one whose comment already
-  admits a race: a task can acquire a thread after the `call_stack()` snapshot
-  and before the `cancel`. That needs only a three-state abstraction of a task
-  (queued, running, done) to ask whether every invocation lands in the report
-  exactly once and whether the bounded loss is as bounded as the comment says.
+  protocol over Dask rather than Dask itself. That is done, in
+  [`stop-admitting-protocol.md`](stop-admitting-protocol.md): the loss its
+  comment calls bounded turns out to be a false report line, and repairing it
+  needs the attempt record for both the classification and the outcome.
 * **Liveness.** Only safety invariants and deadlock. The model says a bad state
   is unreachable, not that a run finishes.
