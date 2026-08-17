@@ -588,6 +588,19 @@ class LSFPooledTransport:
     `bkill`ed on cluster close. That is the same owner-bound property this unit
     wants, already implemented and exercised elsewhere, so it should be adopted
     rather than rebuilt. Nothing is implemented here yet.
+
+    Nor will it be implemented *here*. A pooled transport holds a live Dask
+    client, and this unit imports neither Dask nor `hedloom_flow` — the
+    exclusion that keeps a durable attempt record independent of how anything
+    was scheduled. So the pooled path belongs to `hedloom_run`, which already
+    owns binding and is the only unit allowed to import Dask at all; the extra
+    is `hedloom-run[pooled]`. This class stays a refusing boundary, and the
+    refusal is the point: it names the seam rather than letting a caller
+    discover it as a serialization error deep inside Dask.
+
+    See `docs/pooled-placement-plan.md`. Steps 1 and 2 of its spike pass, and
+    `exec/tests/fakefarm` now answers batch submission, so the whole pooled
+    path is exercisable with no LSF on the host.
     """
 
     name = "lsf-pooled"

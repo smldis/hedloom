@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """A fake `bjobs`, answering only about jobs that are actually still there.
 
-Two call shapes, because the unit makes two different requests and a fake that
-answers one of them leaves the other untested:
+Three call shapes, because the things that ask are three and a fake that
+answers one of them leaves the others untested:
 
     bjobs -J <name> -noheader          `LSFInteractiveTransport.discover`
     bjobs -noheader -o "job_name stat" `watch.LSFStatusReader.states`
+    bjobs <job-id> -noheader           a batch job, addressed the way LSF
+                                       addresses one
 
 The second is why the watcher was never exercised against this fake: it was not
 implemented, so `states()` read the non-zero exit as "no unfinished job found"
 and reported nothing, for every run.
 
-Liveness is derived, never trusted. A record is live if its state is PEND or RUN
-*and* the `bsub` client that owns it still exists. So:
+Liveness is derived, never trusted, and *what* it is derived from is the one
+place the two submission modes differ here:
 
-* a finished job is absent, as it is from real `bjobs` without `-a`;
-* a job whose client was killed is absent, which is owner-bound lifetime;
-* a record with no `owner_pid` is live, which is how a test plants the orphan
-  that `discover` exists to find.
+* an **interactive** job is live while the `bsub` client that owns it exists,
+  which is owner-bound lifetime;
+* a **batch** job is live while its own detached supervisor exists, because it
+  is deliberately not bound to its client — that is what batch means, and a
+  pooled Dask worker is one;
+* a finished job is absent either way, as it is from real `bjobs` without `-a`;
+* a record with no owning process at all is live, which is how a test plants
+  the orphan that `discover` exists to find.
 """
 
 import json
@@ -27,12 +33,7 @@ import sys
 STATE = os.environ.get("FAKE_LSF_STATE")
 
 
-def owner_alive(record):
-    pid = record.get("owner_pid")
-    if pid is None:
-        # A leftover from a run this fake did not start. Real LSF cannot tell
-        # the difference either; that is the situation discovery is for.
-        return True
+def pid_alive(pid):
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -40,6 +41,20 @@ def owner_alive(record):
     except PermissionError:
         return True
     return True
+
+
+def owner_alive(record):
+    """Whichever process this job's mode says holds its lifetime."""
+
+    if record.get("kind") == "batch":
+        pid = record.get("supervisor_pid")
+    else:
+        pid = record.get("owner_pid")
+    if pid is None:
+        # A leftover from a run this fake did not start. Real LSF cannot tell
+        # the difference either; that is the situation discovery is for.
+        return True
+    return pid_alive(pid)
 
 
 def live_jobs():
@@ -62,14 +77,38 @@ def live_jobs():
     return jobs
 
 
+def row(record):
+    """One line in the default listing, which callers read whole."""
+
+    user = os.environ.get("USER", "user")
+    queue = record.get("options", {}).get("-q", "normal")
+    # Interactive records predate ids and are addressed by name; only a batch
+    # job has one to report.
+    job_id = record.get("id", "9001")
+    return f"{job_id} {user} {record['state']} {queue} {record['name']}\n"
+
+
 def main(argv):
-    wanted = None
+    wanted_name = None
+    wanted_id = None
     listing = False
-    for index, token in enumerate(argv):
+    index = 0
+    while index < len(argv):
+        token = argv[index]
         if token == "-J" and index + 1 < len(argv):
-            wanted = argv[index + 1]
-        if token == "-o":
+            wanted_name = argv[index + 1]
+            index += 2
+        elif token == "-o":
             listing = True
+            index += 2 if index + 1 < len(argv) else 1
+        elif token.startswith("-"):
+            index += 1
+        else:
+            # A bare argument is a job id, which is how LSF addresses a batch
+            # job: `LSFCluster` never learns the name it gave, only the id
+            # `bsub` printed back.
+            wanted_id = token
+            index += 1
 
     if not STATE:
         sys.stderr.write("bjobs: FAKE_LSF_STATE is not set\n")
@@ -88,19 +127,18 @@ def main(argv):
             return 255
         return 0
 
-    if wanted is None:
+    if wanted_name is None and wanted_id is None:
         sys.stderr.write("bjobs: no job name given\n")
         return 255
 
     for record in jobs:
-        if record["name"] == wanted:
-            user = os.environ.get("USER", "user")
-            queue = record.get("options", {}).get("-q", "normal")
-            sys.stdout.write(
-                f"9001 {user} {record['state']} {queue} {record['name']}\n"
-            )
-            return 0
-    sys.stderr.write(f"Job <{wanted}> is not found\n")
+        if wanted_name is not None and record["name"] != wanted_name:
+            continue
+        if wanted_id is not None and str(record.get("id")) != wanted_id:
+            continue
+        sys.stdout.write(row(record))
+        return 0
+    sys.stderr.write(f"Job <{wanted_name or wanted_id}> is not found\n")
     return 255
 
 

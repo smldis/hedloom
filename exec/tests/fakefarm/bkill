@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
-"""A fake `bkill -J <name>`, ending a job rather than forgetting it.
+"""A fake `bkill`, ending a job rather than forgetting it.
 
 It used to delete the record, which made cancellation and never-having-run
 indistinguishable — and lost the timestamps a test reads to measure how much
 farm a pass spent. Marking it ended has the same effect on `bjobs`, which
 reports only PEND and RUN, while leaving the evidence in place.
 
-Killing the owning `bsub` client is what actually stops the work: the child is
-bound to it with `PR_SET_PDEATHSIG`, so the command dies with its client exactly
-as it would on a real interactive job.
+Two call shapes, matching the two ways a job can be addressed:
+
+    bkill -J <name>        an interactive job, by the name hedloom chose
+    bkill <id> [<id> ...]  a batch job, by the id `bsub` printed back, which is
+                           what `LSFCluster` cancels its workers with
+
+What actually stops the work differs by mode, and both are the real mechanism
+rather than a bookkeeping change:
+
+* **interactive** — kill the owning `bsub` client. The command is bound to it
+  with `PR_SET_PDEATHSIG`, so it dies with its client exactly as it would on a
+  real interactive job.
+* **batch** — signal the supervisor's whole process **group**. A batch job is
+  not bound to anything that has already exited, and a pooled Dask worker
+  spawns children of its own; signalling the group is what makes sure the work
+  stops rather than only the process that launched it.
 """
 
 import json
@@ -20,28 +33,61 @@ import time
 STATE = os.environ.get("FAKE_LSF_STATE")
 
 
-def main(argv):
-    name = None
-    for index, token in enumerate(argv):
-        if token == "-J" and index + 1 < len(argv):
-            name = argv[index + 1]
-    if not name or not STATE:
-        return 255
-    path = os.path.join(STATE, f"{name}.json")
-    if not os.path.exists(path):
-        return 255
-    with open(path) as handle:
-        record = json.load(handle)
-    if record.get("state") not in ("PEND", "RUN"):
-        sys.stderr.write(f"Job <{name}> has already finished\n")
-        return 255
+def load(path):
+    try:
+        with open(path) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
 
-    pid = record.get("owner_pid")
-    if pid is not None:
+
+def find(name=None, job_id=None):
+    """The record for one job, addressed either way.
+
+    A batch record is keyed by id rather than name because `LSFCluster` gives
+    every worker the same name; a lookup by name would find whichever was
+    written last.
+    """
+
+    if job_id is not None:
+        path = os.path.join(STATE, f"{job_id}.json")
+        if os.path.exists(path):
+            return path, load(path)
+        return None, None
+    path = os.path.join(STATE, f"{name}.json")
+    if os.path.exists(path):
+        return path, load(path)
+    return None, None
+
+
+def stop(record):
+    """Signal whatever holds this job's lifetime, and say nothing if it is gone."""
+
+    if record.get("kind") == "batch":
+        pid = record.get("supervisor_pid")
+        if pid is None:
+            return
         try:
-            os.kill(pid, signal.SIGKILL)
+            # The group, not the process: the supervisor was started in its own
+            # session, so this reaches the job and anything it spawned.
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
+        return
+    pid = record.get("owner_pid")
+    if pid is None:
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def terminate(path, record, label):
+    if record.get("state") not in ("PEND", "RUN"):
+        sys.stderr.write(f"Job <{label}> has already finished\n")
+        return 255
+    stop(record)
     record["state"] = "EXIT"
     record["ended_at_ns"] = time.time_ns()
     record.setdefault("returncode", 130)
@@ -49,8 +95,46 @@ def main(argv):
     with open(temporary, "w") as handle:
         json.dump(record, handle)
     os.replace(temporary, path)
-    sys.stdout.write(f"Job <{name}> is being terminated\n")
+    sys.stdout.write(f"Job <{label}> is being terminated\n")
     return 0
+
+
+def main(argv):
+    name = None
+    ids = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "-J" and index + 1 < len(argv):
+            name = argv[index + 1]
+            index += 2
+        elif token.startswith("-"):
+            index += 1
+        else:
+            ids.append(token)
+            index += 1
+
+    if not STATE or (name is None and not ids):
+        return 255
+
+    if name is not None:
+        path, record = find(name=name)
+        if record is None:
+            return 255
+        return terminate(path, record, name)
+
+    # Several ids in one call, which is how a cluster closes: one bad id must
+    # not stop the rest being cancelled, so the worst status is returned only
+    # after every job has been asked.
+    worst = 0
+    for job_id in ids:
+        path, record = find(job_id=job_id)
+        if record is None:
+            sys.stderr.write(f"Job <{job_id}> is not found\n")
+            worst = 255
+            continue
+        worst = max(worst, terminate(path, record, job_id))
+    return worst
 
 
 if __name__ == "__main__":

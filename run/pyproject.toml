@@ -15,6 +15,21 @@ dependencies = ["hedloom-exec"]
 # thread should not have to install a scheduler to run.
 dask = ["distributed==2026.7.1"]
 
+# Pooled LSF placement, where invocations reach a second cluster whose workers
+# are themselves LSF jobs. Separate from `dask` rather than folded into it,
+# because they answer different questions: `dask` is how much of *this* plan
+# runs at once, and a farm sweep placing one job per corner needs it without
+# ever needing a pool. Only the pooled transport imports `dask_jobqueue`.
+#
+# It belongs here and nowhere lower. `hedloom-exec` imports neither
+# `hedloom_flow` nor Dask — that is what keeps the attempt record independent of
+# how anything is scheduled — so a transport holding a live Dask client cannot
+# live there, and `LSFPooledTransport` in that unit stays a refusing boundary.
+#
+# `dask-jobqueue` asks only for `distributed>=2022.02.0`, so it resolves against
+# the pin above rather than arguing with it.
+pooled = ["hedloom-run[dask]", "dask-jobqueue>=0.9"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

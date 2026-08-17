@@ -150,12 +150,75 @@ Each step is falsifiable on its own; stop at the first one that fails.
 4. **Mixed plan.** Some corners direct, some pooled, one run. This is the
    register's mixed-topology row and the first point at which the design pays.
 
-## 8. Dependency
+## 8. Dependency — settled 2026-08-17
 
-`dask-jobqueue` is not currently a dependency; `run/pyproject.toml` pins only
-`distributed==2026.7.1` under the `dask` extra. It would be a new optional
-extra, and its LSF support should be checked against the site's `bsub` before
-step 1 — `lsf_preflight.py` is the existing place for that.
+`dask-jobqueue` is now an optional extra, `hedloom-run[pooled]`, resolved at
+**0.9.0**. It asks only for `distributed>=2022.02.0`, so it composes with the
+`distributed==2026.7.1` pin rather than arguing with it — checked, not assumed.
+
+It is separate from `[dask]` on purpose: those extras answer different
+questions, and a farm sweep placing one job per corner needs the scheduler
+without ever needing a pool. It sits in `hedloom-run` and no lower unit,
+because a pooled transport holds a live Dask client and `hedloom-exec` imports
+neither Dask nor `hedloom_flow` — the exclusion that keeps the attempt record
+independent of how anything is scheduled. `LSFPooledTransport` in that unit
+therefore stays a refusing boundary whatever else is built.
+
+Its LSF support no longer has to wait for a site's `bsub` to be checked, for the
+reason below.
+
+## 9. Status, 2026-08-17: steps 1 and 2 pass, and step 3 has a substrate
+
+**Step 1 — two clusters in one process: demonstrated.** Both schedulers come up
+and both run work. The §4 table is now measured rather than feared:
+
+* *global default client* — **confirmed**. The second `Client(...)` silently
+  takes the process default, no warning. `set_as_default=False` is the fix and
+  must be passed when the pooled client is *constructed*: once the default has
+  moved, a later non-default client does not move it back.
+* *`get_client()` inside a task* — **confirmed**. It returns the readiness
+  cluster, never the pool. Wrong answer, no error. The plugin has to hand the
+  pooled client over explicitly and nothing may reach for the ambient one.
+* *blocked threads* — behaves as predicted, bounded by the readiness cluster's
+  placement resource cap, which is the rail that already exists.
+* *dashboard exposure* — still open, and still the one item on that table that
+  is genuinely LSF-specific rather than a property of two clusters.
+
+**Step 2 — the plugin: passes.** A `distributed.WorkerPlugin` builds the pooled
+client in `setup()` and a task finds it through `get_worker()`. The cost was
+never new machinery, exactly as B1 of `dask-usage-review-2026-08-16.md` said.
+`_require_shippable` still refuses the naked pooled transport, naming the
+placement — that refusal is the guard that keeps the seam honest, and it is
+intact.
+
+**Step 3's blocker was the substrate, and it is gone.** `exec/tests/fakefarm`
+now implements batch submission — `bsub` with a job script, returning
+`Job <id> is submitted to queue <q>.` and leaving the work to a detached
+supervisor — so a real `LSFCluster` scales, runs work and cancels on close
+against it, with no LSF on the host. `run/tests/test_pooled_farm.py` is that
+test.
+
+Modelling batch honestly matters more than convenience: a batch job is **not**
+owner-bound. `bsub -I` dies with its client and the whole crash-window argument
+in `hedloom_exec.attempt` rests on that; a pooled worker has no such binding,
+and its lifetime is held instead by `death_timeout` from the worker's side and
+`bkill` on cluster close from the pool's. A fake that bound pooled workers to
+their client would have made pooled placement look safer than it is and left
+both of those mechanisms untested.
+
+Two findings worth carrying into the implementation:
+
+* **Teardown order is load-bearing.** Close the client before the cluster, and
+  the pool after the readiness workers that hold clients into it. The wrong
+  order produces a reconnect storm that reads as a failure and is not one.
+* **A pooled payload must not be pickled by reference.** Workers are separate
+  processes with nothing of the caller's on their path, so a function sent by
+  reference simply never completes — no exception at the client, a `gather`
+  that waits forever. Anything crossing to a pooled worker has to be sent by
+  value or be importable there.
+
+**Still farm-only:** `AttemptStatus.queue_seconds`, which is §6's whole
+decision input, and the dashboard-exposure question in §4.
 
 ---
 

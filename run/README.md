@@ -44,11 +44,14 @@ from distributed import Client
 from hedloom_run.cluster import cluster_for
 from hedloom_run.graph import run_plan_graph
 
-# Concurrency is this number. There is no limit parameter: a waiting
-# invocation costs ~16 KiB of thread and one client process, so size it from
-# the share of the farm this study may spend — not from your site's MAX JOB
-# policy, which counts every job you have running from any source.
-# `cluster_for` reads it, and the exposure, from the profile.
+# Concurrency is each placement's own `max_jobs`, read from the profile along
+# with the exposure. There is no limit parameter here to disagree with it: a
+# waiting invocation costs ~16 KiB of thread and one client process, so size
+# `max_jobs` from the share of the farm this study may spend — not from your
+# site's MAX JOB policy, which counts every job you have running from any
+# source. Build the cluster this way rather than by hand; the capacity a
+# worker declares and the placement a task asks for have to be one reading of
+# one profile, or Dask holds the task unrunnable and says nothing.
 cluster = cluster_for(site)
 
 with Client(cluster) as client:
@@ -81,6 +84,15 @@ scheduler. What Dask still cannot tell you is whether a corner is `PEND` or
 `RUN` — that needs a watcher over the attempt records, which is
 `hedloom_exec.watch` and which `hedloom.Study.submit(watch=True)` now runs for
 the duration of a run.
+
+`dask-jobqueue` is a second, separate extra (`pip install hedloom-run[pooled]`),
+for pooled LSF placement — where invocations reach a cluster whose *workers* are
+themselves LSF jobs, rather than one job per invocation. It is deliberately not
+folded into `[dask]`: a farm sweep placing one job per corner needs the
+scheduler and never needs a pool. It also belongs to this unit and no lower one,
+because a pooled transport holds a live Dask client and `hedloom-exec` imports
+neither Dask nor `hedloom_flow`. `LSFPooledTransport` there stays a refusing
+boundary; see `docs/pooled-placement-plan.md`.
 
 ## What the cluster exposes
 

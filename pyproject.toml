@@ -12,6 +12,9 @@ dependencies = ["hedloom-flow", "hedloom-exec", "hedloom-run"]
 
 [project.optional-dependencies]
 dask = ["distributed==2026.7.1"]
+# Pooled LSF placement. Deferred through to `hedloom-run`, which is the unit
+# that owns binding and is the only one allowed to import Dask at all.
+pooled = ["hedloom-run[pooled]"]
 
 [tool.uv.workspace]
 members = ["flow", "exec", "run"]
@@ -22,7 +25,7 @@ hedloom-exec = { workspace = true }
 hedloom-run  = { workspace = true }
 
 [dependency-groups]
-dev = ["hedloom-flow[dask]", "pytest", "setuptools>=69"]
+dev = ["hedloom-flow[dask]", "hedloom-run[pooled]", "pytest", "setuptools>=69"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,25 +1,45 @@
 #!/usr/bin/env python3
-"""A fake `bsub` that records the submission and runs the command locally.
+"""A fake `bsub`, in both the modes LSF actually has.
 
 It reproduces LSF's command-line shape, its exit-status behaviour, its queue
-*visibility*, and the one guarantee the attempt protocol leans on hardest —
-that an interactive job dies with the client that submitted it. What it does
-not reproduce is LSF's scheduler: there is no fair share, no real contention,
-and `FAKE_LSF_PEND_SECONDS` stands in for a queue wait.
+*visibility*, and — separately for each mode — the lifetime guarantee that mode
+promises. What it does not reproduce is LSF's scheduler: there is no fair share,
+no real contention, and `FAKE_LSF_PEND_SECONDS` stands in for a queue wait.
 
-Two things are deliberately *derived* rather than written down, because a fake
-that has to be told the truth can be told a convenient lie:
+## Two modes, and why the difference is the whole point
 
-* **A job is live only while this process is.** The record carries this `bsub`
-  client's pid and `bjobs` checks it, so killing the client makes the job vanish
-  from the queue exactly as owner-bound lifetime says it should. The child is
-  bound the same way, by `PR_SET_PDEATHSIG`, so it really does die rather than
-  being orphaned and left running.
+**`bsub -I`, interactive.** The client blocks until the job ends, and the job
+dies with the client. `hedloom_exec.attempt`'s crash-window argument rests on
+that, so it is tested by killing a submitter for real.
+
+**`bsub` with a job script, batch.** The client returns as soon as the job is
+*accepted*, printing `Job <id> is submitted to queue <q>.`, and the job then
+**outlives the client entirely**. This is what `dask_jobqueue.LSFCluster`
+submits, and modelling it honestly is the reason batch mode exists here: a
+pooled worker is not owner-bound, and a fake that bound it anyway would make
+pooled placement look safer than it is. A pooled worker's lifetime is held by
+two other things — `death_timeout` from the worker's side when its scheduler
+goes away, and `bkill` from the cluster's side on close — and both have to be
+exercised against a job that would otherwise keep running.
+
+Two things stay *derived* rather than written down, because a fake that has to
+be told the truth can be told a convenient lie:
+
+* **A job is live only while its process is.** Which process differs by mode —
+  the `bsub` client for an interactive job, the detached supervisor for a batch
+  one — and `bjobs` checks whichever the record names. Killing that process
+  makes the job vanish from the queue exactly as its mode says it should.
 * **A finished job leaves the queue.** `bjobs` reports PEND and RUN and nothing
   else, which is what real `bjobs` does without `-a`. Reporting a finished job
-  as RUN — which this fake used to do — hides the whole `submit_lost` branch of
-  `hedloom_exec.attempt`, because discovery would answer "still there" for work
-  that had already ended.
+  as RUN hides the whole `submit_lost` branch of `hedloom_exec.attempt`.
+
+## Identity differs by mode too, and callers depend on it
+
+An interactive job is addressed by the `-J` name hedloom chose, which *is* the
+attempt identity. A batch job is addressed by the **job id LSF allocates**,
+because `LSFCluster` names every one of its workers the same thing — so records
+are keyed by name in the first case and by id in the second, and there is no
+single key that would serve both. `bjobs` and `bkill` accept either.
 
 Environment:
 
@@ -33,8 +53,10 @@ pend because the farm is busy rather than because a number said so.
 """
 
 import ctypes
+import fcntl
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -45,8 +67,11 @@ PEND_SECONDS = float(os.environ.get("FAKE_LSF_PEND_SECONDS", "0") or 0)
 
 # Options this fake understands as taking a value. `-app` is here because
 # `build_argv` emits it: without it the application profile's name was parsed
-# as the first word of the command, which silently ran the wrong thing.
-VALUED = ("-J", "-W", "-q", "-n", "-R", "-app", "-M")
+# as the first word of the command, which silently ran the wrong thing. The
+# rest are what a batch job script carries; an option whose value is swallowed
+# as a command word is the same silent failure in a different place.
+VALUED = ("-J", "-W", "-q", "-n", "-R", "-app", "-M", "-o", "-e", "-P", "-G",
+          "-m", "-cwd", "-C", "-w")
 
 PR_SET_PDEATHSIG = 1
 
@@ -54,9 +79,13 @@ PR_SET_PDEATHSIG = 1
 def bind_to_parent():
     """Make the child die with this `bsub`, which is what `-I` promises.
 
-    Linux only. Elsewhere the `finally` below still terminates the child on an
-    orderly exit; what cannot be covered without this is a client that is killed
-    outright, which is the case the attempt protocol's crash window is about.
+    Linux only, and interactive mode only: a batch job is *not* bound to its
+    client, so this must never be applied to one.
+
+    Elsewhere the `finally` in the interactive path still terminates the child
+    on an orderly exit; what cannot be covered without this is a client that is
+    killed outright, which is the case the attempt protocol's crash window is
+    about.
     """
 
     try:
@@ -79,35 +108,73 @@ def write_record(path, record):
     os.replace(temporary, path)
 
 
-def main(argv):
-    interactive = False
-    options = {}
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        if token == "-I":
-            interactive = True
-            index += 1
-        elif token in VALUED and index + 1 < len(argv):
-            options[token] = argv[index + 1]
-            index += 2
-        elif token.startswith("-"):
-            index += 1
-        else:
-            break
+def next_job_id():
+    """Allocate a job id no concurrent submission can also get.
 
-    command = argv[index:]
-    if not command:
-        sys.stderr.write("bsub: no command supplied\n")
-        return 255
-    if not interactive:
-        # This fake only implements the interactive mode the unit uses.
-        sys.stderr.write("bsub: this fake supports -I only\n")
-        return 255
+    A pool submits its workers at once, so the counter is held under `flock`
+    rather than read-then-written: two `bsub` processes racing to the same id
+    would give two live jobs one identity, and every later `bkill` would reach
+    whichever record was written second.
+    """
+
+    path = os.path.join(STATE, ".next-job-id")
+    with open(path, "a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.seek(0)
+        text = handle.read().strip()
+        # LSF ids are large integers and tests read them back as strings; the
+        # starting point is arbitrary but stable so an id is recognisable.
+        job_id = int(text) + 1 if text else 100001
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(job_id))
+        handle.flush()
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    return str(job_id)
+
+
+def directives(script):
+    """The `#BSUB` options a job script carries.
+
+    Real LSF reads these only when the script arrives on stdin, and ignores
+    them when it is named as an argument. This fake reads them either way: the
+    distinction exists to stop LSF running a script that was never meant to be
+    a job, which is not a failure any test here is trying to reproduce, and a
+    fake that dropped them would answer `bjobs` with the wrong queue.
+    """
+
+    options = {}
+    for line in script.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#BSUB"):
+            # Directives must precede the first command; anything after it is
+            # a comment, exactly as LSF treats it.
+            if stripped and not stripped.startswith("#"):
+                break
+            continue
+        try:
+            tokens = shlex.split(stripped)[1:]
+        except ValueError:
+            continue
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token in VALUED and index + 1 < len(tokens):
+                options[token] = tokens[index + 1]
+                index += 2
+            else:
+                options[token] = True
+                index += 1
+    return options
+
+
+def run_interactive(options, command):
+    """The blocking, owner-bound mode. Unchanged: `hedloom_exec` depends on it."""
 
     name = options.get("-J", "unnamed")
     record_path = None
     record = {
+        "kind": "interactive",
         "name": name,
         "options": options,
         "command": command,
@@ -149,6 +216,160 @@ def main(argv):
             record["returncode"] = child.returncode
             write_record(record_path, record)
     return returncode
+
+
+def run_batch(options, script, script_path):
+    """The accept-and-return mode `LSFCluster` uses.
+
+    Returns as soon as the job is accepted, leaving a detached supervisor to
+    carry it. The supervisor is a separate session, so it survives this process
+    exactly as a real batch job survives the client that submitted it — and so
+    `bkill` can stop the worker *and its children* with one signal to the group.
+    """
+
+    if not STATE:
+        sys.stderr.write("bsub: FAKE_LSF_STATE is not set\n")
+        return 255
+
+    os.makedirs(STATE, exist_ok=True)
+    merged = {**directives(script), **options}  # a command-line option wins
+    job_id = next_job_id()
+    name = merged.get("-J", "unnamed")
+    record_path = os.path.join(STATE, f"{job_id}.json")
+
+    if script_path is None:
+        # Arrived on stdin. It has to become a file for the supervisor to run,
+        # and keeping it beside the record is what makes a failed pooled worker
+        # inspectable after the fact.
+        script_path = os.path.join(STATE, f"{job_id}.sh")
+        with open(script_path, "w") as handle:
+            handle.write(script)
+        os.chmod(script_path, 0o755)
+
+    supervisor = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--supervise", record_path],
+        start_new_session=True,
+        # Detached from this client's streams, not merely from its process
+        # group. A caller that captures output — `subprocess.run(...,
+        # capture_output=True)`, or `dask_jobqueue`'s own
+        # `create_subprocess_shell` plus `communicate()` — reads until the write
+        # end is closed by *everyone* holding it. Letting the supervisor inherit
+        # those pipes kept them open for the life of the job, so `bsub` appeared
+        # to block until the work finished: submission silently became
+        # execution, every submission serialised behind the last, and
+        # `LSFJob.start()` never returned to record its job id. A real `bsub`
+        # returns and releases the terminal, and the job's own output goes to
+        # the files `-o`/`-e` name, which is where the supervisor sends it.
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    write_record(record_path, {
+        "kind": "batch",
+        "id": job_id,
+        "name": name,
+        "options": merged,
+        "script": script_path,
+        # What holds this job's lifetime. Not the client: that is the whole
+        # difference from `-I`, and `bjobs` reads this field instead.
+        "supervisor_pid": supervisor.pid,
+        "state": "PEND",
+        "submitted_at_ns": time.time_ns(),
+        "pend_seconds": PEND_SECONDS,
+        "stdout": merged.get("-o") or os.path.join(STATE, f"{job_id}.out"),
+        "stderr": merged.get("-e") or os.path.join(STATE, f"{job_id}.err"),
+    })
+    queue = merged.get("-q", "normal")
+    sys.stdout.write(f"Job <{job_id}> is submitted to queue <{queue}>.\n")
+    return 0
+
+
+def supervise(record_path):
+    """Carry one batch job after its client has gone.
+
+    Waits for the record rather than writing it, because the client allocates
+    the id and names this process in the same record; writing it here too would
+    let two processes publish different halves of one job.
+    """
+
+    deadline = time.monotonic() + 10.0
+    while not os.path.exists(record_path):
+        if time.monotonic() > deadline:  # pragma: no cover - client died first
+            return 255
+        time.sleep(0.005)
+    with open(record_path) as handle:
+        record = json.load(handle)
+
+    if record.get("pend_seconds"):
+        time.sleep(record["pend_seconds"])
+
+    record["state"] = "RUN"
+    record["started_at_ns"] = time.time_ns()
+    write_record(record_path, record)
+
+    with open(record["stdout"], "w") as out, open(record["stderr"], "w") as err:
+        child = subprocess.Popen(
+            ["/bin/sh", record["script"]], stdout=out, stderr=err
+        )
+        record["job_pid"] = child.pid
+        write_record(record_path, record)
+        try:
+            returncode = child.wait()
+        finally:
+            if child.poll() is None:  # pragma: no cover - only on a signal
+                child.kill()
+                child.wait()
+    record["ended_at_ns"] = time.time_ns()
+    record["state"] = "DONE" if returncode == 0 else "EXIT"
+    record["returncode"] = returncode
+    write_record(record_path, record)
+    return 0
+
+
+def main(argv):
+    if argv[:1] == ["--supervise"]:
+        return supervise(argv[1])
+
+    interactive = False
+    options = {}
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "-I":
+            interactive = True
+            index += 1
+        elif token in VALUED and index + 1 < len(argv):
+            options[token] = argv[index + 1]
+            index += 2
+        elif token.startswith("-"):
+            index += 1
+        else:
+            break
+
+    rest = argv[index:]
+
+    if interactive:
+        if not rest:
+            sys.stderr.write("bsub: no command supplied\n")
+            return 255
+        return run_interactive(options, rest)
+
+    # Batch. The script is either named as an argument or piped in, and both
+    # shapes are accepted because `dask_jobqueue` has used each of them.
+    if rest:
+        script_path = rest[0]
+        try:
+            with open(script_path) as handle:
+                script = handle.read()
+        except OSError as error:
+            sys.stderr.write(f"bsub: cannot read {script_path}: {error}\n")
+            return 255
+        return run_batch(options, script, script_path)
+
+    if sys.stdin.isatty():
+        sys.stderr.write("bsub: no command supplied\n")
+        return 255
+    return run_batch(options, sys.stdin.read(), None)
 
 
 if __name__ == "__main__":
