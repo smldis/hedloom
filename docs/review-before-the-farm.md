@@ -174,9 +174,32 @@ If the reading leaves you willing, the least you can spend to learn the most:
 
 Stated plainly, because everything above passed against a *fake* `bsub`:
 
-- The `bjobs` output parser. Tested against a fake that emits what the reader
-  expects.
-- The `-R` merge, `-app`, and `memory_mb` as real `bsub` arguments.
+- The `bjobs` output parser. Both call shapes are now exercised — `-J <name>`
+  for discovery and `-o "job_name stat"` for the watcher — and the fake answers
+  with LSF's active-queue semantics, reporting PEND and RUN and treating a
+  finished or ownerless job as absent. But it still emits what the reader
+  expects, so a real `bjobs` whose format differs would not be caught here.
+  `exec/examples/lsf_preflight.py` is what checks that.
+- The `-R` merge, `-app`, and `memory_mb` as real `bsub` arguments. The fake now
+  at least parses `-app` rather than mistaking its value for the first word of
+  the command, which is a bug it had while nothing exercised that option.
 - Concurrency: `max_jobs` bounding jobs is proven against fake timestamps, not
-  against a queue.
+  against a queue. `FAKE_LSF_PEND_SECONDS` makes a job pend, but because a
+  number said so rather than because the farm was busy.
 - `flock` on a study root over NFS. See slice 5.
+
+**Owner-bound lifetime is a special case, and worth being exact about.** The
+attempt protocol's crash window rests on it, and a TLA+ model
+(`docs/attempt-claim-protocol.md`) found that it — not
+`discovery_is_authoritative` — is what closes that window. It is now tested, by
+killing a submitter for real and asking the farm what became of its job:
+`exec/tests/test_fake_farm.py` covers the job dying with its client, the crash
+window resubmitting rather than attaching, and the watcher seeing `PEND → RUN`.
+
+What that verifies is *our* half of the chain: that this process binds its `bsub`
+client with `PR_SET_PDEATHSIG`, that a client's death is propagated to the work,
+and that hedloom then reads the record and the queue correctly. Whether a real
+`bsub -I` ends its job when its client dies remains LSF's promise, and a fake
+cannot check somebody else's promise. Both tests are mutation-checked — removing
+the binding, or letting the fake report a dead owner's job as running, fails
+them — so the coverage is real as far as it reaches.
