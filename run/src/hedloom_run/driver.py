@@ -130,8 +130,13 @@ def run_plan(
     an input resolving to nothing, which is what every run did before.
 
     Work whose inputs are unchanged since a previous run is reused rather than
-    repeated. On failure the default is to stop: successors are reported as
-    ``blocked`` rather than run against inputs that do not exist.
+    repeated.
+
+    A failure always blocks whatever named its result as an input, whatever
+    ``stop_on_failure`` says: those inputs do not exist. ``stop_on_failure``
+    decides the rest — with it, nothing further starts at all; without it,
+    branches independent of the failure run to the end. That is the same scope
+    the graph kernel uses, so a study means the same thing under either.
     """
 
     available = available_transports(transport, transports)
@@ -140,7 +145,14 @@ def run_plan(
     # of delivering a declared external file to the body that asked for it.
     produced: dict[str, Any] = dict(source_addresses or {})
     outcomes: list[InvocationOutcome] = []
-    failed = False
+    # Invocations whose result never arrived, so nothing that named one as an
+    # input can run. Blocking a dependent is not a policy this shares with
+    # `stop_on_failure`: its inputs do not exist, and running it anyway spends
+    # an attempt to produce an error that blames the operation for an absent
+    # upstream artifact. The graph kernel has always refused that in
+    # `_run_one`; this is the same rule, and the two now agree.
+    unmet: set[str] = set()
+    stopped = False
 
     for item in plan_bundles(
         document,
@@ -148,7 +160,9 @@ def run_plan(
         identity_env=identity_env,
         source_fingerprints=source_fingerprints,
     ):
-        if failed and stop_on_failure:
+        if any(dependency in unmet for dependency in item.depends_on) or (
+            stopped and stop_on_failure
+        ):
             outcome = InvocationOutcome(
                 invocation_id=item.invocation_id,
                 authored_key=item.authored_key,
@@ -157,6 +171,7 @@ def run_plan(
                 disposition="skipped",
                 outcome="blocked",
             )
+            unmet.add(item.invocation_id)
             outcomes.append(outcome)
             if on_event:
                 on_event(outcome)
@@ -165,7 +180,8 @@ def run_plan(
         try:
             placement_name, chosen = _select_transport(item, available)
         except UnsupportedPlacement as error:
-            failed = True
+            stopped = True
+            unmet.add(item.invocation_id)
             outcome = InvocationOutcome(
                 invocation_id=item.invocation_id,
                 authored_key=item.authored_key,
@@ -200,7 +216,8 @@ def run_plan(
                 invocation_id=item.invocation_id,
             )
         except (AttemptError, TransportError) as error:
-            failed = True
+            stopped = True
+            unmet.add(item.invocation_id)
             outcome = InvocationOutcome(
                 invocation_id=item.invocation_id,
                 authored_key=item.authored_key,
@@ -219,7 +236,8 @@ def run_plan(
         if result.outcome == "succeeded":
             produced.update(produced_by(item, result))
         else:
-            failed = True
+            stopped = True
+            unmet.add(item.invocation_id)
 
         outcome = InvocationOutcome(
             invocation_id=item.invocation_id,
