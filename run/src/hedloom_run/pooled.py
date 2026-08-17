@@ -385,6 +385,47 @@ class LSFPooledTransport:
         return None
 
 
+def _scheduler_exposure(dashboard: str) -> dict[str, Any]:
+    """How much of a pool's scheduler this site is willing to publish.
+
+    Only the diagnostic HTTP server. A pool's *comm* address must stay
+    network-reachable whatever this says, because that is how its workers get
+    home; closing the dashboard cannot strand them, and no farm worker ever
+    connects to it.
+
+    `"none"` matters for more than exposure, and it is worth being exact about
+    what it does. A `Scheduler` starts an HTTP server unconditionally, so this
+    does **not** leave a pool silent the way `hedloom_run.cluster`'s `_silent`
+    subclass leaves the readiness cluster silent — the listener remains, serving
+    `/health` and `/metrics`. What `dashboard: False` skips is installing the
+    *bokeh* routes.
+
+    That is the part that matters here. Loading them needs bokeh, and an
+    installation whose bokeh is missing or mismatched fails inside
+    `distributed.dashboard.scheduler` with an `AttributeError` naming neither
+    bokeh nor the dashboard. A site that already chose `dashboard = "none"` for
+    its readiness cluster — often for exactly that reason — would otherwise meet
+    the same failure again the moment it declared a pool, raised by a second
+    scheduler it never asked for and cannot see.
+
+    Closing the pool's listener outright would mean substituting the scheduler
+    class, which `dask_jobqueue` does not take as data the way `SpecCluster`
+    does. It is left open deliberately: a pool must be reachable from the farm
+    in any case, so the socket is not the exposure the readiness cluster's is.
+
+    `"network"` passes nothing, so the pool is indistinguishable from a plain
+    `LSFCluster`. Note that Dask's default dashboard port is 8787 for every
+    scheduler, so a site with several pools will see it taken and moved, with a
+    warning — harmless, and not worth choosing a port on the site's behalf.
+    """
+
+    if dashboard == "none":
+        return {"dashboard": False, "dashboard_address": None}
+    if dashboard == "loopback":
+        return {"dashboard_address": "127.0.0.1:0"}
+    return {}
+
+
 def open_pools(site: Any) -> dict[str, Any]:
     """Start one `LSFCluster` for each pooled placement this site declares.
 
@@ -415,14 +456,20 @@ def open_pools(site: Any) -> dict[str, Any]:
             "dask-jobqueue: install hedloom-run[pooled]"
         ) from error
 
-    # Deliberately no `protocol=` and no loopback binding, and this is the one
-    # place where copying the readiness cluster would be actively wrong. That
-    # cluster is `inproc` because its scheduler and workers are objects in one
-    # process. A pool's workers are on farm nodes: they reach this scheduler
-    # over the network, so it must listen on an address they can reach. TCP (or
-    # TLS) is the only correct answer here, and `hedloom_run.cluster`'s
-    # exposure work does not transfer — it assumed one host.
+    # Deliberately no `protocol=` and no loopback *comm* binding, and this is
+    # the one place where copying the readiness cluster would be actively
+    # wrong. That cluster is `inproc` because its scheduler and workers are
+    # objects in one process. A pool's workers are on farm nodes: they reach
+    # this scheduler over the network, so it must listen on an address they can
+    # reach. TCP (or TLS) is the only correct answer here.
+    #
+    # The *dashboard* is a different listener and does transfer, which is why
+    # `dashboard` is read below: no farm worker ever connects to it, so
+    # restricting or closing it cannot strand a pool. That distinction is the
+    # whole of §4's dashboard row — the comm channel must be reachable, the
+    # diagnostic HTTP server need not be.
     clusters: dict[str, Any] = {}
+    scheduler_options = _scheduler_exposure(getattr(site, "dashboard", "network"))
     try:
         for name, options in pooled.items():
             cores = int(options.get("cores") or 1)
@@ -437,6 +484,7 @@ def open_pools(site: Any) -> dict[str, Any]:
                 walltime=str(options.get("walltime") or "1:00"),
                 processes=1,
                 n_workers=0,
+                scheduler_options=dict(scheduler_options),
             )
             clusters[name] = cluster
             cluster.scale(jobs=int(options.get("workers") or options["max_jobs"]))

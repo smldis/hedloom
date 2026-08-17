@@ -1,0 +1,57 @@
+# Profile for examples/farm_smoke_pooled.py: one pool and one direct placement.
+# Relative storage paths are anchored to this file's directory.
+#
+# Separate from farm-smoke.site.toml on purpose. That profile backs a smoke test
+# that has already passed against a real farm, and a run whose evidence still
+# stands should not be edited to make room for a new feature.
+[study]
+root = "_runs/farm-smoke-pooled/attempts"
+workspace_root = "_runs/farm-smoke-pooled/work"
+
+[placement.pool]
+kind = "lsf-pooled"
+queue = "reg"
+cores = 1
+memory_mb = 2000
+# The pool's workers are batch jobs and are NOT owner-bound: unlike `bsub -I`,
+# they do not die with the client that submitted them. Two things stop them —
+# `LSFCluster.close()` when the session ends, and this walltime if the submit
+# host dies without warning. Keep it short for a smoke test: it is the only
+# bound that survives a hard kill, and the cost of it being wrong is idle farm.
+walltime = "1:00"
+# How many LSF jobs the pool holds open. Two, deliberately, so a first run on a
+# real farm queues almost nothing and still proves that more than one worker
+# registers.
+workers = 2
+# How many invocations may be in flight *against* the pool. A different fact
+# from `workers`, and when they differ the smaller one binds while the other
+# quietly means nothing. Equal here, which is what you normally want.
+max_jobs = 2
+
+[placement.lsf]
+kind = "lsf-interactive"
+queue = "reg"
+walltime = "1"
+cores = 1
+timeout = 300
+max_jobs = 4
+
+[kernel]
+# Local concurrency on the submit host, which is a different machine's problem
+# from either number above.
+threads = 2
+
+# Two schedulers now exist: the in-process readiness cluster, and one per pool
+# whose workers dial in from the farm. `"none"` skips installing the bokeh
+# dashboard routes on both.
+#
+# Set it here for the reason most people will: an installation whose bokeh is
+# missing or mismatched fails inside `distributed.dashboard.scheduler` with an
+# AttributeError that names neither bokeh nor the dashboard. Declaring a pool
+# would otherwise raise it a second time, from a scheduler you never asked for.
+#
+# It does not make either scheduler silent — a Dask `Scheduler` opens an HTTP
+# listener whichever way this is set. For the pool that is unavoidable anyway:
+# its workers are on farm nodes and must be able to reach it, so its comm
+# address stays network-reachable no matter what this says.
+dashboard = "none"
