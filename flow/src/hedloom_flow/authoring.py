@@ -91,23 +91,16 @@ class ArtifactCollection:
 
 
 @dataclass(frozen=True, slots=True)
-class _MaterializableArtifact:
-    """Output-only declaration carrying optional materialization capability."""
+class _DeclaredOutput:
+    """An output declaration: what it is, and where it lands."""
 
     artifact: ArtifactContract
-    materialization: MaterializationSpec | None = None
     binding: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.artifact, ArtifactContract):
             raise ContractError(
-                "materializable artifact must contain an ArtifactContract"
-            )
-        if self.materialization is not None and not isinstance(
-            self.materialization, MaterializationSpec
-        ):
-            raise ContractError(
-                "materializable as_ must be a MaterializationSpec"
+                "an output declaration must contain an ArtifactContract"
             )
 
 
@@ -370,16 +363,8 @@ def materialization(
     return MaterializationSpec(codec, address_space, access_scope)
 
 
-def materializable(
-    artifact_contract: ArtifactContract, *, as_: MaterializationSpec
-) -> _MaterializableArtifact:
-    """Advertise one output representation as capability metadata only."""
 
-    return _MaterializableArtifact(artifact_contract, as_)
-
-
-
-def file(path: str, *, kind: str = "file") -> _MaterializableArtifact:
+def file(path: str, *, kind: str = "file") -> _DeclaredOutput:
     """An output the work writes, at ``path`` inside its own workspace.
 
     Declared where the operation is authored rather than supplied wherever it
@@ -388,10 +373,10 @@ def file(path: str, *, kind: str = "file") -> _MaterializableArtifact:
     resolving to nothing.
     """
 
-    return _MaterializableArtifact(artifact(kind), None, {"path": path})
+    return _DeclaredOutput(artifact(kind), {"path": path})
 
 
-def stdout(*, kind: str = "text") -> _MaterializableArtifact:
+def stdout(*, kind: str = "text") -> _DeclaredOutput:
     """An output that is what the work printed.
 
     Rarely right. Standard output is diagnostics unless an operation says
@@ -399,13 +384,13 @@ def stdout(*, kind: str = "text") -> _MaterializableArtifact:
     answer to disk is the ordinary case.
     """
 
-    return _MaterializableArtifact(artifact(kind), None, {"stream": "stdout"})
+    return _DeclaredOutput(artifact(kind), {"stream": "stdout"})
 
 
-def returned(*, kind: str = "value") -> _MaterializableArtifact:
+def returned(*, kind: str = "value") -> _DeclaredOutput:
     """An output that is the body's return value, for work done in process."""
 
-    return _MaterializableArtifact(artifact(kind), None, {"value": True})
+    return _DeclaredOutput(artifact(kind), {"value": True})
 
 
 def parameter(value_type: type) -> Parameter:
@@ -482,7 +467,7 @@ def operation(
     *,
     inputs: Mapping[str, ArtifactContract | ArtifactCollection] | None = None,
     config: Mapping[str, Parameter] | None = None,
-    outputs: Mapping[str, ArtifactContract | _MaterializableArtifact] | None = None,
+    outputs: Mapping[str, ArtifactContract | _DeclaredOutput] | None = None,
     resources: Iterable[ResourceContract] = (),
     default_policy: Policy | None = None,
     policy: Policy | None = None,
@@ -554,17 +539,12 @@ def operation(
                     item_name,
                     (
                         declaration.artifact
-                        if isinstance(declaration, _MaterializableArtifact)
+                        if isinstance(declaration, _DeclaredOutput)
                         else declaration
-                    ),
-                    (
-                        declaration.materialization
-                        if isinstance(declaration, _MaterializableArtifact)
-                        else None
                     ),
                     binding=(
                         declaration.binding
-                        if isinstance(declaration, _MaterializableArtifact)
+                        if isinstance(declaration, _DeclaredOutput)
                         else None
                     ),
                 )
@@ -1235,8 +1215,8 @@ def _declaration_mapping(
 
 
 def _output_declaration_mapping(
-    value: Mapping[str, ArtifactContract | _MaterializableArtifact] | None,
-) -> tuple[tuple[str, ArtifactContract | _MaterializableArtifact], ...]:
+    value: Mapping[str, ArtifactContract | _DeclaredOutput] | None,
+) -> tuple[tuple[str, ArtifactContract | _DeclaredOutput], ...]:
     if value is None:
         return ()
     if not isinstance(value, Mapping):
@@ -1247,10 +1227,10 @@ def _output_declaration_mapping(
             raise AuthoringError(
                 "operation outputs names must be Python identifiers"
             )
-        if not isinstance(declaration, ArtifactContract | _MaterializableArtifact):
+        if not isinstance(declaration, ArtifactContract | _DeclaredOutput):
             raise AuthoringError(
-                f"operation outputs {name!r} must use artifact(...) or "
-                "materializable(...)"
+                f"operation outputs {name!r} must use artifact(...), "
+                "file(...), stdout(...) or returned(...)"
             )
     return tuple(sorted(items, key=lambda item: item[0]))
 
@@ -1419,7 +1399,6 @@ __all__ = [
     "codec",
     "flow",
     "input_artifact",
-    "materializable",
     "materialization",
     "operation",
     "parameter",

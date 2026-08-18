@@ -19,7 +19,6 @@ from hedloom_flow import (
     flow,
     input_artifact,
     local,
-    materializable,
     materialization,
     named_policy,
     operation,
@@ -28,6 +27,7 @@ from hedloom_flow import (
     planned,
     submit,
 )
+from hedloom_flow.authoring import file
 
 
 MODEL = artifact("model-input")
@@ -150,71 +150,9 @@ def test_address_space_mismatch_fails_without_mutating_the_plan():
     assert normalized.sources[0].address.locator == "opaque/../locator"
 
 
-def test_output_materialization_capability_is_ephemeral_metadata_only():
-    def build(*, advertise_capability):
-        output = (
-            materializable(RAW, as_=TEST_MATERIALIZATION)
-            if advertise_capability
-            else RAW
-        )
-
-        @operation(
-            name="authoring.capability.produce",
-            inputs={"model": MODEL},
-            outputs={"raw": output},
-        )
-        def produce(model):
-            raise AssertionError("must not run")
-
-        @operation(
-            name="authoring.capability.consume",
-            inputs={"raw": RAW},
-            outputs={"report": REPORT},
-        )
-        def consume(raw):
-            raise AssertionError("must not run")
-
-        with plan() as draft:
-            model = _source("input.in", MODEL)
-            raw = produce(model)
-            report = consume(raw)
-        return draft.finish(outputs={"report": report})
-
-    plain = build(advertise_capability=False)
-    capable = build(advertise_capability=True)
-    produced = capable.invocations[0]
-    consumed = capable.invocations[1]
-    capability = capable.operations[0].outputs[0].can_materialize_as
-
-    assert capability == TEST_MATERIALIZATION
-    assert consumed.inputs[0].reference.value_class == "ephemeral"
-    assert capable.outputs[0].reference.value_class == "ephemeral"
-    assert [item.id for item in capable.sources] == [item.id for item in plain.sources]
-    assert [item.id for item in capable.invocations] == [
-        item.id for item in plain.invocations
-    ]
-    assert [item.id for item in capable.edges] == [item.id for item in plain.edges]
-    assert capable.sources == plain.sources
-    assert capable.invocations == plain.invocations
-    assert capable.edges == plain.edges
-    assert capable.outputs == plain.outputs
-    assert produced.id == "invoke:0001"
-    assert len(capable.sources) == 1
-    assert not hasattr(capability, "locator")
-
-    capable_data = capable.to_data()
-    plain_data = plain.to_data()
-    assert capable_data["operations"][1]["outputs"][0][
-        "can_materialize_as"
-    ] == capable_data["sources"][0]["materialized_as"]
-    assert plain_data["operations"][1]["outputs"][0][
-        "can_materialize_as"
-    ] is None
-
-
-def test_materializable_declarations_are_rejected_for_operation_inputs():
+def test_output_only_declarations_are_rejected_for_operation_inputs():
     with pytest.raises(AuthoringError, match=r"artifact\(\.\.\.\) or artifacts"):
-        operation(inputs={"model": materializable(MODEL, as_=TEST_MATERIALIZATION)})
+        operation(inputs={"model": file("model.in")})
 
 
 def test_options_are_immutable_and_policy_precedence_is_explicit():

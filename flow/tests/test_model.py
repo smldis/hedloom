@@ -265,7 +265,6 @@ def test_materialization_values_are_deeply_immutable_canonical_data_only():
         "address_space": "repository-relative",
         "locator": "inputs/amplifier.in",
     }
-    assert data["operations"][0]["outputs"][0]["can_materialize_as"] is None
     with pytest.raises(ContractError, match="schema_version must be 3"):
         Plan(schema_version=1)
 

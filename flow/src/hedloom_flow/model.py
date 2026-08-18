@@ -296,7 +296,6 @@ class ConfigContract:
 class OutputContract:
     name: str
     artifact: ArtifactContract
-    can_materialize_as: MaterializationSpec | None = None
     binding: FrozenObject | Mapping[str, Any] | None = None
     """Where this output actually lands: ``{"path": ...}`` for a file the work
     writes, ``{"stream": "stdout"}`` for a tool whose result is what it printed,
@@ -316,12 +315,6 @@ class OutputContract:
             if not isinstance(frozen, FrozenObject):
                 raise ContractError("output binding must be a mapping")
             object.__setattr__(self, "binding", frozen)
-        if self.can_materialize_as is not None and not isinstance(
-            self.can_materialize_as, MaterializationSpec
-        ):
-            raise ContractError(
-                "output can_materialize_as must be a MaterializationSpec or None"
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -823,14 +816,6 @@ class Plan:
             _check_named_uniqueness(
                 operation.outputs, f"{path}.outputs", "duplicate_output_contract", issue
             )
-            for output_index, output in enumerate(operation.outputs):
-                if output.can_materialize_as is not None:
-                    _validate_materialization_declaration(
-                        output.can_materialize_as,
-                        f"{path}.outputs[{output_index}].can_materialize_as",
-                        "invalid_output_materialization",
-                        issue,
-                    )
             _check_named_uniqueness(
                 operation.resources,
                 f"{path}.resources",
@@ -1583,11 +1568,6 @@ def _operation_data(value: OperationDefinition) -> dict[str, Any]:
             {
                 "name": item.name,
                 "artifact": _artifact_data(item.artifact),
-                "can_materialize_as": (
-                    _materialization_data(item.can_materialize_as)
-                    if item.can_materialize_as is not None
-                    else None
-                ),
                 "binding": (
                     plain_data(item.binding) if item.binding is not None else None
                 ),
