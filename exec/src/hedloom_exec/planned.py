@@ -11,7 +11,7 @@ The invariant this module exists to hold:
     An invocation's input digest changes exactly when its own declaration or
     any ancestor's declaration changes.
 
-That makes reuse transitive. Editing a source locator or one corner's
+That makes reuse transitive. Editing a source locator or one point's
 temperature invalidates that invocation and everything downstream of it, while
 sibling branches keep their published results. It is a Merkle identity over the
 plan, and it is the reason a rerun can honestly skip work.
@@ -73,7 +73,7 @@ def _source_identity(
     invalidate anything.
 
     The declaration alone is not enough for reuse to be honest, though: editing
-    an input netlist in place leaves every declared fact unchanged, so without
+    an input file in place leaves every declared fact unchanged, so without
     ``fingerprint`` a rerun reuses results computed from a file that no longer
     exists in that form. This unit resolves no addresses and should not start,
     so the fingerprint is supplied by the run, which knows what an address
@@ -204,7 +204,7 @@ def plan_bundles(
     in-process transport.
 
     ``identity_env`` names environment values that genuinely change results —
-    a PDK root, a model corner library — and folds them into every digest.
+    a toolchain root, a shared model library — and folds them into every digest.
 
     ``source_fingerprints`` identifies each declared source by its content, so
     that editing an input in place invalidates the work that read it. It is

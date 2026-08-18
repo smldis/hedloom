@@ -30,17 +30,25 @@ decides readiness or releases successors. Its `discovery_is_authoritative` flag
 governs the *negative* answer only: a positive match is always usable, because
 the identity predates the submission that created it.
 
-The only substrate proven against a real farm is in-process execution — the
-honest degenerate case, where accepted work cannot outlive its caller and
-discovery is therefore trivially authoritative. `hedloom_exec.lsf.LSFInteractiveTransport`
-submits one `bsub -I` job per attempt and does exist, but has never contacted a
-real cluster; `hedloom_exec.lsf.LSFPooledTransport` is a refusing boundary rather
-than an implementation — pooled execution should adopt `dask_jobqueue.LSFCluster`
-rather than reimplement worker lifetime. A Dask *transport* (one that submits
-attempts as Dask work) does not exist; that is a different thing from
-`hedloom-run`'s Dask *kernel* (`hedloom_run.graph`), which decides readiness over
-whatever transports this unit provides and does not belong to this unit at
-all — see `DECISIONS.md` and `hedloom-run`'s own documentation.
+## What each transport is, and what it has met
+
+| Transport | What it does | Evidence |
+| --- | --- | --- |
+| in-process | The honest degenerate case: accepted work cannot outlive its caller, so discovery is trivially authoritative. | Every test, and every domain study in this repository. |
+| `hedloom_exec.lsf.LSFInteractiveTransport` | One `bsub -I` job per attempt, owner-bound through the `bsub` client. | Has reached a **real LSF installation**, through the sequential kernel: argv, `-J` identity, an artifact chaining between jobs, failure recording and reuse. Concurrency and the `bjobs` parser remain fake-only. |
+| `hedloom_exec.lsf.LSFPooledTransport` | Nothing. A refusing boundary that names the seam rather than letting a caller reach a half-implementation. | — |
+
+The name collision is worth stating plainly: **the pooled transport that works
+is `hedloom_run.pooled.LSFPooledTransport`**, not this unit's. It adopts
+`dask_jobqueue.LSFCluster` rather than reimplementing worker lifetime, and it
+lives in `hedloom-run` because holding a second cluster open is a readiness
+concern. This unit keeps only the refusal.
+
+A Dask *transport* — one that submits attempts as Dask work — does not exist.
+That is a different thing from `hedloom-run`'s Dask *kernel*
+(`hedloom_run.graph`), which decides readiness over whatever transports this
+unit provides and does not belong to this unit at all. See `DECISIONS.md` and
+`hedloom-run`'s own documentation.
 
 ## Evidence
 

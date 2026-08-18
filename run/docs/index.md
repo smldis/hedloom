@@ -36,7 +36,7 @@ behind the invariant this unit exists to hold:
 from hedloom_run.driver import run_plan
 
 report = run_plan(
-    document, transports=transports, plan_id="rc-corners",
+    document, transports=transports, plan_id="refinement",
     root=str(work / "attempts"), workspace_root=str(work / "work"),
     source_addresses=site.source_addresses(document, fingerprints),
     source_fingerprints=fingerprints,
@@ -74,7 +74,7 @@ Adoption is recorded (2026-08-04, user direction; see
 `docs/vision/open-concepts.md` at the repository root for the argument and the
 measurements behind it), and `hedloom_run.graph.run_plan_graph` is a working
 kernel, exercised by this unit's own test suite (`tests/test_graph.py`) and by
-`hedloom/examples/ota_pvt_clean.py`, the one example in this repository that runs
+`../studies/ota_pvt_clean.py`, the one study in this repository that runs
 on it. What remains unmet is a real farm *under this kernel*. The sequential
 driver has reached one — `hedloom/examples/farm_smoke.py` submitted real
 `bsub -I` jobs, chained an artifact between them, and reused them on a second
@@ -127,13 +127,13 @@ Three measured reasons, recorded in `docs/vision/open-concepts.md`:
   and needs a factory constructed on the worker instead.
 
 A failed invocation blocks its dependents by returning a blocked outcome, not
-by raising. Independent branches continue: one corner failing does not
+by raising. Independent branches continue: one point failing does not
 abandon the other forty-nine, which is what a sweep wants and what the
 sequential kernel cannot offer — a deliberate difference in the *scope* of a
 failure between the two kernels, not in what a result means. Task keys are
 `operation-authoredkey-digest`, so an operator watching a sweep's dashboard
-sees corners rather than hashes *and* Dask can learn a duration average per
-operation — it groups by everything before the first `-`, so keying by corner
+sees points rather than hashes *and* Dask can learn a duration average per
+operation — it groups by everything before the first `-`, so keying by point
 alone gave every task its own group, taught the scheduler nothing, and left
 every placement decision running on a flat 500 ms default; tasks are submitted
 `pure=False`,
@@ -190,27 +190,31 @@ the one the study was authored in.
 `Site.from_file(path)` reads a profile from TOML, anchoring every relative
 path to the *profile's own directory* rather than the working directory, so a
 study run from elsewhere still means the same thing. A `[placement.*]` table
-names a substrate the site can build from configuration alone — today only
-`kind = "lsf-interactive"` — and refuses an unknown `kind` outright rather
-than skipping it, because a silently missing placement would surface much
-later as an opaque `UnsupportedPlacement`, blaming the Plan for what is a
-site configuration mistake. `kind = "in-process"` needs Python callables no
-TOML can hold; that placement is added afterwards with
-`Site.with_transports(...)`.
+names a substrate the site can build from configuration alone — today
+`kind = "lsf-interactive"`, one `bsub -I` job per invocation, and
+`kind = "lsf-pooled"`, a `dask_jobqueue.LSFCluster` holding `workers` batch jobs
+open — and refuses an unknown `kind` outright rather than skipping it, because a
+silently missing placement would surface much later as an opaque
+`UnsupportedPlacement`, blaming the Plan for what is a site configuration
+mistake. The two kinds take **different vocabularies**: a pool cannot honour
+`licences` or `resources`, since its workers are claimed before any invocation
+is routed to them, so accepting those and ignoring them would be worse than
+refusing. `kind = "in-process"` needs Python callables no TOML can hold; that
+placement is added afterwards with `Site.with_transports(...)`.
 
 ### Fingerprints: a source's identity must change when its content does
 
 `hedloom_exec` identifies a declared source by its address and codec, never by
 what is *at* that address — deliberately, since it resolves no addresses and
 should not start. The consequence, before this unit existed: editing an
-input netlist in place changed nothing about its declared address, so every
+input file in place changed nothing about its declared address, so every
 downstream invocation was reused and a study reported results computed from a
 file that no longer existed in that form.
 
 `site.fingerprints(document)` closes that gap by hashing what a declared
 source's address currently resolves to, and both kernels pass the result into
 `plan_bundles`. Sources are **hashed**, not stat'ed: an authored input is a
-netlist or a JSON document, kilobytes at most, so hashing it costs nothing
+small text or JSON document, kilobytes at most, so hashing it costs nothing
 and is immune to the `mtime` churn an ordinary `git checkout` causes.
 Anything larger than 64 MiB — implausible for an authored input — falls back
 to size and modification time, and the fingerprint's own prefix
@@ -269,6 +273,6 @@ recovery remain open architectural questions recorded in
 `docs/vision/open-concepts.md`, not features quietly added here. It does not
 own the cluster: it neither creates, sizes, nor tears one down, and with
 `bsub -I` a transport blocks from submission to terminal, so nothing here
-distinguishes a corner pending in the queue from one simulating — that
+distinguishes a point pending in the queue from one running — that
 observation belongs to a watcher over the attempt records
 (`hedloom_exec.watch`), not to this unit.

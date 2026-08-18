@@ -11,7 +11,7 @@ restart it, or run two of them, and no result changes. What it writes is
 evidence about attempts, never a transition of them.
 
 The queued column is the per-job dispatch cost, measured. It is the number that
-decides whether pooled placement would ever be worth its complexity — a corner
+decides whether pooled placement would ever be worth its complexity — a point
 that waits two seconds and simulates for ten minutes says one thing, and a step
 that waits forty seconds to do two seconds of work says the opposite.
 """

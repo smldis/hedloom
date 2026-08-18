@@ -12,8 +12,8 @@ package composes them and adds the one thing none of them could own alone: a
 The operation decorator here is `hedloom_flow`'s, wrapped so the body it already
 kept is remembered as something callable. That is the whole difference. Before
 it, `@operation` bodies were dead code and every study needed a second file to
-supply real implementations — for the OTA reference, six hundred lines whose
-only job was to agree with the first file.
+supply real implementations — for this project's reference study, six hundred
+lines whose only job was to agree with the first file.
 """
 
 from __future__ import annotations
@@ -124,9 +124,10 @@ def lsf(**options: Any) -> Policy:
     """Place this work on its own LSF job, with its own resource request.
 
     Options travel to the job that needs them: `queue`, `cores`, `memory_mb`,
-    `walltime`, a raw `resources` string, and `licences={"name": n}`, which
-    becomes a `rusage` term so the scheduler that owns the licence count is the
-    one that arbitrates it.
+    `walltime`, a raw `resources` string, and `licences={"name": n}` for a
+    countable scarce resource the site's scheduler already tracks. It becomes a
+    `rusage` term, so the scheduler that owns the count is the one that
+    arbitrates it rather than this process guessing.
     """
 
     return named_policy("lsf")(**options)
@@ -137,18 +138,18 @@ def pooled(**options: Any) -> Policy:
 
     The trade, stated plainly. A pool pays queue dispatch once per *worker*
     rather than once per invocation, and holds no `bsub` client process on the
-    submit host per corner in flight — which is the ceiling that actually binds
-    a wide sweep. What it gives up is everything that needs a corner to *be* a
-    job: per-corner resource requests, per-corner `bkill`, per-corner
-    accounting, and per-corner licence arbitration. The farm sees the pool's
-    workers, never your corners, so the watcher can no longer tell you that one
-    particular corner is queued.
+    submit host per invocation in flight — which is the ceiling that actually
+    binds a wide sweep. What it gives up is everything that needs an invocation
+    to *be* a job: per-invocation resource requests, per-invocation `bkill`,
+    per-invocation accounting, and per-invocation licence arbitration. The farm
+    sees the pool's workers, never your invocations, so the watcher can no
+    longer tell you that one particular invocation is queued.
 
     Worth it when an operation's median queue wait is a significant fraction of
-    its median runtime — roughly a third, as a starting rule — and its corners
-    are uniform enough to share one worker shape. Below that, `lsf()` is the
-    better deal. It is a per-operation judgement, which is why it is authored
-    here and not on the study.
+    its median runtime — roughly a third, as a starting rule — and its
+    invocations are uniform enough to share one worker shape. Below that,
+    `lsf()` is the better deal. It is a per-operation judgement, which is why it
+    is authored here and not on the study.
 
     Names the placement `pool`, as `lsf()` names `lsf`. A site that offers
     several pools of different shapes — the usual case, since one pool has one
@@ -198,7 +199,7 @@ def study(
 
         @study
         def sweep(name):
-            return corners.named(name)(POINTS)
+            return points.named(name)(POINTS)
 
         sweep("north").submit(site)
 

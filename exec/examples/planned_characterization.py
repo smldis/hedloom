@@ -4,9 +4,9 @@ This is the first end-to-end slice across both units: Hedloom Flow authors and
 normalizes a static Plan, Hedloom Exec derives content-addressed bundles from that
 Plan document and executes them with durable records.
 
-The point of the demonstration is the second run. Change one corner's
-temperature and rerun: that corner and the reduction downstream of it recompute,
-the untouched corners are reused from their published manifests, and the
+The point of the demonstration is the second run. Change one point's
+temperature and rerun: that point and the reduction downstream of it recompute,
+the untouched points are reused from their published manifests, and the
 superseded result is still on disk and nameable rather than overwritten.
 
 Run it from the unit directory with both source trees on the path:
@@ -46,20 +46,20 @@ from hedloom_exec.reuse import describe_staleness, scan_attempts, stale_attempts
 from hedloom_exec.transport import InProcessTransport
 
 PLAN_ID = "characterization"
-CORNERS = {"tt": 27, "ss": 125, "ff": -40}
+POINTS = {"tt": 27, "ss": 125, "ff": -40}
 
 
 @operation(
     inputs={"design": artifact("design")},
-    config={"corner": parameter(str), "temperature_c": parameter(int)},
-    outputs={"metrics": artifact("corner-metrics")},
+    config={"point": parameter(str), "temperature_c": parameter(int)},
+    outputs={"metrics": artifact("point-metrics")},
 )
-def estimate(design, *, corner, temperature_c):
+def estimate(design, *, point, temperature_c):
     raise AssertionError("operation bodies do not run during planning")
 
 
 @operation(
-    inputs={"measurements": artifacts("corner-metrics")},
+    inputs={"measurements": artifacts("point-metrics")},
     outputs={"summary": artifact("summary")},
 )
 def summarize(measurements):
@@ -67,18 +67,18 @@ def summarize(measurements):
 
 
 @flow
-def characterize(design, *, corners):
+def characterize(design, *, points):
     results = [
-        estimate.named(f"corner-{name}")(
-            design, corner=name, temperature_c=temperature
+        estimate.named(f"point-{name}")(
+            design, point=name, temperature_c=temperature
         )
-        for name, temperature in corners.items()
+        for name, temperature in points.items()
     ]
     return summarize.named("summary")(results)
 
 
 @planned
-def characterization(corners):
+def characterization(points):
     """The plan. Calling this builds one; nothing inside it runs."""
 
     design = input_artifact(
@@ -90,24 +90,24 @@ def characterization(corners):
             access_scope="repository-checkout",
         ),
     )
-    return {"summary": characterize(design, corners=corners)}
+    return {"summary": characterize(design, points=points)}
 
 
-def build_plan(corners):
+def build_plan(points):
     """The document, which is what this example's executor consumes."""
 
-    return characterization(corners).to_data()
+    return characterization(points).to_data()
 
 
-# Implementations. Deliberately arithmetic rather than a simulator: the slice
+# Implementations. Deliberately arithmetic rather than a tool: the slice
 # under demonstration is identity and reuse, not analog meaning.
-def estimate_impl(*, corner, temperature_c, design=None):
-    return {"corner": corner, "gain_db": 60.0 - 0.05 * temperature_c}
+def estimate_impl(*, point, temperature_c, design=None):
+    return {"point": point, "gain_db": 60.0 - 0.05 * temperature_c}
 
 
 def summarize_impl(*, measurements=None):
     values = [item["gain_db"] for item in (measurements or [])]
-    return {"worst_gain_db": min(values), "corners": len(values)}
+    return {"worst_gain_db": min(values), "points": len(values)}
 
 
 def run(document, root, label):
@@ -147,11 +147,11 @@ def run(document, root, label):
 def main():
     root = tempfile.mkdtemp(prefix="hedloom-exec-example-")
     try:
-        first = build_plan(CORNERS)
+        first = build_plan(POINTS)
         run(first, root, "First run — nothing is published yet")
         run(first, root, "Second run — unchanged inputs, nothing recomputes")
 
-        edited = dict(CORNERS, ss=150)
+        edited = dict(POINTS, ss=150)
         second = build_plan(edited)
         values = run(second, root, "Third run — ss retuned to 150C")
 

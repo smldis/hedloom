@@ -1,5 +1,12 @@
 # Reading the code before it runs on a real farm
 
+> **Archived.** This was a reading order over one commit range, and that range
+> is now far behind `HEAD`, so the `git diff` commands below select the wrong
+> code. The part of it that was not about a diff — the smallest first run, and
+> what has never met a real farm — is maintained at
+> `docs/guide/first-farm-run.md`. Left here unedited as the record of what was
+> read before the first farm run.
+
 **Written 2026-08-16.** Everything below is between `58d0764` (the ass→hedloom
 rename) and `HEAD`. Sixteen source files, about 1100 added lines, plus tests
 and documents that are excluded here because they cannot submit a job.

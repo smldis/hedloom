@@ -13,9 +13,9 @@ from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.reuse import attempts_for, scan_attempts
 from hedloom_exec.transport import InProcessTransport
 
-BUNDLE = {"operation": "simulate", "inputs": {"deck": "sha256:aaa"}}
+BUNDLE = {"operation": "simulate", "inputs": {"model": "sha256:aaa"}}
 
-COMMON = {"durability": Durability.RECORDED, "plan_id": "p", "invocation_id": "corner-tt"}
+COMMON = {"durability": Durability.RECORDED, "plan_id": "p", "invocation_id": "point-tt"}
 
 
 def flaky(outcomes):
@@ -56,7 +56,7 @@ def test_the_failed_attempt_is_retained_for_inspection(tmp_path):
     execute(transport, BUNDLE, root=str(tmp_path), **COMMON)
     execute(transport, BUNDLE, root=str(tmp_path), **COMMON)
 
-    recorded = attempts_for(tmp_path, plan_id="p", invocation_id="corner-tt")
+    recorded = attempts_for(tmp_path, plan_id="p", invocation_id="point-tt")
     outcomes = sorted(item.outcome for item in recorded)
     assert outcomes == ["failed", "succeeded"]
     assert len(scan_attempts(tmp_path)) == 2
@@ -77,7 +77,7 @@ def test_an_accepted_failure_is_reused_afterwards(tmp_path):
     first = execute(transport, BUNDLE, root=str(tmp_path), **COMMON)
     assert first.outcome == "failed"
 
-    accept_for_reuse(first.journal, reason="known-bad corner, under debug")
+    accept_for_reuse(first.journal, reason="known-bad point, under debug")
     second = execute(transport, BUNDLE, root=str(tmp_path), **COMMON)
 
     assert second.disposition == "completed"
@@ -124,7 +124,7 @@ def test_a_changed_input_starts_a_fresh_sequence(tmp_path):
     transport, state = flaky(1)
     execute(transport, BUNDLE, root=str(tmp_path), **COMMON)
 
-    changed = dict(BUNDLE, inputs={"deck": "sha256:bbb"})
+    changed = dict(BUNDLE, inputs={"model": "sha256:bbb"})
     result = execute(transport, changed, root=str(tmp_path), **COMMON)
 
     assert result.outcome == "succeeded"

@@ -13,7 +13,7 @@ from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.lsf import CommandResult, LSFInteractiveTransport, LSFPooledTransport
 from hedloom_exec.transport import SubmissionRefused
 
-BUNDLE = {"command": ["simulate", "--corner", "tt"]}
+BUNDLE = {"command": ["simulate", "--point", "tt"]}
 
 
 class FakeRunner:
@@ -54,7 +54,7 @@ def test_submission_is_interactive_named_and_walltime_bounded():
     assert "-I" in argv
     assert argv[argv.index("-J") + 1] == "hedloom-abc"
     assert argv[argv.index("-W") + 1] == "30"
-    assert argv[-3:] == ["simulate", "--corner", "tt"]
+    assert argv[-3:] == ["simulate", "--point", "tt"]
 
 
 def test_walltime_is_mandatory():

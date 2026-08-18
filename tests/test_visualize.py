@@ -120,7 +120,7 @@ def test_a_drawing_with_nothing_to_scale_against_is_left_alone():
 
 
 def test_the_drawing_is_labelled_the_way_the_study_was_authored():
-    """The reason this view exists: a corner has to be findable in it."""
+    """The reason this view exists: a point has to be findable in it."""
 
     pytest.importorskip("graphviz")
     from hedloom.visualize import _authored_digraph, structure

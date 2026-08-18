@@ -56,10 +56,11 @@ def placement_options(bundle: Mapping[str, Any]) -> Mapping[str, Any]:
     """What this invocation asked for where it was sent.
 
     A Plan resolves one policy per invocation — a queue, a core count, a
-    simulator licence — and the caller records it on the bundle before anything
+    licence for a scarce tool — and the caller records it on the bundle before
+    anything
     is submitted. A transport reads its settings from here rather than only from
-    construction, which is what lets one transport serve a cheap extraction and
-    a large-memory corner in the same run.
+    construction, which is what lets one transport serve a cheap invocation and
+    a large-memory one in the same run.
 
     These are scheduling facts, and none of them reaches the input digest: an
     invocation moved to another queue or given more cores must still reuse the
@@ -153,7 +154,7 @@ def substrate_of(transport: Any) -> str:
 class InProcessTransport:
     """The degenerate local substrate: work runs inside the calling process.
 
-    This is the honest local case rather than a simulation of a remote one.
+    This is the honest local case rather than an imitation of a remote one.
     Because accepted work cannot outlive the process that accepted it, a
     restarted controller that finds no live record knows for certain that the
     attempt did not survive. Discovery is therefore authoritative, and the

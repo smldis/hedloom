@@ -12,8 +12,8 @@ report = run_plan(
     plan_id="ota-pvt",
     root="attempts",
     workspace_root="/nfs/studies/ota-pvt",
-    commands={"simulate": ["ngspice", "-b", "corner.spice"]},
-    outputs={"simulate": {"raw": {"path": "corner.raw"}}},
+    commands={"solve": ["awk", "-f", "rule.awk", "point.in"]},
+    outputs={"simulate": {"raw": {"path": "point.raw"}}},
 )
 
 print(report.summary())
@@ -23,7 +23,7 @@ The Plan declares meaning; the run binds mechanism. `commands` and `outputs`
 say how an operation actually runs and which files count as its results;
 operations named in neither run in-process.
 
-A second run reuses everything. Edit one corner and only that corner and its
+A second run reuses everything. Edit one point and only that point and its
 dependents rerun. A failure stops the run, and its successors are reported as
 `blocked` rather than executed against inputs that do not exist — a failed step
 is not cached, so fixing the cause and rerunning retries exactly it.
@@ -67,9 +67,9 @@ with Client(cluster) as client:
 
 Same Plan, same identities, same report order — the kernel decides how long a
 run takes, never what it means, and `hedloom_run.binding` holds the rules both use
-so they cannot drift. Two differences are deliberate: a failed corner blocks
+so they cannot drift. Two differences are deliberate: a failed point blocks
 its dependents while independent branches finish, and tasks are keyed by
-authored name so a dashboard shows corners rather than digests.
+authored name so a dashboard shows points rather than digests.
 
 The cluster is local and threaded on purpose. No nanny to restart a worker
 holding live `bsub -I` clients — under owner-bound lifetime that would kill
@@ -91,7 +91,7 @@ attribute 'scheduler'` — naming neither bokeh nor the dashboard, from a cluste
 you never asked to have one, since `"network"` is the default. Worse, the import
 is lazy, so under concurrency one cluster can fail while its neighbour succeeds.
 That is translated into a message that names bokeh and offers
-`dashboard = "none"`. What Dask still cannot tell you is whether a corner is `PEND` or
+`dashboard = "none"`. What Dask still cannot tell you is whether a point is `PEND` or
 `RUN` — that needs a watcher over the attempt records, which is
 `hedloom_exec.watch` and which `hedloom.Study.submit(watch=True)` now runs for
 the duration of a run.
@@ -99,7 +99,7 @@ the duration of a run.
 `dask-jobqueue` is a second, separate extra (`pip install hedloom-run[pooled]`),
 for pooled LSF placement — where invocations reach a cluster whose *workers* are
 themselves LSF jobs, rather than one job per invocation. It is deliberately not
-folded into `[dask]`: a farm sweep placing one job per corner needs the
+folded into `[dask]`: a farm sweep placing one job per point needs the
 scheduler and never needs a pool. It also belongs to this unit and no lower one,
 because a pooled transport holds a live Dask client and `hedloom-exec` imports
 neither Dask nor `hedloom_flow`. `LSFPooledTransport` there stays a refusing
@@ -117,7 +117,7 @@ same fact: readiness workers hold clients into the pool, so they close first.
 
 A Dask scheduler starts an HTTP server whether or not anyone opens a browser —
 `dashboard=False` only drops the bokeh routes — and every worker starts one
-too, both on all interfaces. On a shared submit host that publishes your corner
+too, both on all interfaces. On a shared submit host that publishes your point
 names, workspace paths and profiler to everyone who can reach it. So the site
 says how much of that it wants:
 
@@ -145,4 +145,4 @@ writes its HTML with nothing bound. Live progress comes from `on_event`.
 Exposure changes how a run can be watched and nothing about what it computes —
 no identity, no reuse, no Plan content.
 
-See [`ONTOLOGY.md`](ONTOLOGY.md) for the owned boundary.
+See [`ONTOLOME.md`](ONTOLOME.md) for the owned boundary.

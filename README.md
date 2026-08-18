@@ -5,54 +5,77 @@ Author a study, see what it will do, and run it — from one file.
 ```python
 from hedloom import Site, artifact, file, flow, local, operation, shell, study, sweep
 
-DECK = artifact("spice-deck")
+GRID = artifact("grid-declaration")
 
-@operation(config={"temp_c": parameter(int)}, outputs={"deck": file("corner.cir")})
-def write_deck(out, *, temp_c):
-    out.deck.write_text(render(temp_c))          # the body really runs
+@operation(config={"steps": parameter(int)}, outputs={"grid": file("grid.txt")})
+def write_grid(out, *, steps):
+    out.grid.write_text(render(steps))           # the body really runs
 
-@operation(inputs={"deck": DECK},
-           outputs={"raw": file("corner.raw")},
-           policy=lsf(queue="normal", cores=4, licences={"ngspice": 1}))
-def simulate(deck, out):
-    return shell("ngspice", "-b", "-r", out.raw, deck)   # runs at its placement
+@operation(inputs={"grid": GRID},
+           outputs={"result": file("result.txt")},
+           policy=lsf(queue="normal", cores=4, licences={"solver": 1}))
+def integrate(grid, out):
+    return shell("awk", "-f", RULE, "-v", f"out={out.result}", grid)  # at its placement
 
 @flow
-def sweep_corners(points):
-    for point in sweep(points, key="key"):        # keyed scope per corner
-        yield simulate(write_deck(temp_c=point["temp_c"]))
+def refine(points):
+    for point in sweep(points, key="key"):        # keyed scope per point
+        yield integrate(write_grid(steps=point["steps"]))
 
 @study
-def corners(points):
-    return sweep_corners.named("corners")(points)  # records; nothing runs
+def refinement(points):
+    return refine.named("refinement")(points)     # records; nothing runs
 
-subject = corners(POINTS)                         # planning, not spending
+subject = refinement(POINTS)                      # planning, not spending
 print(subject.summary())                          # nothing spent yet
 run = subject.submit(site=Site.from_file("site.toml"), watch=True)
-print(run["cold:simulate"].artifacts["raw"]["address"])
+print(run["coarse:integrate"].artifacts["result"]["address"])
 ```
 
-`examples/rc_corners.py` is the whole of that, runnable, against real ngspice:
-three RC corners whose -3 dB frequency is analytic, so the answer can be
-checked rather than believed.
+`examples/grid_refinement.py` is the whole of that, runnable, against real awk:
+three grids whose integral is analytic, so the answer can be checked rather than
+believed — and whose error falls by sixteen for each refinement by four, which
+is the trapezoid rule's own second-order convergence and not a tolerance anyone
+chose.
+
+Hedloom names no tool and no domain. It was built for analog simulation studies
+and that is where it is exercised hardest, but nothing in the package knows
+what the work is: the studies that do live in
+[`../studies/`](../studies/README.md), one level up, where naming a simulator
+is honest.
+
+## Documentation
+
+[`docs/`](docs/index.md) is the guide, built into the project's Sphinx site by
+`python composition.py docs` from the repository root. Start at
+[authoring a study](docs/guide/authoring.md), then
+[running one](docs/guide/running.md) and
+[pointing it at a farm](docs/guide/sites.md);
+[internals](docs/internals/index.md) is for working *on* the package.
+
+Two neighbouring surfaces are deliberately not part of that site. `ONTOLOME.md`
+in each unit states the contracts that unit currently guarantees, and is where a
+change to a contract must be recorded. [`design/`](design/README.md) holds
+reviews, plans and proposals written on a date — not maintained against the
+code, and never to be cited as evidence of how it now behaves.
 
 ## What this unit adds
 
 Nothing that the three units below it could not already do — it removes the
 seam between them. Before it, an operation body was dead code, and a study
 needed a second file supplying implementations, command lines, output paths,
-transports and roots; for the OTA reference that file is six hundred lines
-whose only job is to agree with the first one.
+transports and roots; for this project's reference study that file is six
+hundred lines whose only job is to agree with the first one.
 
 - **The body is the implementation.** `@operation` here is `hedloom_flow`'s,
   wrapped so the function it already kept is remembered as callable. The Plan
   records `module:qualname` and a fingerprint of the source, so an edited body
   reruns the work it produced instead of relying on someone bumping `version`.
-- **`out` is the attempt's own workspace.** A body writing `out.deck` writes
+- **`out` is the attempt's own workspace.** A body writing `out.grid` writes
   where the executor will look, because both read one declaration.
 - **`shell(...)` is a launcher.** Returning a command instead of running one is
   what lets it reach a placement: locally it is a subprocess, on `lsf` it is one
-  `bsub -I` job with that corner's queue, cores and licence.
+  `bsub -I` job with that invocation's queue, cores and licences.
 - **`@study` is the plan.** The decorated function *is* the study: calling it
   records the work and hands back something inspectable, and `submit` is the
   only thing that spends. A `@flow` is the same shape one level down, which is
@@ -73,13 +96,13 @@ unit composes; it does not reimplement.
 
 ```console
 PYTHONPATH=src:flow/src:exec/src:run/src python -m pytest -q
-python examples/rc_corners.py
+python examples/grid_refinement.py
 ```
 
 ## Farm sweep test
 
 After `hedloom/exec/examples/lsf_preflight.py --queue reg` passes, exercise the
-complete plan-to-record path without a simulator:
+complete plan-to-record path with no real tool at all:
 
 ```console
 python examples/farm_smoke.py examples/farm-smoke.site.toml

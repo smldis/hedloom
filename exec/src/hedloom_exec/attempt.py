@@ -117,7 +117,7 @@ def is_reusable(state: AttemptState, manifest: Mapping[str, Any] | None) -> bool
 def accept_for_reuse(journal: AttemptJournal, *, reason: str) -> AttemptState:
     """Record that a human inspected this result and chose to keep it.
 
-    The escape hatch for a failure worth preserving — a known-bad corner being
+    The escape hatch for a failure worth preserving — a known-bad point being
     debugged, or a negative result that should not be recomputed on every run.
     It is durable and attributable rather than a flag on a command line.
     """

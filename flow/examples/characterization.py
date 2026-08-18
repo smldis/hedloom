@@ -17,7 +17,7 @@ from hedloom_flow import (
 
 
 DESIGN = artifact("analog-design-description")
-CORNER_METRICS = artifact("corner-metrics")
+CORNER_METRICS = artifact("point-metrics")
 SUMMARY = artifact("characterization-summary")
 JSON_V1 = codec("json", version="1", encoding="utf-8")
 REPOSITORY_JSON = materialization(
@@ -30,10 +30,10 @@ REPOSITORY_JSON = materialization(
 @operation(
     name="example.estimate_corner_metrics",
     inputs={"design": DESIGN},
-    config={"corner": parameter(str), "temperature_c": parameter(int)},
+    config={"point": parameter(str), "temperature_c": parameter(int)},
     outputs={"metrics": CORNER_METRICS},
 )
-def estimate_corner_metrics(design, *, corner, temperature_c):
+def estimate_corner_metrics(design, *, point, temperature_c):
     """Describe analytical work; planning must never call this body."""
 
     raise AssertionError("operation bodies must not execute while planning")
@@ -41,22 +41,22 @@ def estimate_corner_metrics(design, *, corner, temperature_c):
 
 @operation(
     name="example.reduce_characterization",
-    inputs={"measurements": artifacts("corner-metrics")},
+    inputs={"measurements": artifacts("point-metrics")},
     outputs={"summary": SUMMARY},
 )
 def reduce_characterization(measurements):
-    """Describe ordered fan-in over the planned corner artifacts."""
+    """Describe ordered fan-in over the planned point artifacts."""
 
     raise AssertionError("operation bodies must not execute while planning")
 
 
 @flow(name="example.characterize_one_corner")
-def characterize_one_corner(design, *, corner, temperature_c):
-    """Reuse one operation declaration behind a visible per-corner boundary."""
+def characterize_one_corner(design, *, point, temperature_c):
+    """Reuse one operation declaration behind a visible per-invocation boundary."""
 
-    return estimate_corner_metrics.named("estimate-corner-metrics")(
+    return estimate_corner_metrics.named("estimate-point-metrics")(
         design,
-        corner=corner,
+        point=point,
         temperature_c=temperature_c,
     )
 
@@ -65,36 +65,36 @@ def characterize_one_corner(design, *, corner, temperature_c):
 def characterize_design(design, *, include_extremes):
     """Use ordinary Python to select a static graph, then reduce its results."""
 
-    corners = {}
+    points = {}
     measurements = []
 
-    nominal = characterize_one_corner.named("corner-tt")(
+    nominal = characterize_one_corner.named("point-tt")(
         design,
-        corner="tt",
+        point="tt",
         temperature_c=27,
     )
-    corners["tt"] = nominal
+    points["tt"] = nominal
     measurements.append(nominal)
 
     if include_extremes:
-        slow = characterize_one_corner.named("corner-ss")(
+        slow = characterize_one_corner.named("point-ss")(
             design,
-            corner="ss",
+            point="ss",
             temperature_c=125,
         )
-        fast = characterize_one_corner.named("corner-ff")(
+        fast = characterize_one_corner.named("point-ff")(
             design,
-            corner="ff",
+            point="ff",
             temperature_c=-40,
         )
-        corners["ss"] = slow
-        corners["ff"] = fast
+        points["ss"] = slow
+        points["ff"] = fast
         measurements.extend((slow, fast))
 
     summary = reduce_characterization.named("reduce-characterization")(
         measurements
     )
-    return {"corners": corners, "summary": summary}
+    return {"points": points, "summary": summary}
 
 
 @planned

@@ -40,7 +40,7 @@ class UnsupportedPlacement(RuntimeError):
 
     Deliberately fatal rather than a fallback. Silently running work somewhere
     other than where it was asked to run is how a study quietly stops meaning
-    what it says: a corner that needed a large-memory queue is not the same
+    what it says: an invocation that needed a large-memory queue is not the same
     experiment when it lands on a laptop.
     """
 

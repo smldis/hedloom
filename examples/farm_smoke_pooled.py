@@ -20,7 +20,7 @@ be to discover later:
    node can dial back to the submit host. If the site's network or firewall
    says otherwise, this hangs at step 1 and nothing else here matters. It is
    the one failure a fake farm structurally cannot reproduce.
-2. **A mixed plan reaches both substrates in one run.** Some corners on their
+2. **A mixed plan reaches both substrates in one run.** Some points on their
    own `bsub -I`, some through the pool.
 3. **Placement is not identity-bearing.** The third pass moves work that ran on
    the pool onto a direct placement, and every invocation must be *reused*
@@ -76,7 +76,7 @@ NUMBER_LIST = artifact("number-list")
 
 # Short work, many of it: the shape pooling is *for*. Each of these would spend
 # more time queueing than running as its own job, which is the whole argument
-# for paying dispatch once per worker instead of once per corner.
+# for paying dispatch once per worker instead of once per point.
 POINTS = tuple(
     {"key": f"p{index}", "start": index * 10, "count": 3}
     for index in range(1, 9)
@@ -157,7 +157,7 @@ def mixed_sweep():
 
 @flow
 def direct_sweep(points):
-    """The same work, every corner placed directly. Must reuse, never rerun."""
+    """The same work, every point placed directly. Must reuse, never rerun."""
 
     summaries = {}
     for point in sweep(points, key="key"):

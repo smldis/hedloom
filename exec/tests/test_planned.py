@@ -17,12 +17,12 @@ SOURCE = {
 }
 
 
-def corner(key, temperature, name="sim"):
+def point(key, temperature, name="sim"):
     return {
         "id": f"invoke:{key}",
         "authored_key": key,
         "operation": {"name": name, "version": "1"},
-        "config": [{"name": "corner", "value": key}, {"name": "t", "value": temperature}],
+        "config": [{"name": "point", "value": key}, {"name": "t", "value": temperature}],
         "inputs": [
             {
                 "cardinality": "scalar",
@@ -60,7 +60,7 @@ def document():
     return {
         "schema_version": 2,
         "sources": [SOURCE],
-        "invocations": [corner("tt", 27), corner("ss", 125), summary(["tt", "ss"])],
+        "invocations": [point("tt", 27), point("ss", 125), summary(["tt", "ss"])],
     }
 
 
@@ -171,15 +171,15 @@ def test_an_unrelated_added_source_does_not_invalidate_anything():
 
 def test_nominated_environment_participates():
     plain = digests(document())
-    with_pdk = digests(document(), identity_env={"PDK_ROOT": "/pdk/sky130A"})
+    with_pdk = digests(document(), identity_env={"TOOL_ROOT": "/toolchain/sky130A"})
     assert with_pdk["tt"] != plain["tt"]
 
 
 def test_commands_are_attached_for_external_operations():
-    planned = plan_bundles(document(), commands={"sim": ["ngspice", "-b"]})
+    planned = plan_bundles(document(), commands={"sim": ["awk", "-f", "rule.awk"]})
     by_key = {item.authored_key: item for item in planned}
 
-    assert by_key["tt"].bundle["command"] == ["ngspice", "-b"]
+    assert by_key["tt"].bundle["command"] == ["awk", "-f", "rule.awk"]
     assert "command" not in by_key["summary"].bundle
 
 
@@ -239,7 +239,7 @@ def test_the_real_hedloom_flow_example_plan_derives(tmp_path):
     assert len(planned) == 4
     assert len({item.input_digest for item in planned}) == 4
 
-    # The reduction must depend on all three corners it fans in.
+    # The reduction must depend on all three points it fans in.
     reduction = [item for item in planned if len(item.depends_on) == 3]
     assert len(reduction) == 1
 
@@ -269,6 +269,6 @@ def test_the_end_to_end_example_reuses_and_supersedes():
     first, second, third = output.split("run —")[1:4]
     assert first.count("ran    ") == 4 and "reused" not in first
     assert second.count("reused") == 4 and "ran    " not in second
-    # The edited corner and the reduction downstream of it, and nothing else.
+    # The edited point and the reduction downstream of it, and nothing else.
     assert third.count("ran    ") == 2 and third.count("reused") == 2
     assert "superseded but retained" in output

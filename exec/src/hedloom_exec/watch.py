@@ -2,8 +2,8 @@
 
 With `bsub -I` a transport blocks from submission until the job is over, so the
 durable record has a gap exactly where an operator is most curious: between
-`submit_intent` and `terminal` it cannot say whether a corner is pending in the
-queue or simulating. Nothing was watching, because the thread that could ask
+`submit_intent` and `terminal` it cannot say whether an invocation is pending in
+the queue or running. Nothing was watching, because the thread that could ask
 was the thread that was waiting.
 
 This module watches from outside. It reads the attempt directories, asks LSF
@@ -230,7 +230,7 @@ def live_attempts(root: str | Path) -> tuple[AttemptStatus, ...]:
 class LSFStatusReader:
     """One `bjobs` call for every live job, not one per job.
 
-    Asking per attempt would cost a process per corner per refresh, which for a
+    Asking per attempt would cost a process per invocation per refresh, which for a
     sweep of any size is worse than the thing being watched. One call returns
     every job this user has, and the identities are matched here.
 

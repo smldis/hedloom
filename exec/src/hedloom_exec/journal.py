@@ -202,7 +202,7 @@ class AttemptJournal:
         exposure opens with (a) two controllers against one root -- two people,
         or the same study started twice on two login hosts -- and (b) pooled
         placement, where journals would be written from farm nodes; see
-        `docs/pooled-placement-plan.md` section 2, which defers that design for
+        `hedloom/design/pooled-placement-plan.md` section 2, which defers that design for
         this reason.
 
         Options to weigh when it is picked up, cheapest first:

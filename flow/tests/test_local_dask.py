@@ -790,18 +790,18 @@ def test_characterization_command_is_semantic_repeatable_and_uses_injected_sourc
             "schema_version": 3,
         },
         "results": {
-            "corners__ff": {
-                "corner": "ff",
+            "points__ff": {
+                "point": "ff",
                 "design": "two-stage-opamp",
                 "temperature_c": -40,
             },
-            "corners__ss": {
-                "corner": "ss",
+            "points__ss": {
+                "point": "ss",
                 "design": "two-stage-opamp",
                 "temperature_c": 125,
             },
-            "corners__tt": {
-                "corner": "tt",
+            "points__tt": {
+                "point": "tt",
                 "design": "two-stage-opamp",
                 "temperature_c": 27,
             },

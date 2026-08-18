@@ -17,13 +17,13 @@ DECODED_DESIGN = {
 
 
 def _estimate_corner_metrics_identity(
-    design, *, corner: str, temperature_c: int
+    design, *, point: str, temperature_c: int
 ):
     """Provide the explicit runtime binding for the authored estimate identity."""
 
     return {
         "metrics": {
-            "corner": corner,
+            "point": point,
             "design": design["name"],
             "temperature_c": temperature_c,
         }
@@ -36,7 +36,7 @@ def _reduce_characterization_identity(*, measurements):
     return {
         "summary": {
             "corner_count": len(measurements),
-            "corner_order": [measurement["corner"] for measurement in measurements],
+            "corner_order": [measurement["point"] for measurement in measurements],
             "temperatures_c": [
                 measurement["temperature_c"] for measurement in measurements
             ],

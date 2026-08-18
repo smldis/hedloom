@@ -40,7 +40,7 @@ def test_a_file_the_command_wrote_itself_is_recorded(tmp_path, monkeypatch):
         root=str(tmp_path / "attempts"),
         workspace_root=str(tmp_path / "work"),
         plan_id="p",
-        invocation_id="corner-tt",
+        invocation_id="point-tt",
     )
 
     assert result.outcome == "succeeded"
@@ -61,7 +61,7 @@ def test_stdout_is_diagnostics_not_the_result(tmp_path, monkeypatch):
         root=str(tmp_path / "attempts"),
         workspace_root=str(tmp_path / "work"),
         plan_id="p",
-        invocation_id="corner-tt",
+        invocation_id="point-tt",
     )
 
     assert set(result.artifacts) == {"raw"}
@@ -174,13 +174,13 @@ def test_downstream_resolves_the_recorded_address(tmp_path, monkeypatch):
         **common,
     )
 
-    consumer = InProcessTransport({"measure": lambda deck: open(deck).read().upper()})
+    consumer = InProcessTransport({"measure": lambda model: open(model).read().upper()})
     measured = execute(
         consumer,
         {
             "operation": "measure",
-            "inputs": {"deck": produced.artifacts["raw"]["address"]},
-            "resolved_inputs": {"deck": produced.address("raw")},
+            "inputs": {"model": produced.artifacts["raw"]["address"]},
+            "resolved_inputs": {"model": produced.address("raw")},
         },
         invocation_id="measure",
         **common,

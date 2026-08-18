@@ -4,7 +4,8 @@ The companion to [`attempt-claim-protocol.md`](attempt-claim-protocol.md), one
 layer up. That page models what `hedloom_exec` does with one attempt; this one
 models what `hedloom_run.graph` does with the *rest* of a sweep when the first
 invocation comes back failed. The model is in
-[`stop-admitting/`](stop-admitting), and runs in about a second.
+`stop-admitting/`, starting from
+[`StopAdmitting.tla`](stop-admitting/StopAdmitting.tla), and runs in about a second.
 
 `_stop_admitting` is a good target for this because it is hedloom's own protocol
 rather than Dask's, and because its own comment already admits a race:
@@ -50,7 +51,7 @@ Four constants: `ExecutingTest`, `PreserveInFlight`, `BlockedFromRecord`,
 ## Reproduce
 
 ```console
-cd docs/stop-admitting
+cd docs/internals/stop-admitting
 java -cp tla2tools.jar tlc2.TLC -config MCShipped.cfg StopAdmitting.tla
 ```
 
@@ -82,7 +83,7 @@ and published a journal — and the report says it never started.
 
 The disagreement with the comment is over what that costs. It is not a missing
 line, it is a *false* one. `blocked` is a claim with operational meaning: it is
-what tells an operator this corner was never attempted, and it is what makes a
+what tells an operator this invocation was never attempted, and it is what makes a
 rerun look free. The attempt record for `t2` says otherwise, so the two
 artifacts of one run contradict each other, and the durable one — the one this
 whole architecture says is authoritative — is the one not being read.
@@ -106,7 +107,7 @@ actually succeeded.
 
 That is a worse lie than the one it replaces. `blocked` is a claim about the
 scheduler; `failed` is a claim about the circuit. An engineer reading "this
-corner failed" concludes something about the design.
+invocation failed" concludes something about the design.
 
 The distinction the model forces is between *classification* and *evidence*.
 Both have to come from the record, because the cancel destroyed the only other
@@ -120,8 +121,8 @@ submits work it cannot name, and has nothing to fold a journal with.
 
 That is the actual defect, and it is not confined to this protocol:
 `watch.live_attempts` scans the attempt root for the same reason, and a Plan
-cannot say where a corner's record will land until the corner has run. The
-proposal is [`binding-the-attempt-identity.md`](binding-the-attempt-identity.md)
+cannot say where an invocation's record will land until it has run. The
+proposal is `design/binding-the-attempt-identity.md`
 — resolve identities in `binding.py`, where the invariant "the same results,
 under the same identities" is already stated and everything *except* the
 identities is already bound.
@@ -132,7 +133,7 @@ identities is already bound.
 to a worker", which is what `Client.processing()` answers and what this code
 said before R10. Six states: `in_flight` swallows every outstanding task,
 `doomed` comes out empty, `client.cancel` is never called, and both remaining
-corners run to completion. The stop does not stop.
+invocations run to completion. The stop does not stop.
 
 This is already covered by a test — reverting `call_stack()` to `processing()`
 fails with "no unstarted future reached Dask's cancelled state" — so the model

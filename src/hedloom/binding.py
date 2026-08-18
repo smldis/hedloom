@@ -2,9 +2,9 @@
 
 Until now an operation body was dead code: `@operation` kept the function and
 nothing ever called it, so every study needed a second file supplying real
-implementations, command lines, and output paths — for the OTA reference, six
-hundred lines of them. The Plan could say what it meant and not what it would
-do.
+implementations, command lines, and output paths — for this project's own
+reference study, six hundred lines of them. The Plan could say what it meant
+and not what it would do.
 
 This module closes that. A bound transport takes the operations a study
 authored, and when the executor asks it to run an invocation it calls the body
@@ -18,8 +18,8 @@ The invariant:
 Reuse, identity, ordering and placement are settled before a body is called,
 so an author cannot accidentally acquire scheduling authority by writing
 Python. A body that returns a `Shell` is a launcher: the command it built is
-handed to the substrate its placement names, which is how one corner becomes
-one `bsub -I` job while the launcher itself costs nothing.
+handed to the substrate its placement names, which is how one invocation
+becomes one `bsub -I` job while the launcher itself costs nothing.
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ class Shell:
 
     Returning this instead of calling a subprocess is what lets the command
     reach a placement: the body builds argv cheaply wherever it runs, and the
-    substrate — a local process, or one `bsub -I` job with this corner's queue,
-    cores and licence — executes it.
+    substrate — a local process, or one `bsub -I` job with this invocation's
+    queue, cores and licences — executes it.
     """
 
     argv: tuple[str, ...]

@@ -118,7 +118,7 @@ def run_plan(
     executed in-process by the transport.
 
     ``transports`` maps a policy name to the substrate that provides it, so
-    each invocation lands where its Plan says it should: one corner may take a
+    each invocation lands where its Plan says it should: one point may take a
     dedicated LSF job while cheap reductions stay local. Passing a single
     ``transport`` instead provides every placement, which is convenient for a
     uniform run and wrong as soon as placements differ. A placement no

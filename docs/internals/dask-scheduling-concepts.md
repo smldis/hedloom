@@ -6,7 +6,7 @@ file is the reference: ten rules, each cited to a line of
 why hedloom's cluster is shaped the way it is.
 
 There is an interactive version of this in servedgui under **Scheduling &
-resources**, which steps a small simulated scheduler through ten worked
+resources**, which steps a small model scheduler through ten worked
 setups. This page is the same material as prose, so it survives without a
 browser and travels with the code it describes.
 
@@ -174,7 +174,7 @@ names the placement rather than letting it fail deep inside Dask's protocol
 (`_require_shippable`). And a pooled transport — one that must be a single
 shared object holding a connection — could not be passed at all. It would have
 to be built on the worker instead, which is the unbuilt half of
-[`pooled-placement-plan.md`](pooled-placement-plan.md).
+`design/pooled-placement-plan.md`.
 
 One consequence has already bitten. The façade wraps every site transport in a
 wrapper that calls your authored function first, so what travels is named
@@ -196,10 +196,10 @@ Dask groups tasks by **prefix** — everything in the task's name before the fir
 `unknown-task-duration`, which is **500 ms** (`distributed.yaml:33`).
 
 That is why task keys are `operation-authoredkey-digest` and not
-`authoredkey-digest`. Keyed by corner, every task was its own prefix, no average
+`authoredkey-digest`. Keyed by point, every task was its own prefix, no average
 was ever learned, and every estimate in every placement decision was a flat
 500 ms — for work that takes minutes. Keyed by operation, the average becomes
-real after the first few corners finish.
+real after the first few points finish.
 
 ## The scenarios, and what each is for
 

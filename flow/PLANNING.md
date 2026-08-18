@@ -40,7 +40,7 @@ and promoted the same tested graph semantics to `hedloom-flow/`.
 The graduated main proposed a sequential-flow editing helper as one acceptance
 example. The user deferred and later archived that separate convenience layer;
 its provenance and reactivation conditions are recorded in
-[`docs/archive/sequential-flow-convenience.md`](docs/archive/sequential-flow-convenience.md).
+[`design/sequential-flow-convenience.md`](design/sequential-flow-convenience.md).
 Arbitrary Python composition is the only flow authoring model in this slice.
 
 ## Core implementation priorities
@@ -178,7 +178,7 @@ That slice originally recommended retaining the provisional directory as
 runnable design evidence. The authorized development plan below superseded the
 location recommendation and promoted the unchanged semantics to a declared
 prototype child. The sequential convenience is now inactive historical
-[archive material](docs/archive/sequential-flow-convenience.md), and all
+[archive material](design/sequential-flow-convenience.md), and all
 runtime surfaces remain explicit stubs or exclusions.
 
 ## Authorized development plan: promote Hedloom Flow
@@ -210,11 +210,11 @@ the repository's normal component boundary:
 
 - retain `src/hedloom_flow/`, `tests/`, `examples/`, `PLANNING.md`, and
   `IMPLEMENTATION.md` under `hedloom-flow/`;
-- add `hedloom-flow/ONTOLOGY.md`, `hedloom-flow/AGENTS.md`, `hedloom-flow/unit.toml`, and a
+- add `hedloom-flow/ONTOLOME.md`, `hedloom-flow/AGENTS.md`, `hedloom-flow/unit.toml`, and a
   minimal `hedloom-flow/pyproject.toml` for an independently testable Python 3.10+
   prototype;
 - add `hedloom-flow/docs/index.md` and
-  `hedloom-flow/docs/archive/sequential-flow-convenience.md`;
+  `hedloom-flow/design/sequential-flow-convenience.md`;
 - archive sequential editing as inactive historical design material: no active
   checklist item, acceptance criterion, implementation stub, or implied
   backlog; the archive may name a concrete reactivation trigger;

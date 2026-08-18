@@ -165,7 +165,7 @@ def test_an_authored_resource_need_survives_all_the_way_to_the_submission(
     report = run_plan(
         document(
             (
-                "corner",
+                "point",
                 {
                     "name": "lsf-direct",
                     "options": {

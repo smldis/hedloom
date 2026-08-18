@@ -19,7 +19,7 @@ so a release that moves this seam fails on the symptom.
   installing the bokeh routes, leaving a listener on `:8787` still serving
   `/health`, `/metrics` and `/api`. Every `Worker` starts one of its own.
 * Both bind every interface. A study on a login host therefore publishes its
-  corner names, workspace paths and profiler to anything that can reach the
+  invocation names, workspace paths and profiler to anything that can reach the
   host — and loopback does not help, because loopback is per host, not per
   user.
 

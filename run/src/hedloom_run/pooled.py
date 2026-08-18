@@ -1,10 +1,10 @@
 """Pooled LSF placement: many invocations over a few reusable farm workers.
 
 The direct placement submits one `bsub -I` per invocation, which is what makes
-a corner individually visible, individually cancellable, and individually
+an invocation individually visible, individually cancellable, and individually
 accounted. It costs one queue dispatch and one live `bsub` client *process* on
 the submit host per invocation in flight, and
-`docs/concurrency-two-workers-2026-08-15.md` §9 found that process count, not
+`design/concurrency-two-workers-2026-08-15.md` §9 found that process count, not
 threads, is the ceiling that actually binds.
 
 Pooled placement pays the dispatch once per *worker* instead. The workers are
@@ -19,7 +19,7 @@ one of those two that addresses the constraint that was found to bind.
 
 ## What runs where, and why the line is drawn here
 
-Design (i) of `docs/pooled-placement-plan.md` §2: **the command only**. Identity,
+Design (i) of `design/pooled-placement-plan.md` §2: **the command only**. Identity,
 the journal, the workspace and `execute()` all stay on the submit host, exactly
 where they are for a direct placement. Only argv crosses to the pooled worker.
 
@@ -55,17 +55,18 @@ Two Dask facts this design is built on, both measured against
 
 ## What pooling gives up, and why it is not the default
 
-Per-corner `-R rusage[...]`, per-corner `bkill`, per-corner accounting and
-per-corner licence arbitration all live in the one-job-per-corner shape and are
-lost inside a pool: the farm sees N workers, not N invocations. The `bjobs`
-watcher can still see the pool's *workers*, but it can no longer tell you that
-a particular corner is PEND — because that corner never was a job.
+Per-invocation `-R rusage[...]`, per-invocation `bkill`, per-invocation
+accounting and per-invocation licence arbitration all live in the one-job-per-
+invocation shape and are lost inside a pool: the farm sees N workers, not N
+invocations. The `bjobs` watcher can still see the pool's *workers*, but it can
+no longer tell you that a particular invocation is PEND — because that
+invocation never was a job.
 
 Route an operation to a pool when its median queue wait is a significant
 fraction of its median runtime — roughly a third, as a starting rule — and its
-corners are uniform enough to share one worker shape. Below that, one job per
-corner is the better deal. That is a per-operation judgement, which is exactly
-why placement is authored per operation and not per study.
+invocations are uniform enough to share one worker shape. Below that, one job
+per invocation is the better deal. That is a per-operation judgement, which is
+exactly why placement is authored per operation and not per study.
 """
 
 from __future__ import annotations
@@ -110,7 +111,8 @@ POOL_OPTIONS = (
 Narrower than `hedloom_exec.lsf.PLACEMENT_OPTIONS`, and the omissions are the
 point. `licences` and `resources` describe what *one invocation* needs, and a
 pool cannot honour them: its workers are claimed once, before any invocation is
-routed to them, so a per-corner licence request would be silently ignored. An
+routed to them, so a per-invocation licence request would be silently ignored.
+An
 option this cannot express is refused rather than dropped.
 
 `workers` is how many LSF jobs the pool holds open. It is not `max_jobs`, which
@@ -137,7 +139,7 @@ def run_command(
 
     Failure is a recordable outcome, not an exception: a non-zero status is
     what this returns, and the caller decides what it means. Raising here would
-    turn a failed simulation into a failed *transport*, which is a different
+    turn a failed piece of work into a failed *transport*, which is a different
     thing and reconciles differently.
     """
 
@@ -351,7 +353,7 @@ class LSFPooledTransport:
             "kind": "completed",
             "pool": self.pool,
             "workdir": workdir,
-            # What the pool was asked for, as data. A pooled corner cannot say
+            # What the pool was asked for, as data. A pooled invocation cannot say
             # what *it* asked LSF for — it asked for nothing, the pool did — so
             # the record carries the pool's shape instead of an invented one.
             "settings": dict(self.settings),

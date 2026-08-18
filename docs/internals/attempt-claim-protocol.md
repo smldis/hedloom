@@ -2,7 +2,8 @@
 
 This page documents the synchronisation in `hedloom_exec` — the claim, the
 journal, and the two durable writes that publish a result — and reports what a
-TLA+ model of it found. The model is in [`attempt-claim/`](attempt-claim), and
+TLA+ model of it found. The model is in `attempt-claim/`, starting from
+[`AttemptClaim.tla`](attempt-claim/AttemptClaim.tla), and
 it is checkable in about a second.
 
 It exists because the argument for this protocol is entirely a prose argument.
@@ -86,7 +87,7 @@ The four invariants:
 With a JRE 21 and [`tla2tools.jar`](https://github.com/tlaplus/tlaplus/releases):
 
 ```console
-cd docs/attempt-claim
+cd docs/internals/attempt-claim
 java -cp tla2tools.jar tlc2.TLC -config MCShipped.cfg AttemptClaim.tla
 ```
 
@@ -163,7 +164,7 @@ note in `journal.claim()` gives: it needs two live callers for one identity.
 produces two. It opens with two controllers against one study root — two people,
 or the same study started twice on two login hosts — and with pooled placement,
 where journals would be written from farm nodes. That is the same exposure
-`docs/pooled-placement-plan.md` §2 already defers, and this is one more thing to
+`design/pooled-placement-plan.md` §2 already defers, and this is one more thing to
 fix before it lands, alongside the flock question.
 
 ### The mutations

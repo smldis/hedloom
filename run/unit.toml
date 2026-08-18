@@ -3,7 +3,7 @@ schema_version = 1
 [unit]
 id = "hedloom-run"
 name = "Hedloom Run"
-ontology = "ONTOLOGY.md"
+ontology = "ONTOLOME.md"
 children = []
 
 [workflows]

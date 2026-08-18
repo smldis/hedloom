@@ -15,8 +15,8 @@ from hedloom_exec.transport import InProcessTransport
 
 BUNDLE = {
     "operation": "simulate",
-    "command": ["ngspice", "-b", "tt.spice"],
-    "inputs": {"deck": "sha256:aaa"},
+    "command": ["awk", "-f", "rule.awk", "tt.in"],
+    "inputs": {"model": "sha256:aaa"},
 }
 
 
@@ -36,7 +36,7 @@ def test_digest_is_stable_across_key_order():
 
 
 def test_changed_inputs_change_the_digest():
-    changed = dict(BUNDLE, inputs={"deck": "sha256:bbb"})
+    changed = dict(BUNDLE, inputs={"model": "sha256:bbb"})
     assert input_digest(BUNDLE) != input_digest(changed)
 
 
@@ -48,8 +48,8 @@ def test_placement_does_not_participate_in_identity():
 
 
 def test_nominated_environment_does_participate():
-    with_pdk = dict(BUNDLE, identity_env={"PDK_ROOT": "/pdk/sky130A"})
-    other_pdk = dict(BUNDLE, identity_env={"PDK_ROOT": "/pdk/gf180"})
+    with_pdk = dict(BUNDLE, identity_env={"TOOL_ROOT": "/toolchain/sky130A"})
+    other_pdk = dict(BUNDLE, identity_env={"TOOL_ROOT": "/toolchain/gf180"})
     assert input_digest(with_pdk) != input_digest(other_pdk)
     assert input_digest(with_pdk) != input_digest(BUNDLE)
 
@@ -99,7 +99,7 @@ def test_changed_inputs_do_not_reuse_the_old_result(tmp_path):
     }
 
     execute(shared, BUNDLE, **common)
-    changed = dict(BUNDLE, inputs={"deck": "sha256:bbb"})
+    changed = dict(BUNDLE, inputs={"model": "sha256:bbb"})
     second = execute(shared, changed, **common)
 
     assert second.disposition == "claimed"
@@ -115,7 +115,7 @@ def test_prior_results_are_named_as_superseded_not_discarded(tmp_path):
         "invocation_id": "inv-a",
     }
     execute(transport(), BUNDLE, **common)
-    changed = dict(BUNDLE, inputs={"deck": "sha256:bbb"})
+    changed = dict(BUNDLE, inputs={"model": "sha256:bbb"})
     execute(transport(), changed, **common)
 
     stale = stale_attempts(

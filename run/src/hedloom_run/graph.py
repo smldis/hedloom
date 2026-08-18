@@ -55,7 +55,7 @@ Three measured reasons for the rest of the shape, recorded in
   factory constructed on the worker.
 
 A failed invocation blocks its dependents by returning a blocked outcome, not
-by raising. Independent branches continue: one corner failing does not abandon
+by raising. Independent branches continue: one point failing does not abandon
 the other forty-nine, which is what a sweep wants and what the sequential
 driver could not offer.
 """
@@ -342,14 +342,14 @@ def _task_key(item: PlannedInvocation) -> str:
     """A key an operator can recognise, and one Dask can learn from.
 
     The operation comes first because Dask groups tasks by everything before the
-    first `-` and keeps a rolling average duration per group. Keyed by corner,
+    first `-` and keeps a rolling average duration per group. Keyed by point,
     every task was its own group, nothing was ever learned, and every task fell
     back to a flat 500 ms estimate — the number the scheduler then used to decide
     which worker was least busy and what was worth stealing. Keyed by operation,
-    the average becomes real after the first few corners finish.
+    the average becomes real after the first few points finish.
 
     The authored key stays, because the point of watching a sweep is still
-    knowing which *corner* is running. The digest suffix keeps it unique when the
+    knowing which *point* is running. The digest suffix keeps it unique when the
     same key is planned twice.
     """
 
@@ -458,12 +458,12 @@ def _stop_admitting(
         # `cancelled` either way, so the classification cannot be recovered
         # afterwards from Dask either. Both the classification *and* the
         # outcome have to come from the attempt record: the model shows that
-        # fixing only the classification reports a succeeded corner as failed,
+        # fixing only the classification reports a succeeded invocation as failed,
         # because `_collect_preserved` reads a future this call destroyed.
         #
         # Which this kernel cannot do yet, because it cannot name the attempt:
         # `_select_sequence` picks the identity inside `execute`, on the worker.
-        # The proposed change is `docs/binding-the-attempt-identity.md`; read it
+        # The proposed change is `design/binding-the-attempt-identity.md`; read it
         # and `docs/stop-admitting-protocol.md` before changing any of this.
         client.cancel(list(cancelled.values()), force=False)
         for item in items:

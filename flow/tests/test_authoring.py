@@ -30,7 +30,7 @@ from hedloom_flow import (
 )
 
 
-DECK = artifact("spice-deck")
+MODEL = artifact("model-input")
 RAW = artifact("simulation-raw")
 REPORT = artifact("measurement-report")
 MEASUREMENT = artifact("measurement")
@@ -53,13 +53,13 @@ def _source(locator, artifact_contract):
 def test_calls_outside_scope_are_actionable_and_operation_body_does_not_run():
     calls = []
 
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def simulate(deck):
-        calls.append(deck)
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def simulate(model):
+        calls.append(model)
 
     @flow
-    def study(deck):
-        return simulate(deck)
+    def study(model):
+        return simulate(model)
 
     with pytest.raises(PlanningScopeError, match="with plan"):
         simulate(object())
@@ -67,7 +67,7 @@ def test_calls_outside_scope_are_actionable_and_operation_body_does_not_run():
         study(object())
 
     with plan() as draft:
-        result = study(_source("input.spice", DECK))
+        result = study(_source("input.in", MODEL))
     normalized = draft.finish(outputs={"raw": result})
 
     assert calls == []
@@ -78,18 +78,18 @@ def test_calls_outside_scope_are_actionable_and_operation_body_does_not_run():
 def test_external_sources_require_the_strict_structured_authoring_surface():
     with plan() as draft:
         with pytest.raises(TypeError, match="positional"):
-            input_artifact("legacy-uri", "spice-deck")
+            input_artifact("legacy-uri", "model-input")
         with pytest.raises(AuthoringError, match=r"address\(\.\.\.\)"):
             input_artifact(
                 "legacy-uri",
-                artifact=DECK,
+                artifact=MODEL,
                 materialized_as=TEST_MATERIALIZATION,
             )
-        deck = _source("input.spice", DECK)
+        model = _source("input.in", MODEL)
     normalized = draft.finish(outputs={})
 
-    assert deck.reference.value_class == "artifact"
-    assert normalized.sources[0].address.locator == "input.spice"
+    assert model.reference.value_class == "artifact"
+    assert normalized.sources[0].address.locator == "input.in"
 
 
 def test_source_deduplication_uses_the_complete_immutable_declaration():
@@ -103,12 +103,12 @@ def test_source_deduplication_uses_the_complete_immutable_declaration():
     with plan() as draft:
         first = input_artifact(
             shared_address,
-            artifact=DECK,
+            artifact=MODEL,
             materialized_as=TEST_MATERIALIZATION,
         )
         repeated = input_artifact(
             shared_address,
-            artifact=DECK,
+            artifact=MODEL,
             materialized_as=TEST_MATERIALIZATION,
         )
         different_kind = input_artifact(
@@ -118,7 +118,7 @@ def test_source_deduplication_uses_the_complete_immutable_declaration():
         )
         different_materialization = input_artifact(
             shared_address,
-            artifact=DECK,
+            artifact=MODEL,
             materialized_as=alternate_materialization,
         )
     normalized = draft.finish(outputs={})
@@ -140,10 +140,10 @@ def test_address_space_mismatch_fails_without_mutating_the_plan():
         with pytest.raises(AuthoringError, match="address space must match"):
             input_artifact(
                 address("test-address-space", "opaque/../locator"),
-                artifact=DECK,
+                artifact=MODEL,
                 materialized_as=mismatched,
             )
-        accepted = _source("opaque/../locator", DECK)
+        accepted = _source("opaque/../locator", MODEL)
     normalized = draft.finish(outputs={})
 
     assert accepted.reference.source_id == "source:0001"
@@ -160,10 +160,10 @@ def test_output_materialization_capability_is_ephemeral_metadata_only():
 
         @operation(
             name="authoring.capability.produce",
-            inputs={"deck": DECK},
+            inputs={"model": MODEL},
             outputs={"raw": output},
         )
-        def produce(deck):
+        def produce(model):
             raise AssertionError("must not run")
 
         @operation(
@@ -175,8 +175,8 @@ def test_output_materialization_capability_is_ephemeral_metadata_only():
             raise AssertionError("must not run")
 
         with plan() as draft:
-            deck = _source("input.spice", DECK)
-            raw = produce(deck)
+            model = _source("input.in", MODEL)
+            raw = produce(model)
             report = consume(raw)
         return draft.finish(outputs={"report": report})
 
@@ -214,7 +214,7 @@ def test_output_materialization_capability_is_ephemeral_metadata_only():
 
 def test_materializable_declarations_are_rejected_for_operation_inputs():
     with pytest.raises(AuthoringError, match=r"artifact\(\.\.\.\) or artifacts"):
-        operation(inputs={"deck": materializable(DECK, as_=TEST_MATERIALIZATION)})
+        operation(inputs={"model": materializable(MODEL, as_=TEST_MATERIALIZATION)})
 
 
 def test_options_are_immutable_and_policy_precedence_is_explicit():
@@ -224,15 +224,15 @@ def test_options_are_immutable_and_policy_precedence_is_explicit():
     override = lsf(queue="call")
 
     @operation(
-        inputs={"deck": DECK},
+        inputs={"model": MODEL},
         outputs={"raw": RAW},
         default_policy=operation_default,
     )
-    def simulate(deck):
+    def simulate(model):
         raise AssertionError("must not run")
 
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def inherited(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def inherited(model):
         raise AssertionError("must not run")
 
     call_view = simulate.options(policy=override)
@@ -242,10 +242,10 @@ def test_options_are_immutable_and_policy_precedence_is_explicit():
         call_view.policy = plan_default
 
     with plan(default_policy=plan_default) as draft:
-        deck = _source("input.spice", DECK)
-        call_view(deck)
-        simulate(deck)
-        inherited(deck)
+        model = _source("input.in", MODEL)
+        call_view(model)
+        simulate(model)
+        inherited(model)
     normalized = draft.finish(outputs={})
 
     assert [item.policy for item in normalized.invocations] == [
@@ -255,15 +255,15 @@ def test_options_are_immutable_and_policy_precedence_is_explicit():
     ]
 
     with plan() as local_draft:
-        deck = _source("input.spice", DECK)
-        inherited(deck)
+        model = _source("input.in", MODEL)
+        inherited(model)
     local_plan = local_draft.finish(outputs={})
     assert local_plan.invocations[0].policy == local()
 
 
 def test_repeated_planning_has_stable_source_invocation_edge_and_boundary_ids():
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def simulate(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def simulate(model):
         raise AssertionError("must not run")
 
     @operation(inputs={"raw": RAW}, outputs={"report": REPORT})
@@ -271,12 +271,12 @@ def test_repeated_planning_has_stable_source_invocation_edge_and_boundary_ids():
         raise AssertionError("must not run")
 
     @flow
-    def study(deck):
-        return measure(simulate(deck))
+    def study(model):
+        return measure(simulate(model))
 
     def build():
         with plan() as draft:
-            result = study(_source("input.spice", DECK))
+            result = study(_source("input.in", MODEL))
         return draft.finish(outputs={"report": result})
 
     first = build()
@@ -302,11 +302,11 @@ def test_repeated_planning_has_stable_source_invocation_edge_and_boundary_ids():
 def test_collection_input_preserves_member_order_in_bindings_edges_and_json():
     @operation(
         name="authoring.collections.measure",
-        inputs={"deck": DECK},
+        inputs={"model": MODEL},
         config={"label": parameter(str)},
         outputs={"measurement": MEASUREMENT},
     )
-    def measure(deck, *, label):
+    def measure(model, *, label):
         raise AssertionError("must not run")
 
     @operation(
@@ -319,9 +319,9 @@ def test_collection_input_preserves_member_order_in_bindings_edges_and_json():
 
     def build():
         with plan() as draft:
-            deck = _source("input.spice", DECK)
+            model = _source("input.in", MODEL)
             measurements = [
-                measure(deck, label=label) for label in ("ss", "tt", "ff")
+                measure(model, label=label) for label in ("ss", "tt", "ff")
             ]
             report = summarize(measurements)
         return draft.finish(outputs={"report": report})
@@ -363,10 +363,10 @@ def test_collection_input_preserves_member_order_in_bindings_edges_and_json():
 def test_external_source_collection_member_gets_an_edge_without_scalar_regression():
     @operation(
         name="authoring.source_collections.measure",
-        inputs={"deck": DECK},
+        inputs={"model": MODEL},
         outputs={"measurement": MEASUREMENT},
     )
-    def measure(deck):
+    def measure(model):
         raise AssertionError("must not run")
 
     @operation(
@@ -379,9 +379,9 @@ def test_external_source_collection_member_gets_an_edge_without_scalar_regressio
 
     def build():
         with plan() as draft:
-            deck = _source("input.spice", DECK)
+            model = _source("input.in", MODEL)
             external = _source("existing-measurement.json", MEASUREMENT)
-            produced = measure(deck)
+            produced = measure(model)
             report = summarize([external, produced])
         return draft.finish(outputs={"report": report})
 
@@ -413,15 +413,15 @@ def test_external_source_collection_member_gets_an_edge_without_scalar_regressio
 
 
 def test_collection_inputs_reject_invalid_authored_values_early():
-    @operation(inputs={"deck": DECK}, outputs={"measurement": MEASUREMENT})
-    def measure(deck):
+    @operation(inputs={"model": MODEL}, outputs={"measurement": MEASUREMENT})
+    def measure(model):
         raise AssertionError("must not run")
 
     @operation(
-        inputs={"deck": DECK},
+        inputs={"model": MODEL},
         outputs={"left": MEASUREMENT, "right": MEASUREMENT},
     )
-    def split(deck):
+    def split(model):
         raise AssertionError("must not run")
 
     @operation(
@@ -432,17 +432,17 @@ def test_collection_inputs_reject_invalid_authored_values_early():
         raise AssertionError("must not run")
 
     with plan() as foreign_draft:
-        foreign = measure(_source("foreign.spice", DECK))
+        foreign = measure(_source("foreign.in", MODEL))
     foreign_draft.finish(outputs={"measurement": foreign})
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
+        model = _source("input.in", MODEL)
         existing_measurement = _source(
             "existing-measurement.json", MEASUREMENT
         )
-        measurement = measure(deck)
-        multiple = split(deck)
-        for invalid in (deck, "measurement.json", b"measurement", {"one": measurement}):
+        measurement = measure(model)
+        multiple = split(model)
+        for invalid in (model, "measurement.json", b"measurement", {"one": measurement}):
             with pytest.raises(BindingError, match="non-string sequence"):
                 summarize(invalid)
         with pytest.raises(BindingError, match="non-string sequence"):
@@ -450,7 +450,7 @@ def test_collection_inputs_reject_invalid_authored_values_early():
         with pytest.raises(BindingError, match="must not be empty"):
             summarize([])
         with pytest.raises(BindingError, match="expects artifact kind"):
-            summarize([measurement, deck])
+            summarize([measurement, model])
         with pytest.raises(BindingError, match="different plan"):
             summarize([foreign])
         with pytest.raises(BindingError, match="select one explicitly"):
@@ -467,15 +467,15 @@ def test_name_keyed_declaration_order_does_not_change_normalized_plan():
     def build(*, reversed_declarations):
         @operation(
             name="authoring.mapping_order.produce",
-            inputs={"deck": DECK},
-            config={"corner": parameter(str)},
+            inputs={"model": MODEL},
+            config={"point": parameter(str)},
             outputs={"raw": RAW},
         )
-        def produce(deck, *, corner):
+        def produce(model, *, point):
             raise AssertionError("must not run")
 
         input_items = [("left", RAW), ("right", RAW)]
-        config_items = [("label", str), ("corner", str)]
+        config_items = [("label", str), ("point", str)]
         output_items = [("raw", RAW), ("report", REPORT)]
         if reversed_declarations:
             input_items.reverse()
@@ -488,18 +488,18 @@ def test_name_keyed_declaration_order_does_not_change_normalized_plan():
             config={name: parameter(value_type) for name, value_type in config_items},
             outputs=dict(output_items),
         )
-        def combine(left, right, *, label, corner):
+        def combine(left, right, *, label, point):
             raise AssertionError("must not run")
 
         with plan() as draft:
-            deck = _source("input.spice", DECK)
-            left = produce(deck, corner="ss")
-            right = produce(deck, corner="ff")
+            model = _source("input.in", MODEL)
+            left = produce(model, point="ss")
+            right = produce(model, point="ff")
             combined = combine(
                 right=right,
                 left=left,
                 label="comparison",
-                corner="all",
+                point="all",
             )
         return draft.finish(outputs={"raw": combined.raw, "report": combined.report})
 
@@ -514,17 +514,17 @@ def test_name_keyed_declaration_order_does_not_change_normalized_plan():
         if definition.identity.name == "authoring.mapping_order.combine"
     )
     assert [contract.name for contract in combine.inputs] == ["left", "right"]
-    assert [contract.name for contract in combine.config] == ["corner", "label"]
+    assert [contract.name for contract in combine.config] == ["label", "point"]
     assert [contract.name for contract in combine.outputs] == ["raw", "report"]
 
 
 def test_nested_static_branch_and_fan_in_normalize_to_one_plan():
     @operation(
-        inputs={"deck": DECK},
-        config={"corner": parameter(str)},
+        inputs={"model": MODEL},
+        config={"point": parameter(str)},
         outputs={"raw": RAW},
     )
-    def simulate(deck, *, corner):
+    def simulate(model, *, point):
         raise AssertionError("must not run")
 
     @operation(
@@ -534,20 +534,20 @@ def test_nested_static_branch_and_fan_in_normalize_to_one_plan():
         raise AssertionError("must not run")
 
     @flow
-    def characterize(deck, *, corners):
-        return {corner: simulate(deck, corner=corner) for corner in corners}
+    def characterize(model, *, points):
+        return {point: simulate(model, point=point) for point in points}
 
     @flow
-    def study(deck, *, include_slow):
-        corners = ["tt"]
+    def study(model, *, include_slow):
+        points = ["tt"]
         if include_slow:
-            corners.append("ss")
-        branches = characterize(deck, corners=corners)
+            points.append("ss")
+        branches = characterize(model, points=points)
         return compare(branches["tt"], branches["ss"])
 
     with plan() as draft:
         result = study(
-            _source("amplifier.spice", DECK), include_slow=True
+            _source("amplifier.in", MODEL), include_slow=True
         )
     normalized = draft.finish(outputs={"report": result})
 
@@ -562,8 +562,8 @@ def test_nested_static_branch_and_fan_in_normalize_to_one_plan():
 
 
 def test_multiple_outputs_require_explicit_selection_but_are_inspectable():
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW, "report": REPORT})
-    def split(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW, "report": REPORT})
+    def split(model):
         raise AssertionError("must not run")
 
     @operation(inputs={"raw": RAW}, outputs={"report": REPORT})
@@ -571,8 +571,8 @@ def test_multiple_outputs_require_explicit_selection_but_are_inspectable():
         raise AssertionError("must not run")
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
-        result = split(deck)
+        model = _source("input.in", MODEL)
+        result = split(model)
         assert result.declared_outputs == ("raw", "report")
         assert result.outputs["raw"] is result.raw
         with pytest.raises(BindingError, match="select one explicitly"):
@@ -584,11 +584,11 @@ def test_multiple_outputs_require_explicit_selection_but_are_inspectable():
 
 def test_invalid_bindings_and_flow_outputs_fail_during_planning():
     @operation(
-        inputs={"deck": DECK},
-        config={"corner": parameter(str)},
+        inputs={"model": MODEL},
+        config={"point": parameter(str)},
         outputs={"raw": RAW},
     )
-    def simulate(deck, *, corner):
+    def simulate(model, *, point):
         raise AssertionError("must not run")
 
     @operation(inputs={"raw": RAW}, outputs={"report": REPORT})
@@ -596,36 +596,36 @@ def test_invalid_bindings_and_flow_outputs_fail_during_planning():
         raise AssertionError("must not run")
 
     @flow
-    def invalid_flow(deck):
-        simulate(deck, corner="tt")
+    def invalid_flow(model):
+        simulate(model, point="tt")
         return "not an artifact"
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
+        model = _source("input.in", MODEL)
         with pytest.raises(BindingError, match="missing config"):
-            simulate(deck)
+            simulate(model)
         with pytest.raises(BindingError, match="unexpected bindings"):
-            simulate(deck, corner="tt", extra=True)
+            simulate(model, point="tt", extra=True)
         with pytest.raises(BindingError, match="expects str"):
-            simulate(deck, corner=3)
+            simulate(model, point=3)
         with pytest.raises(BindingError, match="expects artifact kind"):
-            measure(deck)
+            measure(model)
         with pytest.raises(AuthoringError, match="must be an operation output"):
-            invalid_flow(deck)
-        good = simulate(deck, corner="tt")
+            invalid_flow(model)
+        good = simulate(model, point="tt")
     normalized = draft.finish(outputs={"raw": good})
     assert len(normalized.invocations) == 1
     assert normalized.invocations[0].id == "invoke:0001"
 
 
 def test_foreign_references_and_finished_or_reused_sessions_are_rejected():
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def simulate(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def simulate(model):
         raise AssertionError("must not run")
 
     first_draft = plan()
     with first_draft:
-        foreign = simulate(_source("one.spice", DECK))
+        foreign = simulate(_source("one.in", MODEL))
     first_draft.finish(outputs={"raw": foreign})
 
     with plan() as second_draft:
@@ -643,12 +643,12 @@ def test_foreign_references_and_finished_or_reused_sessions_are_rejected():
 def test_definition_declarations_and_submit_boundary_fail_early():
     with pytest.raises(AuthoringError, match="declarations absent from signature"):
 
-        @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
+        @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
         def invalid(other):
             pass
 
     with pytest.raises(AuthoringError, match="must use Parameter"):
-        operation(config={"corner": str})
+        operation(config={"point": str})
 
     with pytest.raises(NotImplementedError, match="outside this planning spike"):
         submit(object())
@@ -657,8 +657,8 @@ def test_definition_declarations_and_submit_boundary_fail_early():
 def test_a_policy_and_a_name_compose_immutably_in_either_order():
     override = named_policy("lsf")(queue="short")
 
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def simulate(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def simulate(model):
         raise AssertionError("must not run")
 
     policy_view = simulate.options(policy=override)
@@ -678,9 +678,9 @@ def test_a_policy_and_a_name_compose_immutably_in_either_order():
         policy_then_key.key = "changed"
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
-        policy_then_key(deck)
-        key_then_policy(deck)
+        model = _source("input.in", MODEL)
+        policy_then_key(model)
+        key_then_policy(model)
     normalized = draft.finish(outputs={})
 
     assert [item.authored_key for item in normalized.invocations] == [
@@ -694,10 +694,10 @@ def test_a_policy_and_a_name_compose_immutably_in_either_order():
 def test_keyed_nested_flows_repeat_and_survive_an_unkeyed_sibling_insertion():
     @operation(
         name="authoring.identities.produce",
-        inputs={"deck": DECK},
+        inputs={"model": MODEL},
         outputs={"raw": RAW},
     )
-    def produce(deck):
+    def produce(model):
         raise AssertionError("must not run")
 
     @operation(
@@ -710,10 +710,10 @@ def test_keyed_nested_flows_repeat_and_survive_an_unkeyed_sibling_insertion():
 
     @operation(
         name="authoring.identities.noise",
-        inputs={"deck": DECK},
+        inputs={"model": MODEL},
         outputs={"raw": RAW},
     )
-    def noise(deck):
+    def noise(model):
         raise AssertionError("must not run")
 
     @flow(name="authoring.identities.inner")
@@ -721,23 +721,23 @@ def test_keyed_nested_flows_repeat_and_survive_an_unkeyed_sibling_insertion():
         return consume.named("consumer")(raw)
 
     @flow(name="authoring.identities.outer")
-    def outer(deck):
+    def outer(model):
         raw = [
-            produce.named("producer-left")(deck),
-            produce.named("producer-right")(deck),
+            produce.named("producer-left")(model),
+            produce.named("producer-right")(model),
         ]
         return inner.named("inner")(raw)
 
     @flow(name="authoring.identities.noise_flow")
-    def noise_flow(deck):
-        return noise(deck)
+    def noise_flow(model):
+        return noise(model)
 
     def build(*, insert_sibling):
         with plan() as draft:
-            deck = _source("input.spice", DECK)
+            model = _source("input.in", MODEL)
             if insert_sibling:
-                noise_flow(deck)
-            report = outer.named("outer")(deck)
+                noise_flow(model)
+            report = outer.named("outer")(model)
         return draft.finish(outputs={"report": report})
 
     baseline = build(insert_sibling=False)
@@ -798,36 +798,36 @@ def test_keyed_nested_flows_repeat_and_survive_an_unkeyed_sibling_insertion():
 def test_duplicate_keys_share_one_operation_and_flow_namespace_per_scope():
     calls = []
 
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def produce(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def produce(model):
         raise AssertionError("must not run")
 
     @flow
-    def leaf(deck):
+    def leaf(model):
         calls.append("flow body ran")
-        return produce(deck)
+        return produce(model)
 
     @flow
-    def keyed_scope(deck):
-        return produce.named("reused")(deck)
+    def keyed_scope(model):
+        return produce.named("reused")(model)
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
-        produce.named("op-duplicate")(deck)
+        model = _source("input.in", MODEL)
+        produce.named("op-duplicate")(model)
         with pytest.raises(AuthoringError, match="already used"):
-            produce.named("op-duplicate")(deck)
+            produce.named("op-duplicate")(model)
 
-        leaf.named("flow-duplicate")(deck)
+        leaf.named("flow-duplicate")(model)
         with pytest.raises(AuthoringError, match="already used"):
-            leaf.named("flow-duplicate")(deck)
+            leaf.named("flow-duplicate")(model)
 
-        produce.named("cross-kind")(deck)
+        produce.named("cross-kind")(model)
         with pytest.raises(AuthoringError, match="already used"):
-            leaf.named("cross-kind")(deck)
+            leaf.named("cross-kind")(model)
 
-        keyed_scope.named("scope-a")(deck)
-        keyed_scope.named("scope-b")(deck)
-        leaf(deck)
+        keyed_scope.named("scope-a")(model)
+        keyed_scope.named("scope-b")(model)
+        leaf(model)
     normalized = draft.finish(outputs={})
 
     assert calls == ["flow body ran", "flow body ran"]
@@ -848,8 +848,8 @@ def test_duplicate_keys_share_one_operation_and_flow_namespace_per_scope():
 
 
 def test_keyed_calls_and_edges_do_not_consume_unkeyed_counters():
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def produce(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def produce(model):
         raise AssertionError("must not run")
 
     @operation(inputs={"raw": RAW}, outputs={"report": REPORT})
@@ -857,10 +857,10 @@ def test_keyed_calls_and_edges_do_not_consume_unkeyed_counters():
         raise AssertionError("must not run")
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
-        keyed_raw = produce.named("keyed-producer")(deck)
+        model = _source("input.in", MODEL)
+        keyed_raw = produce.named("keyed-producer")(model)
         consume.named("keyed-consumer")(keyed_raw)
-        unkeyed_raw = produce(deck)
+        unkeyed_raw = produce(model)
         unkeyed_report = consume(unkeyed_raw)
     normalized = draft.finish(outputs={"report": unkeyed_report})
 
@@ -884,27 +884,27 @@ def test_keyed_calls_and_edges_do_not_consume_unkeyed_counters():
 def test_duplicate_operation_rollback_does_not_leak_or_consume_counters():
     @operation(
         name="authoring.rollback.accepted",
-        inputs={"deck": DECK},
+        inputs={"model": MODEL},
         outputs={"raw": RAW},
     )
-    def accepted(deck):
+    def accepted(model):
         raise AssertionError("must not run")
 
     @operation(
         name="authoring.rollback.rejected",
-        inputs={"deck": DECK},
+        inputs={"model": MODEL},
         outputs={"raw": RAW},
     )
-    def rejected(deck):
+    def rejected(model):
         raise AssertionError("must not run")
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
-        accepted(deck)
-        accepted.named("reserved")(deck)
+        model = _source("input.in", MODEL)
+        accepted(model)
+        accepted.named("reserved")(model)
         with pytest.raises(AuthoringError, match="already used"):
-            rejected.named("reserved")(deck)
-        accepted(deck)
+            rejected.named("reserved")(model)
+        accepted(model)
     normalized = draft.finish(outputs={})
 
     unkeyed_invocation_ids = [
@@ -921,8 +921,8 @@ def test_duplicate_operation_rollback_does_not_leak_or_consume_counters():
 
 
 def test_failing_keyed_flow_restores_keys_graph_and_every_unkeyed_counter():
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def produce(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def produce(model):
         raise AssertionError("must not run")
 
     @operation(inputs={"raw": RAW}, outputs={"report": REPORT})
@@ -930,27 +930,27 @@ def test_failing_keyed_flow_restores_keys_graph_and_every_unkeyed_counter():
         raise AssertionError("must not run")
 
     @flow(name="authoring.rollback.failing")
-    def failing(deck):
-        raw = produce.named("step")(deck)
+    def failing(model):
+        raw = produce.named("step")(model)
         consume(raw)
         raise RuntimeError("planned failure")
 
     @flow(name="authoring.rollback.success")
-    def success(deck):
-        return produce.named("step")(deck)
+    def success(model):
+        return produce.named("step")(model)
 
     @flow(name="authoring.rollback.unkeyed")
-    def unkeyed(deck):
-        return produce(deck)
+    def unkeyed(model):
+        return produce(model)
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
+        model = _source("input.in", MODEL)
         with pytest.raises(RuntimeError, match="planned failure"):
-            failing.named("boundary")(deck)
-        keyed = success.named("boundary")(deck)
-        raw = produce(deck)
+            failing.named("boundary")(model)
+        keyed = success.named("boundary")(model)
+        raw = produce(model)
         report = consume(raw)
-        later = unkeyed(deck)
+        later = unkeyed(model)
     normalized = draft.finish(
         outputs={"keyed": keyed, "report": report, "later": later}
     )
@@ -979,21 +979,21 @@ def test_failing_keyed_flow_restores_keys_graph_and_every_unkeyed_counter():
     ["", " leading", "trailing ", "_leading", "bad key", "é"],
 )
 def test_invalid_authored_key_syntax_fails_before_graph_mutation(invalid_key):
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def produce(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def produce(model):
         raise AssertionError("must not run")
 
     @flow
-    def wrapper(deck):
-        return produce(deck)
+    def wrapper(model):
+        return produce(model)
 
     with plan() as draft:
-        deck = _source("input.spice", DECK)
+        model = _source("input.in", MODEL)
         with pytest.raises(AuthoringError, match="authored key"):
-            produce.named(invalid_key)(deck)
+            produce.named(invalid_key)(model)
         with pytest.raises(AuthoringError, match="authored key"):
-            wrapper.named(invalid_key)(deck)
-        result = produce(deck)
+            wrapper.named(invalid_key)(model)
+        result = produce(model)
     normalized = draft.finish(outputs={"raw": result})
 
     assert [item.id for item in normalized.invocations] == ["invoke:0001"]
@@ -1010,12 +1010,12 @@ def test_a_handle_refuses_to_answer_about_a_value_it_does_not_have():
     without anyone deciding to add it.
     """
 
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def simulate(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def simulate(model):
         raise AssertionError("must not run")
 
     with plan() as draft:
-        result = simulate(_source("input.spice", DECK))
+        result = simulate(_source("input.in", MODEL))
         handle = result.raw
 
         for candidate in (result, handle):
@@ -1061,29 +1061,29 @@ def test_planned_builds_exactly_what_the_draft_form_builds():
     something slightly different — which is the thing it exists to remove.
     """
 
-    @operation(inputs={"deck": DECK}, outputs={"raw": RAW})
-    def simulate(deck):
+    @operation(inputs={"model": MODEL}, outputs={"raw": RAW})
+    def simulate(model):
         raise AssertionError("must not run")
 
     @planned
     def decorated(locator):
-        deck = input_artifact(
+        model = input_artifact(
             address("test-address-space", locator),
-            artifact=DECK,
+            artifact=MODEL,
             materialized_as=TEST_MATERIALIZATION,
         )
-        return {"raw": simulate.named("sim")(deck).raw}
+        return {"raw": simulate.named("sim")(model).raw}
 
     with plan() as draft:
-        deck = input_artifact(
-            address("test-address-space", "corner.cir"),
-            artifact=DECK,
+        model = input_artifact(
+            address("test-address-space", "point.cir"),
+            artifact=MODEL,
             materialized_as=TEST_MATERIALIZATION,
         )
-        outputs = {"raw": simulate.named("sim")(deck).raw}
+        outputs = {"raw": simulate.named("sim")(model).raw}
     explicit = draft.finish(outputs=outputs)
 
-    assert decorated("corner.cir").to_data() == explicit.to_data()
+    assert decorated("point.cir").to_data() == explicit.to_data()
 
 
 def test_a_planned_family_takes_arguments_and_can_be_called_again():

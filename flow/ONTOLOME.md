@@ -21,7 +21,7 @@ not a public or general execution surface.
 
 The current runnable API studies whether ordinary Python authoring can produce
 one deterministic, executor-neutral graph while retaining explicit contracts
-and nested flow structure. Its tests and simulator-free example now provide
+and nested flow structure. Its tests and tool-free example now provide
 evidence for ordered collection fan-in, scoped authored Plan identity, the
 static distinction between addressed artifact sources and ephemeral operation
 outputs, and a bounded local Delayed lowering of those contracts. Changes
@@ -100,7 +100,7 @@ contract is promoted through the parent composition node.
 
 ## Exclusions
 
-Hedloom Flow does not own simulation meaning, public or general operation
+Hedloom Flow does not own execution meaning, public or general operation
 execution, local or remote scheduling, placement enforcement, a working
 `submit(...)`, general Dask lowering, Dask Distributed/Futures, LSF transport,
 retries or attempts, persistence, address resolution, codec execution, real

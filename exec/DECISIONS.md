@@ -1,97 +1,13 @@
 # Hedloom Exec decision ledger
 
-This file replaces the per-phase work-order sequence used through Hedloom Flow
-Phases 1–5. It is a living ledger, not an authorization record: it says what is
-settled, what is open, and what observation would change each answer. The code
-and its tests are the evidence.
+A living ledger, not an authorization record: it says what is settled, what is
+open, and what observation would change each answer. The code and its tests are
+the evidence, and every row here is meant to be true of the unit as it stands.
 
-## Recorded process revision (2026-08-03)
-
-The graduated main adopted allocation policy 3, "a reviewed evidence work
-order," as the default while the architecture was provisional, and explicitly
-made that policy falsifiable: *"Reassess it when repeated reviews add ceremony
-without changing scope."*
-
-**Observation.** Across Hedloom Flow Phases 1–5 the policy produced roughly 1,700
-lines of governance around 3,171 lines of source, a paired plan commit and
-feature commit per phase, and an independent reviewer pass per phase, while the
-component still could not execute a single operation. The ceremony grew; the
-scope per slice did not.
-
-**Revision.** Direct human-reviewed development against this ledger, with
-review at natural boundaries rather than per phase. What is retained from the
-prior policy, because it was the part that worked: falsifiable framing, named
-discriminating observations, honest ontologies, and the refusal to let passing
-tests silently graduate architecture. What is dropped: work-order identities,
-authorization records, stop-condition recitals, and delegated review panes.
-
-This revision is recorded rather than drifted into, as the main requires.
-
-### Amendment (2026-08-03): what the two real errors taught
-
-Two substantive errors have occurred in this line of work, with opposite
-shapes, and neither is explained by "not enough reasoning per step".
-
-*The detached-lifetime premise* — that an accepted job outlives its submitter —
-was produced by the heavy dialectic workflow, argued at length in the graduated
-main, and survived reviewer passes. It was falsified by one sentence of user
-direction. Depth did not catch it; contact with the requirement did.
-
-*The unsound reuse default* — `RECORDED` returning results computed from
-different inputs — was produced by the light workflow, flagged in the same
-message that shipped it, recorded in the ontology, and fixed two turns later.
-The reasoning happened; the shipping decision was wrong.
-
-The corrective is therefore not more ceremony, and not deeper per-step review.
-It is two cheap rules, now in `AGENTS.md`: incompleteness must refuse rather
-than answer wrongly, and the invariant gets stated in one sentence before the
-surface is written. Adversarial review is reserved for finished slices, where
-it finds things, rather than applied per increment, where it mostly restates
-what the increment already claims about itself.
-
-## Premise correction (2026-08-03, user direction)
-
-The unit was built on the architecture's lifetime asymmetry: an accepted batch
-job outlives the process that submitted it, so a transient handle cannot own
-its identity. **The user has stated the opposite as the design intent — a job
-is not supposed to outlive its owner, and a caller crash should take the work
-down with it.**
-
-This removes the premise of the graduated main's provisional decision that "an
-attempt protocol owns LSF." With owner-bound lifetime, the unsafe transition
-that argument was built to survive becomes a defect to prevent rather than a
-state to reconcile, and Dask owning the lifecycle is no longer unsound on
-lifetime grounds.
-
-**What the failure mode becomes.** Duplicate prevention is replaced by orphan
-prevention. The indeterminate-submission window still exists and still matters,
-but the correct response inverts: from "refuse to guess, wait to attach" to
-"discover it and kill it." Lookup by a pre-chosen unique identity is therefore
-still a required site capability, used for reaping rather than attaching, and
-identity uniqueness matters more than before because the action it enables is
-destructive.
-
-**What enforces it.** An expectation is not a mechanism; unenforced owner-bound
-lifetime is how orphans happen. `dask-jobqueue` already implements this for
-pooled workers via `--death-timeout` plus `bkill` on cluster close, so pooled
-mode should adopt it rather than rebuild it. Direct mode should borrow the same
-discipline. Enforcement must not depend on `bsub -I`: the manifesto forbids
-authority living in an interactive session, and a lease works identically for a
-terminal, a script, CI, or an agent.
-
-**What "resume" means here.** Not reattaching to running work, which no longer
-exists. The manifesto's actual requirement is to rerun from a clean environment
-without repeating results whose inputs remain valid. That is result reuse and
-staleness, and it is the durable record's real purpose in this design —
-evidence and reuse, not recovery.
-
-**Consequence for this unit.** Attempt identity, the append-only journal, atomic
-terminal publication, the refused/indeterminate distinction, and reconciliation
-all survive with changed justifications. The attach disposition and
-`UnrecoverableAttempt` are demoted: they are correct only for a transport that
-declares detached lifetime, and no such transport exists or is currently wanted.
-They are retained, unreachable by default, rather than deleted, because the
-distinction they encode is what makes the orphan-reaping path expressible.
+How the unit came to be built this way — the process revision that replaced
+per-phase work orders, the premise correction that inverted the lifetime
+argument, and what an adversarial review found — is in the unpublished
+`design/development-process-2026-08-03.md`. That is history; this is not.
 
 ## Settled by evidence in this unit
 
@@ -104,14 +20,14 @@ distinction they encode is what makes the orphan-reaping path expressible.
 | Does recovery require graph topology? | No. | `test_recovery_needs_no_knowledge_of_the_graph` — recovery succeeds from a bundle carrying no dependency information. |
 | Can cancellation be known? | No, only intended and later reconciled. | `test_success_after_requested_cancellation_is_not_normalized`. |
 | Does placement belong in result identity? | No. Queue, walltime, cores and host are excluded, so retuning resources never invalidates a result. | `test_placement_does_not_participate_in_identity`, and `test_retuning_the_resource_request_still_reuses_the_result` now that options actually reach the job. |
-| Whose resource request is it? | The invocation's. One transport resolves each submission over its site defaults, so a cheap extraction and a large-memory corner can share it. | `test_one_transport_serves_invocations_with_different_needs`; end to end through a real `bsub` argument list in `hedloom-run`'s `test_an_authored_resource_need_survives_all_the_way_to_the_submission`. |
+| Whose resource request is it? | The invocation's. One transport resolves each submission over its site defaults, so a cheap extraction and a large-memory point can share it. | `test_one_transport_serves_invocations_with_different_needs`; end to end through a real `bsub` argument list in `hedloom-run`'s `test_an_authored_resource_need_survives_all_the_way_to_the_submission`. |
 | What happens to an option a transport cannot express? | It refuses before submission. Dropping a stated resource need would run the work under conditions nobody asked for, which is the silent-wrongness rule applied to placement. | `test_an_option_this_transport_cannot_express_is_refused`, `test_a_misspelled_option_does_not_silently_run_anywhere`. |
-| Who arbitrates a simulator licence? | LSF. A declared `licences={"name": n}` becomes a `rusage` term on that job; nothing here counts tokens or waits for one, because the scheduler owns the count. | `test_a_declared_licence_becomes_a_request_on_that_job`. The site's resource *names* are a fact to ask for, not derive. |
+| Who arbitrates a licence for a scarce tool? | LSF. A declared `licences={"name": n}` becomes a `rusage` term on that job; nothing here counts tokens or waits for one, because the scheduler owns the count. | `test_a_declared_licence_becomes_a_request_on_that_job`. The site's resource *names* are a fact to ask for, not derive. |
 | Can reuse return a result from different inputs? | No, once identity is content-addressed: changed inputs land on a different attempt. | `test_changed_inputs_do_not_reuse_the_old_result`. |
 | May a failed result be reused? | Not automatically. It is retained, the rerun takes a new sequence, and a human may accept it after inspection. | `test_a_failure_is_not_reused_and_the_work_runs_again`, `test_an_accepted_failure_is_reused_afterwards`. |
 | What happens to superseded results? | They are retained and nameable as stale, not overwritten. | `test_prior_results_are_named_as_superseded_not_discarded`. |
 | How should the two units couple? | Through the Plan document, not the package. Neither imports the other. | `planned.py` reads plain data; `test_the_real_hedloom_flow_example_plan_derives` runs against a Plan Hedloom Flow actually produced. |
-| Does staleness propagate transitively? | Yes. Editing one corner reruns it and its reduction while siblings are reused. | `test_a_changed_config_invalidates_only_its_own_branch_and_downstream`, and the end-to-end example. |
+| Does staleness propagate transitively? | Yes. Editing one point reruns it and its reduction while siblings are reused. | `test_a_changed_config_invalidates_only_its_own_branch_and_downstream`, and the end-to-end example. |
 
 The fourth row is the boundary result: because reconciliation reads no
 topology, this unit has not absorbed graph scheduling authority, and the
@@ -128,6 +44,14 @@ architecture's rejection line 1 has not been crossed.
   direct mode.
 - **Many similar jobs belong on a pooled `LSFCluster`**, not on many concurrent
   `-I` submissions.
+
+Owner-bound lifetime is why the `attached` disposition and `UnrecoverableAttempt`
+are **demoted rather than deleted**: they are correct only for a transport that
+declares detached lifetime, and no such transport exists or is currently wanted.
+They stay unreachable by default because the distinction they encode is what
+makes an orphan-reaping path expressible if one is ever needed. "Resume"
+therefore means rerunning from a clean environment without repeating results
+whose inputs remain valid — reuse and staleness, not recovery.
 
 ## What can and cannot be reproduced without a farm
 
@@ -167,26 +91,6 @@ run it once on a submit host and it checks command availability, interactive
 admission, `bjobs -J` lookup, and — the important one — whether a running job
 actually disappears after its client is killed. If that check fails, the direct
 mode's design premise is wrong and needs revisiting.
-
-## Review findings and their resolution (2026-08-03)
-
-An adversarial review at `xhigh` over the eight unpushed commits returned 15
-findings; all are addressed. The distribution is the useful part: five in
-`lsf.py`, none at all in `planned.py`, `reuse.py`, `identity.py`, or
-`transport.py`.
-
-That is not chance. `lsf.py` was written against a fake this unit also wrote,
-from the same assumptions, so the fake agreed with the code's
-misunderstandings — `discover()` returned a handle shaped unlike `submit()`'s,
-and no test ever polled a discovered handle. The same pattern produced the
-worst finding: `FakeBatchStore.accept()` reset its own run counter, so the
-no-duplication assertions in the decisive failure injections could not fail,
-and this ledger cited them as evidence. Where feedback came from outside — a
-Plan document Hedloom Flow really produced, real process signals — the code was
-clean.
-
-**The standing lesson:** a fake authored alongside the code inherits its blind
-spots. Prefer evidence from something the unit did not write.
 
 ## Open
 
@@ -239,12 +143,19 @@ spots. Prefer evidence from something the unit did not write.
   `LSFInteractiveTransport.discover(...)` reports such a leftover but nothing
   acts on it automatically, and nothing should until a destructive `bkill` path
   has its own failure injection.
-- **Pooled mode.** Accepted in principle for many similar invocations, where
-  holding one process per job is the wrong shape. `LSFPooledTransport` is a
-  refusing boundary; the implementation should adopt
-  `dask_jobqueue.LSFCluster`, whose `death_timeout` and close-time `bkill`
-  already give owner-bound worker lifetime. Not started; `dask-jobqueue` is not
-  installed in this environment.
+- ~~**Pooled mode.**~~ **Delivered, and not in this unit.** Accepted for many
+  similar invocations, where holding one process per job is the wrong shape.
+  The implementation adopts `dask_jobqueue.LSFCluster` — whose `death_timeout`
+  and close-time `bkill` already give owner-bound worker lifetime — and lives in
+  `hedloom_run.pooled` as `kind = "lsf-pooled"`, because holding a second
+  cluster open is a readiness concern rather than an attempt-record one. This
+  unit's own `LSFPooledTransport` stays a **refusing boundary**, deliberately:
+  it names the seam so a caller cannot reach a half-implementation here.
+
+  What that leaves open is the lifetime difference. A pool's workers are batch
+  jobs and are *not* owner-bound the way `bsub -I` is; `LSFCluster.close()` and
+  the declared walltime are the only two things that stop them, and only the
+  walltime survives the submit host dying without warning.
 - **Cross-plan reuse.** Attempt identity includes `plan_id` and
   `invocation_id`, so two plans doing identical work each compute it. Dropping
   them would give a global content-addressed cache, which is more powerful and
@@ -284,5 +195,5 @@ spots. Prefer evidence from something the unit did not write.
 - Reconciliation needing to know which nodes were ready. That would mean the
   boundary is wrong and the engine question should be reopened.
 - Result reuse proving unsound in practice because input identity cannot be
-  captured honestly for simulator work. That would make rerun-everything the
+  captured honestly for long-running tool work. That would make rerun-everything the
   correct default and reduce the record to pure provenance.

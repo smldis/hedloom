@@ -14,7 +14,7 @@ The invariant:
     Nothing is spent until `submit`, and what runs is what the Plan showed.
 
 `study.plan` is complete and inspectable before submission — the manifesto's
-requirement to materialize jobs before spending simulation resources — and the
+requirement to materialize jobs before spending compute — and the
 operations that run are the ones the Plan names, because both come from the
 same declaration rather than from two files that must agree.
 """

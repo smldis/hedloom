@@ -53,7 +53,7 @@ def scale(factor=1, source=None, **kwargs):
 
 
 def explode(**kwargs):
-    raise RuntimeError("this corner does not converge")
+    raise RuntimeError("this point does not converge")
 
 
 def controlled(marker_dir, role, **kwargs):
@@ -298,7 +298,7 @@ def test_stopped_reports_have_the_same_shape_in_both_kernels(client, tmp_path):
 
 
 def test_a_failure_blocks_its_dependent_and_spares_the_others(client, tmp_path):
-    """One corner failing must not abandon the rest of a sweep."""
+    """One point failing must not abandon the rest of a sweep."""
 
     report = run_plan_graph(
         document(
@@ -722,7 +722,7 @@ def test_a_transport_that_cannot_reach_a_worker_is_refused_by_name(client, tmp_p
 
 
 def test_a_task_is_named_after_the_corner_it_runs():
-    """The point of watching a sweep is knowing which corner is running."""
+    """The point of watching a sweep is knowing which point is running."""
 
     from hedloom_exec.planned import plan_bundles
 
@@ -730,8 +730,8 @@ def test_a_task_is_named_after_the_corner_it_runs():
     keys = [_task_key(item) for item in items]
 
     # The operation comes first: Dask groups tasks by everything before the
-    # first "-" and learns a duration average per group. Keyed by corner, every
+    # first "-" and learns a duration average per group. Keyed by point, every
     # task was its own group and every estimate fell back to a flat 500 ms.
     assert keys[0].startswith("double-")
-    assert "seed" in keys[0], "the corner must still be readable in a dashboard"
+    assert "seed" in keys[0], "the point must still be readable in a dashboard"
     assert len(set(keys)) == len(keys)

@@ -43,8 +43,8 @@ met a real farm.
 
 The unit now also studies whether content-addressed identity derived from a
 Plan document makes rerunning honest. `examples/planned_characterization.py`
-is the current evidence: three corners and a reduction run, rerun with nothing
-recomputed, then one corner retuned so that it and the reduction rerun while
+is the current evidence: three points and a reduction run, rerun with nothing
+recomputed, then one point retuned so that it and the reduction rerun while
 its siblings are reused and the superseded results stay nameable.
 
 ## Current contracts
@@ -179,7 +179,7 @@ its siblings are reused and the superseded results stay nameable.
   observed. Requested, resolved, and observed are kept apart deliberately: a
   run that came out slow or misplaced is only explainable if they do not
   collapse into one fact. Placement never reaches the input digest, including
-  its options: retuning a corner's memory or moving it to another queue reuses
+  its options: retuning a point's memory or moving it to another queue reuses
   the result it already produced rather than recomputing it.
 - `hedloom_exec.watch` observes attempts it does not own. It reads attempt
   directories, asks LSF once per refresh about every live job rather than once

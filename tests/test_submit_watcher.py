@@ -45,12 +45,12 @@ class StopAfter:
         return self._remaining == 0
 
 
-def submitted_attempt(root: Path, identity: str = "hedloom-corner") -> None:
+def submitted_attempt(root: Path, identity: str = "hedloom-point") -> None:
     journal = AttemptJournal(root, identity)
     journal.append(
         "created",
         plan="study",
-        invocation="corner",
+        invocation="point",
         operation="simulate",
         input_digest="d" * 32,
     )
@@ -69,19 +69,19 @@ def test_the_poller_prints_each_transition_once_and_queue_time_on_running(
 
     submitted_attempt(tmp_path)
     reader = ReplayReader(
-        {"hedloom-corner": "pending"},
-        {"hedloom-corner": "pending"},
-        {"hedloom-corner": "running"},
+        {"hedloom-point": "pending"},
+        {"hedloom-point": "pending"},
+        {"hedloom-point": "running"},
     )
 
     _watch(tmp_path, reader, StopAfter(3))
 
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0] == "[watch] corner → pending"
-    assert lines[1].startswith("[watch] corner pending → running (")
+    assert lines[0] == "[watch] point → pending"
+    assert lines[1].startswith("[watch] point pending → running (")
     assert lines[1].endswith("s queued)")
     assert len(lines) == 2
-    assert status_of(tmp_path, "hedloom-corner").queue_seconds is not None
+    assert status_of(tmp_path, "hedloom-point").queue_seconds is not None
 
 
 def test_a_job_first_seen_running_still_prints_a_queue_measurement(tmp_path, capsys):
@@ -91,14 +91,14 @@ def test_a_job_first_seen_running_still_prints_a_queue_measurement(tmp_path, cap
 
     _watch(
         tmp_path,
-        ReplayReader({"hedloom-corner": "running"}),
+        ReplayReader({"hedloom-point": "running"}),
         StopAfter(1),
     )
 
     line = capsys.readouterr().out.strip()
-    assert line.startswith("[watch] corner → running (")
+    assert line.startswith("[watch] point → running (")
     assert line.endswith("s queued)")
-    assert status_of(tmp_path, "hedloom-corner").queue_seconds is not None
+    assert status_of(tmp_path, "hedloom-point").queue_seconds is not None
 
 
 @operation(outputs={"value": returned()})
@@ -108,7 +108,7 @@ def local_value():
 
 @study(default_policy=local())
 def local_study():
-    return {"value": local_value.named("corner")().value}
+    return {"value": local_value.named("point")().value}
 
 
 def test_a_local_study_never_calls_the_status_reader_and_keeps_completion_output(
@@ -126,7 +126,7 @@ def test_a_local_study_never_calls_the_status_reader_and_keeps_completion_output
     assert run.value == 7
     assert reader.calls == 0
     assert "[watch]" not in output
-    assert "corner" in output and "succeeded" in output
+    assert "point" in output and "succeeded" in output
     assert not any(
         thread.name == _WATCH_THREAD_NAME and thread.is_alive()
         for thread in threads()
@@ -189,7 +189,7 @@ def wait_for_watcher():
 
 @study(default_policy=local())
 def waiting_study():
-    return {"value": wait_for_watcher.named("corner")().value}
+    return {"value": wait_for_watcher.named("point")().value}
 
 
 class RefusingReader:
@@ -228,7 +228,7 @@ def test_a_status_reader_failure_prints_once_and_cannot_fail_the_run(
     assert reader.calls == 1
     assert output.count("[watch disabled]") == 1
     assert "bjobs is too old for -o" in output
-    assert "corner" in output and "succeeded" in output
+    assert "point" in output and "succeeded" in output
 
 
 def test_a_raised_run_still_stops_and_joins_its_poller(tmp_path, monkeypatch):

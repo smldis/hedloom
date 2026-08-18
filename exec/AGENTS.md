@@ -1,7 +1,7 @@
 # Hedloom Exec agent guidance
 
 Inherit the project guidance from `../AGENTS.md`. Before work here, read
-`../MANIFESTO.md`, `../ONTOLOGY.md`, local `ONTOLOGY.md`, local `README.md`,
+`../MANIFESTO.md`, `../ONTOLOME.md`, local `ONTOLOME.md`, local `README.md`,
 local `unit.toml`, and `DECISIONS.md`, then inspect the implementation and
 tests.
 
@@ -39,8 +39,21 @@ is correct iff identity implies inputs." "An attempt may be claimed only if
 nothing was accepted before." If the sentence cannot be written, the design is
 not understood yet, and writing it is cheaper than discovering that later.
 
-This replaces the heavier work-order ceremony recorded as superseded in
-`DECISIONS.md`. It is meant to cost seconds. Reasoning depth per step is not
+This replaces the heavier work-order ceremony, whose retirement is recorded in
+the unpublished `design/development-process-2026-08-03.md`. It is meant to cost
+seconds. Reasoning depth per step is not
 what has caught real errors in this project — contact with the requirement and
 with running code is — so keep the loop short rather than making each step
 more elaborate.
+
+## Where to read, and what to trust
+
+`ONTOLOME.md` states this unit's contracts and is repo-native; `DECISIONS.md` is
+a published, living ledger of what is settled, what is open, and what would
+change our minds. Both are maintained against the code.
+`design/` is not maintained and not published — it records how the unit was
+built on a date. Do not cite it as evidence of current behaviour.
+
+One name collision worth holding: this unit's `LSFPooledTransport` is a refusing
+boundary and stays one. The pooled implementation is
+`hedloom_run.pooled.LSFPooledTransport`, in a different unit, for a reason.

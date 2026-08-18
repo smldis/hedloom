@@ -74,12 +74,12 @@ dashboard, and failure isolation are untested against anything but fakes.
   one that must stay a singleton has to be built on the worker rather than
   passed to it.
 - Task keys are named after the authored key, so an operator watching a sweep
-  sees corners rather than digests. Tasks are submitted impure: reuse is
+  sees points rather than digests. Tasks are submitted impure: reuse is
   `hedloom-exec`'s decision against declared inputs, never Dask's against call
   signatures.
 - `transports` maps a policy name to the substrate providing it. Each
   invocation lands on the placement Hedloom Flow already resolved for it, so one
-  corner may take a dedicated LSF job while cheap reductions stay local. A
+  point may take a dedicated LSF job while cheap reductions stay local. A
   placement no transport provides is fatal: running work somewhere other than
   where it was asked to run would change what a study means.
 - A single `transport` provides every placement, which suits a uniform run and
@@ -101,7 +101,7 @@ dashboard, and failure isolation are untested against anything but fakes.
 - `site.fingerprints(document)` identifies each declared source by its
   **content**, and both kernels pass the result to `plan_bundles`. This closes a
   real defect: a source's declared address does not change when the file at it
-  is edited, so before this an edited netlist was invisible and a study reported
+  is edited, so before this an edited input file was invisible and a study reported
   results computed from a file that no longer existed in that form. Content
   rather than mtime, because an authored input is kilobytes and a hash does not
   churn on `git checkout`; a directory source covers everything under it; a
@@ -132,7 +132,7 @@ dashboard, and failure isolation are untested against anything but fakes.
 - The graph kernel blocks *dependents*: a dependent of failed work returns a
   blocked outcome rather than raising. Whether independent branches also stop
   is now the caller's, through `stop_on_failure`, which defaults to `True`
-  because the usual answer to a failed corner is to debug it rather than to
+  because the usual answer to a failed point is to debug it rather than to
   spend the farm on the other forty-nine. With it, the first failure cancels
   every task that has not acquired a worker thread, waits for the ones already
   executing, and reports the rest as blocked. With `stop_on_failure=False` the
@@ -166,8 +166,8 @@ it is the cluster's thread count, and under the sequential one there is none.
 
 It does not own the cluster. It neither creates, sizes, nor tears one down, and
 it does not report LSF's view of a job: with `bsub -I` a transport blocks from
-submission to terminal, so nothing here distinguishes a corner pending in the
-queue from one simulating. That observation belongs to a watcher over the
+submission to terminal, so nothing here distinguishes a point pending in the
+queue from one running. That observation belongs to a watcher over the
 attempt records, recorded as wanted in `docs/vision/open-concepts.md`.
 
 ## Child composition

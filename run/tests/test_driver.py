@@ -8,7 +8,7 @@ from hedloom_exec.transport import InProcessTransport
 from hedloom_run.driver import run_plan
 
 
-def corner(key, temperature):
+def point(key, temperature):
     return {
         "id": f"invoke:{key}",
         "authored_key": key,
@@ -42,7 +42,7 @@ def summary(members):
 
 
 def document(temperatures=(27, 125), stragglers=()):
-    """``stragglers`` are corners nothing summarises, so nothing depends on them.
+    """``stragglers`` are points nothing summarises, so nothing depends on them.
 
     They are what tells "this run stopped" apart from "this dependent could not
     run": a failure always blocks whatever named its result, and only
@@ -64,9 +64,9 @@ def document(temperatures=(27, 125), stragglers=()):
             },
         ],
         "invocations": [
-            corner(key, value) for key, value in zip(keys, temperatures)
+            point(key, value) for key, value in zip(keys, temperatures)
         ] + [summary(keys)] + [
-            corner(key, value) for key, value in stragglers
+            point(key, value) for key, value in stragglers
         ],
     }
 
@@ -212,5 +212,5 @@ def test_a_failed_corner_is_retried_on_the_next_run(tmp_path):
     second = run_plan(document(), transport(), plan_id="p", root=str(tmp_path))
     assert second.succeeded
     by_key = {item.authored_key: item for item in second.outcomes}
-    assert by_key["tt"].reused, "the corner that worked must not rerun"
+    assert by_key["tt"].reused, "the point that worked must not rerun"
     assert by_key["ss"].ran

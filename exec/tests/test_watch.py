@@ -45,7 +45,7 @@ def submitted_attempt(root, identity="hedloom-abc", transport="lsf-interactive")
     """An attempt that has been submitted and has not concluded."""
 
     journal = AttemptJournal(root, identity)
-    journal.append("created", plan="study", invocation="invoke:corner-tt",
+    journal.append("created", plan="study", invocation="invoke:point-tt",
                    operation="simulate", input_digest="d" * 32)
     journal.append("submit_intent", transport=transport)
     journal.append("submit_receipt", handle={"identity": identity})
@@ -64,7 +64,7 @@ def test_a_submitted_attempt_is_live_and_a_finished_one_is_not(tmp_path):
 
 
 def test_one_call_answers_for_every_job(tmp_path):
-    """A process per corner per refresh would cost more than the work."""
+    """A process per point per refresh would cost more than the work."""
 
     for index in range(5):
         submitted_attempt(tmp_path, f"hedloom-{index}")
@@ -240,5 +240,5 @@ def test_the_view_names_the_invocation_rather_than_the_digest(tmp_path):
     rows = observe(tmp_path, LSFStatusReader(FakeBjobs([("hedloom-abc", "RUN")])))
 
     text = render(rows)
-    assert "invoke:corner-tt" in text
+    assert "invoke:point-tt" in text
     assert "running" in text

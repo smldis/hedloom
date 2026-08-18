@@ -1,6 +1,6 @@
 """A pooled LSF cluster, driven against the fake farm.
 
-`docs/pooled-placement-plan.md` sets out a four-step spike and says each step
+`../design/pooled-placement-plan.md` sets out a four-step spike and says each step
 is falsifiable on its own. Steps 1 and 2 are here — two clusters in one
 process, and a `WorkerPlugin` that builds the pooled client where it cannot be
 shipped — together with the thing that had blocked step 3: a substrate to run

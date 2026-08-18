@@ -36,7 +36,7 @@ from hedloom_flow.model import (
 )
 
 
-DECK = ArtifactContract("spice-deck")
+MODEL = ArtifactContract("model-input")
 RAW = ArtifactContract("simulation-raw")
 REPORT = ArtifactContract("measurement-report")
 
@@ -65,8 +65,8 @@ def source(identifier: str, locator: str, artifact: ArtifactContract) -> Artifac
 def branching_plan() -> Plan:
     simulate = OperationDefinition(
         identity=SIMULATE_ID,
-        inputs=(InputContract("deck", DECK),),
-        config=(ConfigContract("corner", str),),
+        inputs=(InputContract("model", MODEL),),
+        config=(ConfigContract("point", str),),
         outputs=(OutputContract("raw", RAW),),
         default_policy=named_policy("lsf")(queue="short"),
     )
@@ -75,20 +75,20 @@ def branching_plan() -> Plan:
         inputs=(InputContract("left", RAW), InputContract("right", RAW)),
         outputs=(OutputContract("report", REPORT),),
     )
-    deck_source = source("source:deck", "inputs/amplifier.spice", DECK)
+    deck_source = source("source:model", "inputs/amplifier.in", MODEL)
     tt = Invocation(
         id="invoke:tt",
         operation=SIMULATE_ID,
-        inputs=(InputBinding("deck", ArtifactSourceReference(deck_source.id)),),
-        config=(ConfigBinding("corner", "tt"),),
+        inputs=(InputBinding("model", ArtifactSourceReference(deck_source.id)),),
+        config=(ConfigBinding("point", "tt"),),
         policy=simulate.default_policy,
         boundary_id="flow:branches",
     )
     ss = Invocation(
         id="invoke:ss",
         operation=SIMULATE_ID,
-        inputs=(InputBinding("deck", ArtifactSourceReference(deck_source.id)),),
-        config=(ConfigBinding("corner", "ss"),),
+        inputs=(InputBinding("model", ArtifactSourceReference(deck_source.id)),),
+        config=(ConfigBinding("point", "ss"),),
         policy=simulate.default_policy,
         boundary_id="flow:branches",
     )
@@ -263,7 +263,7 @@ def test_materialization_values_are_deeply_immutable_canonical_data_only():
     }
     assert data["sources"][0]["address"] == {
         "address_space": "repository-relative",
-        "locator": "inputs/amplifier.spice",
+        "locator": "inputs/amplifier.in",
     }
     assert data["operations"][0]["outputs"][0]["can_materialize_as"] is None
     with pytest.raises(ContractError, match="schema_version must be 3"):
@@ -293,7 +293,7 @@ def test_materialization_values_are_deeply_immutable_canonical_data_only():
         ("materialized_as", None, "invalid_source_materialization"),
         (
             "address",
-            ArtifactAddress("other-space", "inputs/amplifier.spice"),
+            ArtifactAddress("other-space", "inputs/amplifier.in"),
             "source_address_space_mismatch",
         ),
     ],
@@ -313,7 +313,7 @@ def test_plan_independently_rejects_malformed_source_declarations(
 
 
 def test_reference_value_classes_are_fixed_and_canonical():
-    source_reference = ArtifactSourceReference("source:deck")
+    source_reference = ArtifactSourceReference("source:model")
     output_reference = OutputReference("invoke:merge", "report")
 
     assert source_reference.value_class == "artifact"
@@ -495,7 +495,7 @@ def test_collection_member_position_defects_are_rejected(mutate, expected_code):
                     replace(
                         plan.invocations[0],
                         inputs=(
-                            InputBinding("deck", ArtifactSourceReference("source:absent")),
+                            InputBinding("model", ArtifactSourceReference("source:absent")),
                         ),
                     ),
                     *plan.invocations[1:],

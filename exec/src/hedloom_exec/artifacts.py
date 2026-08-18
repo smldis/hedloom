@@ -1,14 +1,14 @@
 """Outputs that are files, on a filesystem both sides can already see.
 
 On a shared store, materializing an output does not mean moving bytes. The
-simulator writes where it writes; the next invocation opens the same path. What
+a tool writes where it writes; the next invocation opens the same path. What
 has to be durable is the *address* and enough about the file to tell whether it
 is still the one that was produced.
 
 Three kinds of output are supported, because real commands produce all three:
 
 * ``{"path": "sim.raw"}`` — a file the command wrote itself, relative to its
-  working directory. This is the ordinary case for a simulator.
+  working directory. This is the ordinary case for a batch tool.
 * ``{"stream": "stdout"}`` — the captured stream, for tools whose result really
   is what they printed.
 * ``{"value": True}`` — the return value of an in-process implementation.

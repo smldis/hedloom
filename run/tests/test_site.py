@@ -1,7 +1,7 @@
 """Sources are identified by what is at the address, not only by the address.
 
 The first test here is the one that matters. Before it, editing an input
-netlist in place changed no declared fact, so every downstream invocation was
+input file in place changed no declared fact, so every downstream invocation was
 reused and a study reported results computed from a file that no longer existed
 in that form — a plausible answer that could be false, which this project
 treats as a defect rather than a limitation.
@@ -16,7 +16,7 @@ from hedloom_run.driver import run_plan
 from hedloom_run.site import Site, SiteError, fingerprint_file
 
 
-def read(deck=None, **kwargs):
+def read(model=None, **kwargs):
     """A source reference resolves to nothing here; the run still reads it."""
 
     return "read"
@@ -32,9 +32,9 @@ def document(source_id="source:1"):
         "sources": [
             {
                 "id": source_id,
-                "artifact": {"kind": "netlist"},
+                "artifact": {"kind": "input file"},
                 "address": {"address_space": "repo", "locator": "ota.cir"},
-                "materialized_as": {"codec": {"name": "spice", "version": "1"}},
+                "materialized_as": {"codec": {"name": "solve", "version": "1"}},
             }
         ],
         "operations": [
@@ -50,7 +50,7 @@ def document(source_id="source:1"):
                 "inputs": [
                     {
                         "cardinality": "scalar",
-                        "name": "deck",
+                        "name": "model",
                         "reference": {"type": "source", "source_id": source_id},
                     }
                 ],
@@ -89,7 +89,7 @@ def test_editing_a_source_in_place_invalidates_the_work_that_read_it(
     second = run(document(), study, tmp_path)
 
     assert first.outcomes[0].ran
-    assert not second.outcomes[0].reused, "an edited netlist must rerun the study"
+    assert not second.outcomes[0].reused, "an edited input file must rerun the study"
     assert first.outcomes[0].input_digest != second.outcomes[0].input_digest
 
 
@@ -321,7 +321,7 @@ def test_a_relative_root_is_anchored_before_anything_uses_it(tmp_path, monkeypat
     A command runs *in* its attempt's workspace and is told where to write by a
     path built from that same workspace. Absolute, those agree. Relative, the
     command resolves the path again against the directory it was just placed
-    in and writes nowhere — surfacing as a simulator that could not open its
+    in and writes nowhere — surfacing as a tool that could not open its
     own output file. `from_file` already anchors; this closes the same gap for
     a Site built in Python.
     """

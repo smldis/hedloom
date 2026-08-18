@@ -224,10 +224,10 @@ def test_an_operation_with_no_bound_body_refuses(tmp_path):
 
 
 def test_a_workspace_offers_only_declared_file_outputs(tmp_path):
-    workspace = Workspace(tmp_path, {"raw": {"path": "corner.raw"},
+    workspace = Workspace(tmp_path, {"raw": {"path": "point.raw"},
                                      "value": {"value": True}})
 
-    assert workspace.raw == tmp_path / "corner.raw"
+    assert workspace.raw == tmp_path / "point.raw"
     with pytest.raises(AttributeError):
         workspace.value
     with pytest.raises(AttributeError):
@@ -264,7 +264,7 @@ def reading_site(tmp_path, fixtures):
 def test_a_declared_source_reaches_the_body_that_asked_for_it(reading_site):
     """A study may start from a file it did not write.
 
-    Every real study does: a netlist, a model card, a corner file someone else
+    Every real study does: a input file, a model card, a point file someone else
     owns. Until sources were seeded this body was handed None, and the only way
     to read an external file was to write its path into a second file by hand.
     """
@@ -296,7 +296,7 @@ def test_an_unedited_source_reuses_what_read_it(reading_site):
 
 
 def test_a_command_renders_as_something_an_operator_can_read():
-    assert str(shell("ngspice", "-b", Path("/tmp/x.cir"))) == "ngspice -b /tmp/x.cir"
+    assert str(shell("awk", "-f", Path("/tmp/x.awk"))) == "awk -f /tmp/x.awk"
     assert isinstance(shell("true"), Shell)
 
 
@@ -385,7 +385,7 @@ def test_dask_globals_survive_a_session(site):
            outputs={"note": file("note.txt", kind="text-file")})
 def refuses_one_word(out, *, word: str) -> None:
     if word == "bad":
-        raise RuntimeError("this corner fails")
+        raise RuntimeError("this point fails")
     out.note.write_text(word)
 
 

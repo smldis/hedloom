@@ -43,10 +43,10 @@ from hedloom_exec.durability import Durability, execute
 from hedloom_exec.reuse import input_digest, stale_attempts
 
 bundle = {
-    "operation": "simulate",
-    "command": ["ngspice", "-b", "tt.spice"],
-    "inputs": {"deck": "sha256:aaa"},          # what the result depends on
-    "identity_env": {"PDK_ROOT": "/pdk/sky130A"},
+    "operation": "solve",
+    "command": ["solve", "-b", "tt.in"],
+    "inputs": {"model": "sha256:aaa"},         # what the result depends on
+    "identity_env": {"TOOL_ROOT": "/opt/toolchain/2026.1"},
 }
 
 execute(lsf, bundle, durability=Durability.RECORDED, root="attempts",
@@ -54,7 +54,7 @@ execute(lsf, bundle, durability=Durability.RECORDED, root="attempts",
 ```
 
 Queue, walltime, cores, and general `env` deliberately do **not** participate,
-so retuning resources never invalidates a result. Change the deck, and the
+so retuning resources never invalidates a result. Change the model, and the
 invocation lands on a new identity and reruns; the previous result stays on
 disk and `stale_attempts(...)` can name it as superseded rather than having
 quietly overwritten it.
@@ -86,15 +86,15 @@ PYTHONPATH=src:../flow/src python examples/planned_characterization.py
 
 ```
 First run — nothing is published yet
-  ran     corner-tt    23f06873c974
-  ran     corner-ss    29a9d0839b44
-  ran     corner-ff    9c5522647f21
+  ran     point-tt    23f06873c974
+  ran     point-ss    29a9d0839b44
+  ran     point-ff    9c5522647f21
   ran     summary      9ce639729b3e
 
 Third run — ss retuned to 150C
-  reused  corner-tt    23f06873c974
-  ran     corner-ss    ee96c3bf59dc
-  reused  corner-ff    9c5522647f21
+  reused  point-tt    23f06873c974
+  ran     point-ss    ee96c3bf59dc
+  reused  point-ff    9c5522647f21
   ran     summary      65a90b965369
 ```
 
@@ -103,7 +103,7 @@ The coupling is to the Plan *document*, not the package: nothing imports
 the same document works — schema 2 or 3, both of which
 `plan_bundles` accepts. An invocation's digest changes exactly when
 its own declaration or any ancestor's does, which is what makes the edited
-corner and its reduction rerun while the untouched corners are reused.
+point and its reduction rerun while the untouched points are reused.
 
 ## Outputs that are files
 
@@ -114,14 +114,14 @@ files matter; the rest stays as unnamed evidence:
 execute(
     lsf,
     {
-        "command": ["ngspice", "-b", "corner_tt.spice"],
-        "outputs": {"raw": {"path": "corner_tt.raw"}},
+        "command": ["solve", "-b", "point_tt.in"],
+        "outputs": {"raw": {"path": "point_tt.out"}},
     },
     durability=Durability.RECORDED,
     root="attempts",
-    workspace_root="/nfs/studies/ota-pvt",
-    plan_id="ota-pvt",
-    invocation_id="corner-tt",
+    workspace_root="/nfs/studies/sweep",
+    plan_id="sweep",
+    invocation_id="point-tt",
 )
 ```
 
@@ -149,11 +149,11 @@ lsf = LSFInteractiveTransport(
 )
 execute(
     lsf,
-    {"command": ["ngspice", "-b", "corner_tt.spice"], "cwd": "run/tt"},
+    {"command": ["solve", "-b", "point_tt.in"], "cwd": "run/tt"},
     durability=Durability.RECORDED,
     root="attempts",
-    plan_id="ota-pvt",
-    invocation_id="corner-tt",
+    plan_id="sweep",
+    invocation_id="point-tt",
 )
 ```
 
@@ -162,7 +162,7 @@ the placement the Plan resolved for it, which the driver puts on the bundle:
 
 ```python
 {
-    "command": ["ngspice", "-b", "corner_ss.spice"],
+    "command": ["solve", "-b", "point_ss.in"],
     "placement": {
         "requested": {
             "name": "lsf-direct",
@@ -185,7 +185,7 @@ configured, and check it with `lsf_preflight.py --licence <name>`. An option
 this transport cannot express as a `bsub` argument refuses before submission
 rather than being dropped, because running the work without a resource it asked
 for is not the same experiment. None of it reaches the input digest: retuning a
-corner's memory reuses the result it already produced.
+point's memory reuses the result it already produced.
 
 Interactive submission is the mechanism, not a concession to human use: LSF
 ties the job to the submitting client, so it cannot outlive the work that
@@ -195,7 +195,7 @@ as the bound that survives everything else failing.
 
 One job per invocation costs one queue dispatch, which is negligible for work
 that runs for minutes and ruinous for work that runs for seconds. It buys a
-per-corner resource request, `bkill`, logs, accounting, licence arbitration by
+per-invocation resource request, `bkill`, logs, accounting, licence arbitration by
 LSF, and failure isolation. Short repetitive steps are what belong on a pooled
 `dask_jobqueue.LSFCluster` instead; `LSFPooledTransport` marks that boundary and
 currently refuses.
@@ -222,6 +222,6 @@ mode's premise is wrong.
 
 Worker pools, placement enforcement, retries, and graph scheduling are outside
 this unit — see
-[`ONTOLOGY.md`](ONTOLOGY.md) for the owned boundary and
+[`ONTOLOME.md`](ONTOLOME.md) for the owned boundary and
 [`DECISIONS.md`](DECISIONS.md) for what is settled, what is open, and what
 would change our minds.

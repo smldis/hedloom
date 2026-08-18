@@ -50,7 +50,7 @@ PYTHONPATH=src python examples/characterization.py | python -m json.tool
 The base distribution keeps `dependencies = []`: `import hedloom_flow` and the
 planning-only characterization command do not require Dask. To inspect the
 non-reexported local lowering experiment, select the exact optional dependency
-and run its simulator-free example explicitly:
+and run its tool-free example explicitly:
 
 ```console
 python -m pip install -e '.[dask]'
@@ -78,7 +78,7 @@ publication, materialized operation outputs, and runtime artifact values are
 also outside it. The archived sequential-flow convenience is inactive
 historical material, not an active API or backlog.
 
-See [`ONTOLOGY.md`](ONTOLOGY.md) for the owned boundary,
+See [`ONTOLOME.md`](ONTOLOME.md) for the owned boundary,
 [`docs/architecture.md`](docs/architecture.md) for the graduated architecture
 adapted to current development status, [`docs/index.md`](docs/index.md) for the
 component documentation entry point, and

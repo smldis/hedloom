@@ -23,7 +23,7 @@ from examples import characterization
 
 
 DESIGN = artifact("analog-design-description")
-CORNER_METRICS = artifact("corner-metrics")
+CORNER_METRICS = artifact("point-metrics")
 SUMMARY = artifact("characterization-summary")
 JSON_CODEC = codec("json", encoding="utf-8")
 REPOSITORY_JSON = materialization(
@@ -42,11 +42,11 @@ def _source(locator, artifact_contract):
 
 
 @pytest.mark.parametrize(
-    ("include_extremes", "expected_corners"),
+    ("include_extremes", "expected_points"),
     [(False, ("tt",)), (True, ("tt", "ss", "ff"))],
 )
 def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
-    include_extremes, expected_corners
+    include_extremes, expected_points
 ):
     normalized = characterization.build_characterization_plan(
         include_extremes=include_extremes
@@ -55,9 +55,9 @@ def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
     assert normalized.validate() is normalized
     assert normalized.schema_version == 3
     assert len(normalized.sources) == 1
-    assert len(normalized.invocations) == len(expected_corners) + 1
-    assert len(normalized.edges) == len(expected_corners)
-    assert len(normalized.boundaries) == len(expected_corners) + 1
+    assert len(normalized.invocations) == len(expected_points) + 1
+    assert len(normalized.edges) == len(expected_points)
+    assert len(normalized.boundaries) == len(expected_points) + 1
 
     roots = [
         boundary for boundary in normalized.boundaries if boundary.parent_id is None
@@ -72,7 +72,7 @@ def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
     } == {root.id}
     assert {boundary.authored_key for boundary in normalized.boundaries} == {
         "characterize-design",
-        *(f"corner-{corner}" for corner in expected_corners),
+        *(f"point-{point}" for point in expected_points),
     }
 
     summary = next(
@@ -85,17 +85,17 @@ def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
     assert binding.cardinality == "collection"
 
     invocations_by_id = {item.id: item for item in normalized.invocations}
-    bound_corners = []
+    bound_points = []
     producer_boundary_ids = []
     for reference in binding.references:
         producer = invocations_by_id[reference.invocation_id]
-        bound_corners.append(
-            next(item.value for item in producer.config if item.name == "corner")
+        bound_points.append(
+            next(item.value for item in producer.config if item.name == "point")
         )
-        assert producer.authored_key == "estimate-corner-metrics"
+        assert producer.authored_key == "estimate-point-metrics"
         producer_boundary_ids.append(producer.boundary_id)
-    assert tuple(bound_corners) == expected_corners
-    assert len(set(producer_boundary_ids)) == len(expected_corners)
+    assert tuple(bound_points) == expected_points
+    assert len(set(producer_boundary_ids)) == len(expected_points)
     assert set(producer_boundary_ids) == {
         boundary.id
         for boundary in normalized.boundaries
@@ -106,7 +106,7 @@ def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
         normalized.edges, key=lambda edge: edge.target_member_index
     )
     assert [edge.target_member_index for edge in positioned_edges] == list(
-        range(len(expected_corners))
+        range(len(expected_points))
     )
     assert [edge.source for edge in positioned_edges] == list(binding.references)
     assert all(edge.target_invocation_id == summary.id for edge in positioned_edges)
@@ -120,7 +120,7 @@ def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
     assert all(edge.source.value_class == "ephemeral" for edge in positioned_edges)
 
     assert {output.name for output in normalized.outputs} == {
-        *(f"corners__{corner}" for corner in expected_corners),
+        *(f"points__{point}" for point in expected_points),
         "summary",
     }
     assert json.loads(normalized.to_json()) == normalized.to_data()
@@ -242,7 +242,7 @@ def test_foreign_source_only_and_incompatible_values_fail_before_finish_returns(
         with pytest.raises(BindingError, match="expects artifact kind"):
             summarize(local_source)
         with pytest.raises(BindingError, match="artifact inputs must be"):
-            summarize("results/corner.json")
+            summarize("results/point.json")
         local_result = estimate(local_source)
 
     with pytest.raises(BindingError, match="different plan"):
@@ -272,10 +272,10 @@ def _mapping_order_plan(*, reverse_inputs):
     @operation(
         name="acceptance.mapping_order.estimate",
         inputs={"design": DESIGN},
-        config={"corner": parameter(str)},
+        config={"point": parameter(str)},
         outputs={"metrics": CORNER_METRICS},
     )
-    def estimate(design, *, corner):
+    def estimate(design, *, point):
         raise AssertionError("must not run")
 
     reducer_inputs = (
@@ -294,8 +294,8 @@ def _mapping_order_plan(*, reverse_inputs):
 
     with plan() as draft:
         design = _source("inputs/design.json", DESIGN)
-        left = estimate(design, corner="ss")
-        right = estimate(design, corner="ff")
+        left = estimate(design, point="ss")
+        right = estimate(design, point="ff")
         summary = reduce(left=left, right=right)
     return draft.finish(outputs={"summary": summary})
 

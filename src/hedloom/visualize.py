@@ -9,7 +9,7 @@ that needs no execution at all: a picture.
 The distinction is kept by construction. Lowering here binds every operation to
 a stand-in that **refuses to run**, so the graph can be drawn, walked, and
 counted, and computing it raises rather than producing a number nobody
-simulated. Computing one surfaces as the lowerer's own
+computed. Computing one surfaces as the lowerer's own
 `InvocationExecutionError`, naming the invocation, with `RefusedComputation` as
 its cause. `submit()` remains the only way a study runs.
 
@@ -21,7 +21,7 @@ Three views, because they answer different questions:
   on a phone.
 * `render(..., view="dask")` draws the lowering instead — task keys, source
   thunks, output projections. What a scheduler would see, and not somewhere a
-  corner can be found by name.
+  invocation can be found by name.
 * `structure(...)` returns the same authored view as plain nodes and edges, for
   a renderer that has neither graphviz nor Dask.
 """
@@ -101,7 +101,7 @@ def render(
     ``view="dask"`` draws the lowering instead — task keys, source thunks and
     output projections, the shape a scheduler would see. A different question,
     and much less legible: its nodes are named for the lowering's own key
-    namespace, so a corner is not findable in it.
+    namespace, so an invocation is not findable in it.
 
     ``rankdir`` is ``"TB"`` (tall, reads on a phone) or ``"LR"`` (wide, reads
     on a monitor). ``responsive`` drops the fixed pixel size graphviz writes
@@ -234,7 +234,7 @@ def structure(study: Any) -> dict[str, Any]:
     """The Plan as nodes and edges, for a renderer that has neither.
 
     Read from the Plan document rather than from the lowering, because this is
-    the view an operator asks for: which corner, which operation, which
+    the view an operator asks for: which invocation, which operation, which
     placement — the vocabulary the study was authored in, not the vocabulary a
     scheduler sees. It also works for plans the local lowering refuses, which
     is every plan bound for a farm.

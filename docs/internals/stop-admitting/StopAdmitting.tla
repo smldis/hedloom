@@ -34,7 +34,7 @@
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-    Tasks,             \* one per invocation; independent, as a sweep's corners are
+    Tasks,             \* one per invocation; independent, as a sweep's points are
     ExecutingTest,     \* "call-stack" | "assigned"
     PreserveInFlight,  \* TRUE (shipped) | FALSE (mutation)
     BlockedFromRecord, \* FALSE (shipped) | TRUE: classify from the durable record
@@ -209,7 +209,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 (* Properties. *)
 
 (* Every invocation gets a line. A sweep's report is in plan order and must  *)
-(* be total, or the run says nothing about a corner it was asked to run.     *)
+(* be total, or the run says nothing about a point it was asked to run.      *)
 ReportIsTotal ==
     (pc = "done") => \A t \in Tasks : Reported(t)
 

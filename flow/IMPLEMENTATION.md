@@ -29,7 +29,7 @@ submission or remote runtime
 | P1.1 | Move the complete tracked prototype to `hedloom-flow/` | complete | Source, tests, example, README, and both trackers retain their content under the direct-child path; unchanged implementation/test/example blobs match the committed originals |
 | P1.2 | Establish the child boundary | complete | Local ontology, inherited/narrowed agent guidance, unit manifest, Python 3.10+ `hedloom-flow` packaging, and composable docs contract added |
 | P1.3 | Own test configuration in packaging | complete | `pyproject.toml` carries the former Python path and test-path settings; `pytest.ini` removed |
-| P1.4 | Archive sequential convenience | complete | [Inactive archive record](docs/archive/sequential-flow-convenience.md) states origin, user status/date, rationale, excluded APIs, and reactivation trigger |
+| P1.4 | Archive sequential convenience | complete | [Inactive archive record](design/sequential-flow-convenience.md) states origin, user status/date, rationale, excluded APIs, and reactivation trigger |
 | P1.5 | Promote root composition contracts | complete | Root unit declaration, developer requirements, README, ontology, and four-child integration expectation updated without adding runtime authority |
 | P1.6 | Verify the promoted slice | complete | 25 focused tests pass; four-child tree and full composed tests pass; wheel builds; aggregate docs discovery/staging includes Hedloom Flow; reference scans are clean |
 
@@ -107,7 +107,7 @@ dialecticH run evidence.
 ## Inactive historical material
 
 - sequential-flow editing convenience is inactive historical
-  [archive material](docs/archive/sequential-flow-convenience.md), not a work
+  [archive material](design/sequential-flow-convenience.md), not a work
   item or backlog;
 
 ## Explicit runtime stubs and exclusions
@@ -323,7 +323,7 @@ dialecticH run evidence.
   question positively for static planning and initially recommended remaining
   outside `unit.toml` until a later boundary review. The user direction recorded
   below superseded that location recommendation. The sequential convenience is
-  now inactive [archive material](docs/archive/sequential-flow-convenience.md);
+  now inactive [archive material](design/sequential-flow-convenience.md);
   runtime work remains unauthorized.
 - **Superseding direction (2026-08-03):** the user selected `hedloom-flow/` as the
   component's actual location and authorized continued core development. Phase

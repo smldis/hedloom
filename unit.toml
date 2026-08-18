@@ -3,7 +3,7 @@ schema_version = 1
 [unit]
 id = "hedloom"
 name = "Hedloom"
-ontology = "ONTOLOGY.md"
+ontology = "ONTOLOME.md"
 children = ["flow", "exec", "run"]
 
 [workflows]
@@ -12,4 +12,4 @@ test = ["python", "-m", "pytest", "-q", "tests"]
 [docs]
 source = "docs"
 index = "index.md"
-resources = ["examples", "ONTOLOGY.md"]
+resources = ["examples"]

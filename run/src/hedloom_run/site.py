@@ -17,14 +17,14 @@ The invariant:
 
 `hedloom_exec` identifies a source by its declared address and codec, never by what
 is at that address — deliberately, since it resolves no addresses and should
-not start. The consequence was that editing an input netlist in place changed
+not start. The consequence was that editing an input file in place changed
 nothing: every downstream invocation was reused, and a study reported results
 computed from a file that no longer existed in that form. A run knows what an
 address space means, so a run is where the fingerprint belongs.
 
 Sources are **hashed**, not stat'ed. The register's reason for preferring
 `mtime` plus size was the cost of hashing multi-GB raw *outputs*; an authored
-input is a netlist or a JSON document, and hashing kilobytes costs nothing
+input is a small text or JSON document, and hashing kilobytes costs nothing
 while being immune to the mtime churn an ordinary `git checkout` causes.
 Anything implausibly large for an authored input falls back to size and mtime,
 and says which it used.
@@ -122,11 +122,11 @@ class Site:
                              "workers": 20, "max_jobs": 20}}
 
     The two LSF kinds differ in what one farm job *is*. `lsf-interactive`
-    submits one `bsub -I` per invocation, so a corner is an individually
+    submits one `bsub -I` per invocation, so each one is an individually
     visible, cancellable, accountable job. `lsf-pooled` holds `workers` jobs
     open and routes many invocations through them, paying queue dispatch once
-    per worker instead of once per corner — and giving up everything that needs
-    a corner to be a job. See `hedloom_run.pooled` for when that trade is worth
+    per worker instead of once per invocation — and giving up everything that
+    needs an invocation to be a job. See `hedloom_run.pooled` for when that trade is worth
     taking; it is a per-operation judgement, not a site-wide one, which is why
     both kinds normally appear in the same profile.
 
@@ -194,7 +194,7 @@ class Site:
         by a path built from that same workspace. Absolute, those agree.
         Relative, the command resolves the path a second time against the
         directory it was just placed in, and writes nowhere — reported as a
-        simulator that could not open its own output file, which is a long way
+        tool that could not open its own output file, which is a long way
         from the truth.
 
         `from_file` already anchors relative paths to the profile directory, so
@@ -502,7 +502,7 @@ def _transports_from(
         kind = settings.get("kind")
         # The vocabulary is per kind, because the kinds genuinely differ. A
         # pool cannot honour `licences` or `resources`: its workers are claimed
-        # before any invocation is routed to them, so a per-corner request
+        # before any invocation is routed to them, so a per-invocation request
         # would be accepted and then silently ignored, which is worse than
         # being refused.
         vocabulary = POOL_OPTIONS if kind == "lsf-pooled" else PLACEMENT_OPTIONS

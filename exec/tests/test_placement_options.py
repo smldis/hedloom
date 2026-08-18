@@ -1,7 +1,7 @@
 """What one invocation asks LSF for, resolved per invocation.
 
-The Plan already decided that this corner needs a large-memory queue and that
-one needs a simulator licence. These tests are where that decision becomes
+The Plan already decided that this point needs a large-memory queue and that
+one needs a tool licence. These tests are where that decision becomes
 `bsub` arguments on that job and no other.
 
 What they can establish is the request: which flags are built, which options
@@ -16,7 +16,7 @@ from hedloom_exec.durability import Durability, execute
 from hedloom_exec.lsf import CommandResult, LSFInteractiveTransport
 from hedloom_exec.transport import SubmissionRefused
 
-COMMAND = ["simulate", "--corner", "tt"]
+COMMAND = ["simulate", "--point", "tt"]
 
 
 class FakeRunner:
@@ -209,7 +209,7 @@ def test_an_invocation_that_declares_nothing_still_gets_the_site_defaults():
 def test_retuning_the_resource_request_still_reuses_the_result(tmp_path):
     """Placement is not identity, now that placement actually reaches the job.
 
-    A corner that turned out to need more memory is the same experiment. If
+    A point that turned out to need more memory is the same experiment. If
     this reruns, every resource tweak silently invalidates a study.
     """
 

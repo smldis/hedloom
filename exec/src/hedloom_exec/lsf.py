@@ -15,17 +15,19 @@ its parent dies. Neither involves LSF.
 The cost of one job per invocation is queue dispatch latency, paid once per
 job. For work that runs for minutes it disappears into the noise; for a
 two-second step it dwarfs the work itself. The axis is therefore how long an
-invocation runs, not how many there are: a thousand ten-minute corners are a
-fine fit, a hundred two-second extractions are not, and those belong on a
-pooled `LSFCluster` that pays dispatch once per worker.
+invocation runs, not how many there are: a thousand ten-minute invocations are
+a fine fit, a hundred two-second ones are not, and those belong on a pooled
+`LSFCluster` that pays dispatch once per worker.
 
 What a job asks for is decided per invocation, not per transport. The Plan
-resolves a placement and its options — queue, cores, memory, and the logical
-scarce resources an analog sweep really contends for, simulator licences — and
-those become `-q`, `-n`, and `rusage` on that job alone. Licences are handed to
-LSF rather than counted here on purpose: the scheduler is the only party that
-knows how many exist and which other users hold them, so arbitration belongs to
-it. This unit's job is to state the need on the specific job that has it.
+resolves a placement and its options — queue, cores, memory, and the countable
+scarce resources a wide run really contends for, declared as `licences` — and
+those become `-q`, `-n`, and `rusage` on that job alone. A licence here is
+whatever the site's LSF configuration already counts, whether or not anyone
+pays for it. Licences are handed to LSF rather than counted here on purpose:
+the scheduler is the only party that knows how many exist and which other users
+hold them, so arbitration belongs to it. This unit's job is to state the need
+on the specific job that has it.
 
 Concurrency has a separate, softer cost: each *simultaneously running* job holds
 a blocked client process and connection on the submit host. That scales with the
@@ -216,15 +218,14 @@ def _is_not_found(result: CommandResult) -> bool:
 def _state_from_bjobs(line: str) -> str:
     """Map an LSF status word onto an observed state."""
 
-    tokens = line.split()
-    for token in tokens:
-        if token in ("PEND", "PSUSP", "WAIT"):
+    for word in line.split():
+        if word in ("PEND", "PSUSP", "WAIT"):
             return "pending"
-        if token in ("RUN", "USUSP", "SSUSP"):
+        if word in ("RUN", "USUSP", "SSUSP"):
             return "running"
-        if token == "DONE":
+        if word == "DONE":
             return "succeeded"
-        if token in ("EXIT", "ZOMBI"):
+        if word in ("EXIT", "ZOMBI"):
             return "failed"
     return "running"
 
@@ -400,7 +401,7 @@ class LSFInteractiveTransport:
 
         The Plan decided per invocation which queue, how many cores, and which
         scarce resources this work needs. Those must reach the job that runs it:
-        a corner sized for a large-memory queue is a different experiment when
+        an invocation sized for a large-memory queue is a different experiment when
         it lands wherever the transport was constructed to point.
         """
 
@@ -598,7 +599,7 @@ class LSFPooledTransport:
     refusal is the point: it names the seam rather than letting a caller
     discover it as a serialization error deep inside Dask.
 
-    See `docs/pooled-placement-plan.md`. Steps 1 and 2 of its spike pass, and
+    See `hedloom/design/pooled-placement-plan.md`. Steps 1 and 2 of its spike pass, and
     `exec/tests/fakefarm` now answers batch submission, so the whole pooled
     path is exercisable with no LSF on the host.
     """

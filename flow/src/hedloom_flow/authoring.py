@@ -459,14 +459,14 @@ def sweep(items: Iterable[Any], key: Callable[[Any], str] | str) -> Iterator[Any
     silently discarding every result downstream of the insertion. Writing them
     by hand means writing one per call per point, and keys must be unique
     within a scope rather than per operation — so three operations across three
-    corners is nine strings to keep distinct, and the failure mode of getting it
+    points is nine strings to keep distinct, and the failure mode of getting it
     wrong is silent staleness rather than an error.
 
     This opens a keyed scope per point instead. Calls inside the loop take
     ``<point>:<operation>`` unless they name a key themselves.
 
-        for corner in sweep(CORNERS, key=lambda point: point["key"]):
-            raw = simulate(write_deck(**corner))
+        for point in sweep(POINTS, key=lambda item: item["key"]):
+            result = solve(write_input(**point))
     """
 
     resolve = key if callable(key) else (lambda item: str(item[key]))
@@ -1123,7 +1123,7 @@ def planned(
 
         @planned
         def sweep(name):
-            return corners.named(name)(POINTS)
+            return points.named(name)(POINTS)
 
         sweep("north")   # -> Plan
 

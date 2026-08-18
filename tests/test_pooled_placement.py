@@ -1,7 +1,7 @@
 """Routing an operation to a pool, from the façade, against the fake farm.
 
-Step 4 of `docs/pooled-placement-plan.md`'s spike sequence, and the first point
-at which the design pays: one plan, some corners on their own `bsub -I` job and
+Step 4 of `design/pooled-placement-plan.md`'s spike sequence, and the first point
+at which the design pays: one plan, some points on their own `bsub -I` job and
 some on a shared pool of reusable workers, in one run.
 
 The kernel invariant applies here too and is what the last test asserts:
@@ -91,7 +91,7 @@ def site_with_pool(tmp_path, **extra):
 
 
 def test_a_study_runs_entirely_on_a_pool(tmp_path, farm):
-    """The plain case: every corner routed to `pool`, one run, real workers."""
+    """The plain case: every point routed to `pool`, one run, real workers."""
 
     run = all_pooled().submit(site=site_with_pool(tmp_path))
 
@@ -112,7 +112,7 @@ def test_a_mixed_plan_places_some_corners_directly_and_some_on_the_pool(
     site = site_with_pool(tmp_path)
 
     # Placement is authored, per call, with `.options(policy=...)`. It is not
-    # an override on the site: which substrate a corner belongs on is a
+    # an override on the site: which substrate a point belongs on is a
     # property of the work, and the Plan records it before anything is spent.
     @flow
     def mixed(words):
@@ -168,7 +168,7 @@ def test_moving_an_operation_to_a_pool_reuses_what_it_already_produced(
 
     assert second.succeeded, second.summary()
     assert all(item.reused for item in second.report.outcomes), (
-        "a corner moved off the pool must reuse the result the pool produced; "
+        "a point moved off the pool must reuse the result the pool produced; "
         "placement is not identity-bearing"
     )
 

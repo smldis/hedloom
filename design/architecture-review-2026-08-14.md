@@ -428,7 +428,7 @@ path: the topology changed, the risk did not.
 - **`_IMPLEMENTATIONS` is process-global** (`src/hedloom/__init__.py:84`). Two
   studies imported into one process share one registry. Benign today, and
   `study(plan, implementations=...)` is the escape hatch, but it is the second
-  notion of "what an operation is" that `ONTOLOGY.md:50-54` says does not exist.
+  notion of "what an operation is" that `ONTOLOME.md:50-54` says does not exist.
 - **`StudyRun.value` is "the last invocation in plan order"**
   (`src/hedloom/study.py:49-53`). The plan declares `outputs`, and `_plan_id`
   already reads them (`study.py:169-174`). Reading `value` from the declared

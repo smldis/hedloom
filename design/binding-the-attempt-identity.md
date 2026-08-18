@@ -1,8 +1,8 @@
 # Proposal: bind the attempt identity
 
 A change proposed on 2026-08-17, after the TLA+ models in
-[`attempt-claim-protocol.md`](attempt-claim-protocol.md) and
-[`stop-admitting-protocol.md`](stop-admitting-protocol.md). Not implemented.
+[`attempt-claim-protocol.md`](../docs/internals/attempt-claim-protocol.md) and
+[`stop-admitting-protocol.md`](../docs/internals/stop-admitting-protocol.md). Not implemented.
 
 ## The defect, restated
 

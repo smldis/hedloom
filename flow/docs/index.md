@@ -54,24 +54,21 @@ The instrument does not compute, enforce local placement, schedule, persist,
 cancel, publish, resolve source addresses, or execute codecs. Public/general
 execution, Distributed/Futures, LSF, retries, persistence, recovery, plugins,
 dynamic replanning, production hardening, and sequential convenience remain
-excluded. The sequential design record below is inactive historical material,
-not a backlog.
+excluded.
 
 The focused tests, planning-only characterization, and explicit local Dask
 characterization command are the current evidence for this prototype boundary.
-The complete development rationale and evidence remain in the component-owned
-`PLANNING.md` and `IMPLEMENTATION.md` trackers.
+
+The unit's development history — phase trackers `PLANNING.md` and
+`IMPLEMENTATION.md`, and the inactive sequential-convenience design in
+`design/` — is kept in the repository and deliberately not published. It records
+what each phase delivered, including contracts that have since changed, so it is
+not a description of this unit and not a backlog. `ONTOLOME.md` states the
+current contracts.
 
 ```{toctree}
 :maxdepth: 1
 :caption: Architecture
 
 architecture
-```
-
-```{toctree}
-:maxdepth: 1
-:caption: Historical material
-
-archive/sequential-flow-convenience
 ```

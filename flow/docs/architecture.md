@@ -19,7 +19,7 @@ Source baseline:
 That graduation was a reviewed continuation seed, not implementation
 authorization. The later user-authorized work and its evidence are recorded in
 the component `PLANNING.md` and `IMPLEMENTATION.md`. Those trackers and the
-current `ONTOLOGY.md` govern implemented scope. The project `MANIFESTO.md`
+current `ONTOLOME.md` govern implemented scope. The project `MANIFESTO.md`
 continues to govern the broader system.
 
 The tracked root `docs/vision/hedloom-flow-rebuild-main.md` predates the graduation
@@ -146,7 +146,7 @@ wider execution architecture described later in the graduation.
 The graduation proposed a sequential helper with stable-slot insertion,
 removal, and substitution as one acceptance example. The user later chose to
 avoid that convenience layer. It is now rejected from active scope and retained
-only in `docs/archive/sequential-flow-convenience.md`, with a reactivation
+only in the unpublished `design/sequential-flow-convenience.md`, with a reactivation
 trigger. Arbitrary Python composition remains the sole flow-authoring model.
 
 ### Component boundary
@@ -422,7 +422,7 @@ persistence, or runtime-study ownership.
 falsified on its own stated terms — repeated reviews added ceremony without
 changing scope across Phases 1–5. The observation and the replacement policy
 are recorded in
-[`../../hedloom-exec/DECISIONS.md`](../../hedloom-exec/DECISIONS.md).
+[`hedloom-exec/DECISIONS.md`](../../exec/DECISIONS.md).
 Development now proceeds against a living decision ledger with review at
 natural boundaries. The falsifiable framing, named discriminating observations,
 and the rule that passing tests accept only the stated evidence are retained.

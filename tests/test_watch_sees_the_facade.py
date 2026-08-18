@@ -67,7 +67,7 @@ def run_one(root: Path) -> str:
         durability=Durability.RECORDED,
         root=str(root),
         plan_id="study",
-        invocation_id="invoke:corner",
+        invocation_id="invoke:point",
     )
     live = live_attempts(root)
     assert len(live) == 1, "one attempt was submitted and none concluded"
