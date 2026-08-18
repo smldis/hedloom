@@ -68,9 +68,9 @@ def _source_identity(
     """Identify a source by what it declares, and by what is there.
 
     Source IDs are authored-order and can renumber when earlier work is
-    inserted; the declared address and codec are what actually determine the
-    data. Using the declaration means adding an unrelated source does not
-    invalidate anything.
+    inserted; the declared address and artifact contract are what actually
+    determine the data. Using the declaration means adding an unrelated source
+    does not invalidate anything.
 
     The declaration alone is not enough for reuse to be honest, though: editing
     an input file in place leaves every declared fact unchanged, so without
@@ -87,7 +87,6 @@ def _source_identity(
             "inputs": {
                 "artifact": source.get("artifact"),
                 "address": source.get("address"),
-                "materialized_as": source.get("materialized_as"),
                 "fingerprint": fingerprint,
             },
         }

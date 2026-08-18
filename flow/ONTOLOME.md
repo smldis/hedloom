@@ -7,9 +7,8 @@ static flows, plus the immutable normalized Plan IR produced by explicit
 planning scopes. It makes planned invocations, dependencies, nested flow
 boundaries, policies, artifact contracts, and named outputs inspectable before
 any execution boundary. It also owns data-only declarations for addressed
-external sources: codec identity/options, materialization and access
-assumptions, fixed source/output reference value classes, and optional output
-materialization capability metadata.
+external sources: an opaque address, an artifact contract, and fixed
+source/output reference value classes.
 It also owns one non-reexported experimental instrument that lowers a validated
 Plan, explicit implementation registry, and injected decoded source mapping to
 inspectable Dask Delayed values. This instrument tests Plan sufficiency; it is
@@ -56,14 +55,13 @@ planning and runtime authority.
   than read as though the difference did not matter. Consumers may be wider —
   `hedloom_exec.plan_bundles` accepts 2 and 3 — because a durable record
   outlives the schema the document that produced it was written at.
-- `address(...)`, `codec(...)`, and `materialization(...)` declare opaque
-  source addresses, representation identity/options, and assumed access scope
-  as canonical data. Strict `input_artifact(...)` records an already-
-  materialized external source without resolving, reading, or decoding it.
+- `address(...)` declares an opaque source address as canonical data.
+  `input_artifact(address, artifact=...)` records an external source without
+  resolving, reading, or decoding it. A source is identified by exactly those
+  two declarations, so declaring the same artifact at the same address twice
+  is one source rather than two.
 - External source references have inspectable value class `artifact`; ordinary
-  operation-output references have value class `ephemeral`. An optional output
-  `can_materialize_as` declaration advertises capability only and does not
-  change that output's value class or create an artifact.
+  operation-output references have value class `ephemeral`.
 - `artifacts(kind)` declares a required, non-empty ordered collection input.
   Its binding retains member order and its dependencies contain one edge per
   member with an explicit zero-based position.
@@ -86,7 +84,7 @@ planning and runtime authority.
   reexports it.
 - The experimental lowerer accepts only option-free `local` policy and
   resource-free used operations, builds no second readiness graph, performs no
-  source I/O or codec work, and has no compute, submit, persistence,
+  source I/O, and has no compute, submit, persistence,
   cancellation, publication, or scheduling method. Callers explicitly choose
   whether and how to compute returned Delayed values.
 - `submit(...)` is a refusing boundary that raises `NotImplementedError`; it
@@ -103,7 +101,7 @@ contract is promoted through the parent composition node.
 Hedloom Flow does not own execution meaning, public or general operation
 execution, local or remote scheduling, placement enforcement, a working
 `submit(...)`, general Dask lowering, Dask Distributed/Futures, LSF transport,
-retries or attempts, persistence, address resolution, codec execution, real
+retries or attempts, persistence, address resolution, real
 accessibility checking, artifact publication, materialized operation outputs,
 runtime artifact values, recovery, plugins, dynamic or result-dependent
 replanning, production hardening, runtime study ownership, or the complete

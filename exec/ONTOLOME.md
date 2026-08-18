@@ -135,7 +135,7 @@ its siblings are reused and the superseded results stay nameable.
   base distribution stays dependency-free. An invocation's digest changes
   exactly when its own declaration or any ancestor's does, so reuse is
   transitive and staleness propagates downstream.
-- Sources are identified by their declared address, codec, and artifact kind
+- Sources are identified by their declared address and artifact kind
   rather than by authored-order source ID, so inserting an unrelated source
   invalidates nothing. `plan_bundles(..., source_fingerprints=...)` folds in an
   identity for what is *at* each address, supplied by the caller because
@@ -220,7 +220,7 @@ Hedloom Exec owns no graph. It does not decide readiness, order invocations,
 release successors, retry, or replan; those remain outside it, and the boundary
 is tested by reconciling an attempt from a record that carries no topology. It
 does not own Dask transports, worker pools, placement enforcement, policy
-resolution, codec execution, evidence promotion, or the study lifecycle. It records where
+resolution, evidence promotion, or the study lifecycle. It records where
 outputs are but owns no artifact store, performs no transfer between
 filesystems, verifies no content digest, and does not garbage-collect
 workspaces. It reads a Plan document but neither

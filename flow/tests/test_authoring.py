@@ -15,11 +15,9 @@ from hedloom_flow import (
     address,
     artifact,
     artifacts,
-    codec,
     flow,
     input_artifact,
     local,
-    materialization,
     named_policy,
     operation,
     parameter,
@@ -34,19 +32,12 @@ MODEL = artifact("model-input")
 RAW = artifact("simulation-raw")
 REPORT = artifact("measurement-report")
 MEASUREMENT = artifact("measurement")
-TEST_CODEC = codec("test-data", encoding="utf-8")
-TEST_MATERIALIZATION = materialization(
-    codec=TEST_CODEC,
-    address_space="test-address-space",
-    access_scope="test-scope",
-)
 
 
 def _source(locator, artifact_contract):
     return input_artifact(
         address("test-address-space", locator),
         artifact=artifact_contract,
-        materialized_as=TEST_MATERIALIZATION,
     )
 
 
@@ -83,7 +74,6 @@ def test_external_sources_require_the_strict_structured_authoring_surface():
             input_artifact(
                 "legacy-uri",
                 artifact=MODEL,
-                materialized_as=TEST_MATERIALIZATION,
             )
         model = _source("input.in", MODEL)
     normalized = draft.finish(outputs={})
@@ -93,55 +83,36 @@ def test_external_sources_require_the_strict_structured_authoring_surface():
 
 
 def test_source_deduplication_uses_the_complete_immutable_declaration():
-    alternate_materialization = materialization(
-        codec=codec("test-data", variant="alternate"),
-        address_space="test-address-space",
-        access_scope="test-scope",
-    )
+    """A source is its address and its contract, so those decide sameness.
+
+    Declaring the same external artifact twice must be one source: two would
+    give one file two identities, and reuse would split between them for no
+    reason an author could see.
+    """
+
     shared_address = address("test-address-space", "shared.data")
 
     with plan() as draft:
-        first = input_artifact(
-            shared_address,
-            artifact=MODEL,
-            materialized_as=TEST_MATERIALIZATION,
-        )
-        repeated = input_artifact(
-            shared_address,
-            artifact=MODEL,
-            materialized_as=TEST_MATERIALIZATION,
-        )
-        different_kind = input_artifact(
-            shared_address,
-            artifact=RAW,
-            materialized_as=TEST_MATERIALIZATION,
-        )
-        different_materialization = input_artifact(
-            shared_address,
-            artifact=MODEL,
-            materialized_as=alternate_materialization,
-        )
+        first = input_artifact(shared_address, artifact=MODEL)
+        repeated = input_artifact(shared_address, artifact=MODEL)
+        different_kind = input_artifact(shared_address, artifact=RAW)
+        different_address = _source("elsewhere.data", MODEL)
     normalized = draft.finish(outputs={})
 
     assert first is repeated
     assert len(normalized.sources) == 3
     assert different_kind.reference != first.reference
-    assert different_materialization.reference != first.reference
+    assert different_address.reference != first.reference
 
 
-def test_address_space_mismatch_fails_without_mutating_the_plan():
-    mismatched = materialization(
-        codec=TEST_CODEC,
-        address_space="other-address-space",
-        access_scope="test-scope",
-    )
+def test_a_refused_source_declaration_does_not_consume_an_id():
+    """Rejection must leave no trace, or IDs drift on a caught mistake."""
 
     with plan() as draft:
-        with pytest.raises(AuthoringError, match="address space must match"):
+        with pytest.raises(AuthoringError, match=r"artifact\(\.\.\.\)"):
             input_artifact(
                 address("test-address-space", "opaque/../locator"),
-                artifact=MODEL,
-                materialized_as=mismatched,
+                artifact="model-input",
             )
         accepted = _source("opaque/../locator", MODEL)
     normalized = draft.finish(outputs={})
@@ -1008,7 +979,6 @@ def test_planned_builds_exactly_what_the_draft_form_builds():
         model = input_artifact(
             address("test-address-space", locator),
             artifact=MODEL,
-            materialized_as=TEST_MATERIALIZATION,
         )
         return {"raw": simulate.named("sim")(model).raw}
 
@@ -1016,7 +986,6 @@ def test_planned_builds_exactly_what_the_draft_form_builds():
         model = input_artifact(
             address("test-address-space", "point.cir"),
             artifact=MODEL,
-            materialized_as=TEST_MATERIALIZATION,
         )
         outputs = {"raw": simulate.named("sim")(model).raw}
     explicit = draft.finish(outputs=outputs)

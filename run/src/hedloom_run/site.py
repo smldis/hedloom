@@ -15,7 +15,7 @@ The invariant:
 
     A source's identity must change when its content changes.
 
-`hedloom_exec` identifies a source by its declared address and codec, never by what
+`hedloom_exec` identifies a source by its declared address and contract, never by what
 is at that address — deliberately, since it resolves no addresses and should
 not start. The consequence was that editing an input file in place changed
 nothing: every downstream invocation was reused, and a study reported results

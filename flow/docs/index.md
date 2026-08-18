@@ -51,7 +51,7 @@ and prints deterministic semantic results without Dask keys. It is runnable
 evidence, not a convenience layer or a working `submit(...)` path.
 
 The instrument does not compute, enforce local placement, schedule, persist,
-cancel, publish, resolve source addresses, or execute codecs. Public/general
+cancel, publish, or resolve source addresses. Public/general
 execution, Distributed/Futures, LSF, retries, persistence, recovery, plugins,
 dynamic replanning, production hardening, and sequential convenience remain
 excluded.

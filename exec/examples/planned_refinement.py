@@ -33,10 +33,8 @@ try:
         address,
         artifact,
         artifacts,
-        codec,
         flow,
         input_artifact,
-        materialization,
         operation,
         parameter,
         planned,
@@ -98,11 +96,6 @@ def refinement(points):
     grid = input_artifact(
         address("repository-relative", "inputs/grid.json"),
         artifact=artifact("grid-declaration"),
-        materialized_as=materialization(
-            address_space="repository-relative",
-            codec=codec("json", encoding="utf-8"),
-            access_scope="repository-checkout",
-        ),
     )
     return {"verdict": refine(grid, points=points)}
 

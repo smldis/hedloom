@@ -16,12 +16,10 @@ from hedloom import (
     Study,
     address,
     artifact,
-    codec,
     file,
     flow,
     input_artifact,
     local,
-    materialization,
     operation,
     parameter,
     plan,
@@ -55,11 +53,6 @@ def copy_via_shell(out, *, word: str):
     return shell("sh", "-c", f"printf %s {word} > {out.copy}")
 
 
-FIXTURE_MATERIALIZATION = materialization(
-    codec=codec("utf-8-text"),
-    address_space="fixtures",
-    access_scope="test-scope",
-)
 
 
 @operation(inputs={"given": TEXT}, outputs={"size": returned(kind="count")})
@@ -239,7 +232,6 @@ def _reads_a_source():
     given = input_artifact(
         address("fixtures", "given.txt"),
         artifact=TEXT,
-        materialized_as=FIXTURE_MATERIALIZATION,
     )
     return {"size": measure_source.named("read")(given).size}
 

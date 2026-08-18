@@ -5,20 +5,19 @@ operation and flow planning described in [`PLANNING.md`](PLANNING.md). It
 captures immutable definitions, explicit dependencies, nested flow boundaries,
 ordered collection fan-in, scoped authored keys, and deterministic,
 JSON-inspectable Plan IR without executing operation bodies. A Plan can also
-declare an opaque address, codec contract, and assumed access scope for an
-already-materialized external source. Source references are classified as
-`artifact`; operation outputs remain `ephemeral`.
+declare an opaque address for an external source it reads but does not
+produce. Source references are classified as `artifact`; operation outputs
+remain `ephemeral`.
 
 Plans are emitted at **schema 3**, and a `Plan` refuses any other
 `schema_version` rather than validating a document it does not describe.
 `hedloom_exec.plan_bundles` reads schema 2 and 3, so a record written from an
 earlier document is still derivable.
 
-Use `address(...)`, `codec(...)`, and `materialization(...)` with the strict
-`input_artifact(..., artifact=..., materialized_as=...)` surface to record that
-data-only source handoff. Optional output materialization capability is
-declaration metadata only: it neither publishes a value nor creates a
-materialized output.
+Use `address(...)` with `input_artifact(..., artifact=...)` to record that
+data-only source handoff. A source is its address and its artifact contract,
+and nothing else: anything further would be a claim about bytes this unit
+cannot open, so it is the run's to establish, not the Plan's to assert.
 
 Use `artifacts(kind)` for a required, non-empty ordered collection input. The
 normalized binding preserves member order and emits one positioned dependency
@@ -74,9 +73,9 @@ only constructs Dask Delayed values; it does not compute, submit, choose or
 enforce a scheduler/placement, or provide a general execution API. Public Dask
 execution, Distributed/Futures, LSF, retries, persistence, recovery, plugins,
 dynamic replanning, production hardening, and result-dependent replanning are
-outside this unit. Address resolution, codec execution, actual access checks,
-publication, materialized operation outputs, and runtime artifact values are
-also outside it. The archived sequential-flow convenience is inactive
+outside this unit. Address resolution, actual access checks, publication,
+materialized operation outputs, and runtime artifact values are also outside
+it. The archived sequential-flow convenience is inactive
 historical material, not an active API or backlog.
 
 See [`ONTOLOME.md`](ONTOLOME.md) for the owned boundary,

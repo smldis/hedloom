@@ -16,7 +16,6 @@ from .model import (
     ArtifactContract,
     ArtifactSource,
     ArtifactSourceReference,
-    CodecContract,
     CollectionInputBinding,
     ConfigBinding,
     ConfigContract,
@@ -28,7 +27,6 @@ from .model import (
     InputBinding,
     InputContract,
     Invocation,
-    MaterializationSpec,
     NamedOutput,
     OperationDefinition,
     OperationIdentity,
@@ -343,24 +341,10 @@ def artifacts(kind: str) -> ArtifactCollection:
     return ArtifactCollection(ArtifactContract(kind))
 
 
-def codec(name: str, version: str = "1", **options: Any) -> CodecContract:
-    """Declare a data-only codec contract with canonical immutable options."""
-
-    return CodecContract(name, version, options)
-
-
 def address(address_space: str, locator: str) -> ArtifactAddress:
     """Declare an opaque external artifact address without resolving it."""
 
     return ArtifactAddress(address_space, locator)
-
-
-def materialization(
-    *, codec: CodecContract, address_space: str, access_scope: str
-) -> MaterializationSpec:
-    """Declare representation and access assumptions without checking them."""
-
-    return MaterializationSpec(codec, address_space, access_scope)
 
 
 
@@ -591,7 +575,7 @@ class PlanDraft:
         self._flows: dict[FlowIdentity, FlowDefinition] = {}
         self._sources: list[ArtifactSource] = []
         self._source_keys: dict[
-            tuple[ArtifactAddress, ArtifactContract, MaterializationSpec],
+            tuple[ArtifactAddress, ArtifactContract],
             ArtifactValue,
         ] = {}
         self._invocations: list[Invocation] = []
@@ -668,7 +652,6 @@ class PlanDraft:
         self,
         address_value: ArtifactAddress,
         artifact_contract: ArtifactContract,
-        materialized_as: MaterializationSpec,
     ) -> ArtifactValue:
         if self._finished:
             raise AuthoringError("this plan draft has already been finished")
@@ -676,23 +659,13 @@ class PlanDraft:
             raise AuthoringError("input artifact address must use address(...)")
         if not isinstance(artifact_contract, ArtifactContract):
             raise AuthoringError("input artifact contract must use artifact(...)")
-        if not isinstance(materialized_as, MaterializationSpec):
-            raise AuthoringError(
-                "input artifact materialized_as must use materialization(...)"
-            )
-        if address_value.address_space != materialized_as.address_space:
-            raise AuthoringError(
-                "input artifact address space must match materialized_as address space"
-            )
-        key = (address_value, artifact_contract, materialized_as)
+        key = (address_value, artifact_contract)
         existing = self._source_keys.get(key)
         if existing is not None:
             return existing
         source_id = f"source:{self._next_source:04d}"
         self._next_source += 1
-        source = ArtifactSource(
-            source_id, address_value, artifact_contract, materialized_as
-        )
+        source = ArtifactSource(source_id, address_value, artifact_contract)
         value = ArtifactValue(
             ArtifactSourceReference(source_id), artifact_contract, self
         )
@@ -1134,12 +1107,16 @@ def input_artifact(
     address_value: ArtifactAddress,
     *,
     artifact: ArtifactContract,
-    materialized_as: MaterializationSpec,
 ) -> ArtifactValue:
-    """Register one explicit, already-materialized external artifact source."""
+    """Register one external artifact this plan reads but does not produce.
+
+    An address, not a path: nothing here resolves it. The site that runs the
+    Plan says what the address space means, and the run fingerprints whatever
+    it finds there — which is what makes reuse honest across an in-place edit.
+    """
 
     return _active_draft("input_artifact")._input_artifact(
-        address_value, artifact, materialized_as
+        address_value, artifact
     )
 
 
@@ -1396,10 +1373,8 @@ __all__ = [
     "address",
     "artifact",
     "artifacts",
-    "codec",
     "flow",
     "input_artifact",
-    "materialization",
     "operation",
     "parameter",
     "plan",

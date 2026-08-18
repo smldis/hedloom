@@ -21,10 +21,8 @@ from hedloom_flow import (
     address,
     artifact,
     artifacts,
-    codec,
     input_artifact,
     local,
-    materialization,
     named_policy,
     operation,
     parameter,
@@ -40,18 +38,12 @@ from hedloom_flow.experimental.local_dask import (
 
 VALUE = artifact("test-value")
 RESULT = artifact("test-result")
-TEST_MATERIALIZATION = materialization(
-    codec=codec("test-value"),
-    address_space="injected",
-    access_scope="test-process",
-)
 
 
 def _source(locator, contract=VALUE):
     return input_artifact(
         address("injected", locator),
         artifact=contract,
-        materialized_as=TEST_MATERIALIZATION,
     )
 
 

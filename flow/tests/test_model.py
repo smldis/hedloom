@@ -8,7 +8,6 @@ from hedloom_flow.model import (
     ArtifactContract,
     ArtifactSource,
     ArtifactSourceReference,
-    CodecContract,
     ConfigBinding,
     ConfigContract,
     CollectionInputBinding,
@@ -22,7 +21,6 @@ from hedloom_flow.model import (
     InputBinding,
     InputContract,
     Invocation,
-    MaterializationSpec,
     NamedOutput,
     OperationDefinition,
     OperationIdentity,
@@ -45,20 +43,12 @@ MERGE_ID = OperationIdentity("example.merge", "1")
 ROOT_FLOW_ID = FlowIdentity("example.study", "1")
 BRANCH_FLOW_ID = FlowIdentity("example.characterize", "1")
 
-JSON_CODEC = CodecContract(
-    "json", "1", {"encoding": "utf-8", "dialect": {"indent": None}}
-)
-REPOSITORY_JSON = MaterializationSpec(
-    JSON_CODEC, "repository-relative", "repository-checkout"
-)
-
 
 def source(identifier: str, locator: str, artifact: ArtifactContract) -> ArtifactSource:
     return ArtifactSource(
         identifier,
         ArtifactAddress("repository-relative", locator),
         artifact,
-        REPOSITORY_JSON,
     )
 
 
@@ -231,22 +221,12 @@ def test_values_are_deeply_immutable_and_policies_are_only_data():
         branching_plan().invocations[0].id = "changed"
 
 
-def test_materialization_values_are_deeply_immutable_canonical_data_only():
-    options = {"encoding": "utf-8", "features": ["z", {"enabled": True}]}
-    declared_codec = CodecContract("json", "2", options)
+def test_source_values_are_immutable_and_serialize_canonically():
     declared_address = ArtifactAddress(
         "repository-relative", "inputs/../opaque.json"
     )
-    declared_materialization = MaterializationSpec(
-        declared_codec, "repository-relative", "repository-checkout"
-    )
-    options["features"].append("mutated")
 
-    assert dict(declared_codec.options.items)["features"] == FrozenList(
-        ("z", FrozenObject((("enabled", True),)))
-    )
     assert declared_address.locator == "inputs/../opaque.json"
-    assert declared_materialization.codec is declared_codec
     with pytest.raises(FrozenInstanceError):
         declared_address.locator = "normalized.json"
     with pytest.raises(ContractError, match="artifact locator"):
@@ -256,32 +236,18 @@ def test_materialization_values_are_deeply_immutable_canonical_data_only():
 
     data = branching_plan().to_data()
     assert data["schema_version"] == 3
-    assert data["sources"][0]["materialized_as"]["codec"] == {
-        "name": "json",
-        "version": "1",
-        "options": {"dialect": {"indent": None}, "encoding": "utf-8"},
-    }
-    assert data["sources"][0]["address"] == {
-        "address_space": "repository-relative",
-        "locator": "inputs/amplifier.in",
+    # A source is its address and its contract. There is nothing else to say
+    # about it that this unit could check, so there is nothing else recorded.
+    assert data["sources"][0] == {
+        "id": "source:model",
+        "address": {
+            "address_space": "repository-relative",
+            "locator": "inputs/amplifier.in",
+        },
+        "artifact": {"kind": "model-input"},
     }
     with pytest.raises(ContractError, match="schema_version must be 3"):
         Plan(schema_version=1)
-
-    malformed_codec = replace(JSON_CODEC)
-    malformed_options = FrozenObject()
-    object.__setattr__(malformed_options, "items", (("bad", object()),))
-    object.__setattr__(malformed_codec, "options", malformed_options)
-    malformed_materialization = replace(REPOSITORY_JSON, codec=malformed_codec)
-    valid = branching_plan()
-    malformed_source = replace(
-        valid.sources[0], materialized_as=malformed_materialization
-    )
-    with pytest.raises(PlanValidationError) as caught:
-        replace(valid, sources=(malformed_source,)).validate()
-    assert "invalid_source_materialization" in {
-        issue.code for issue in caught.value.issues
-    }
 
 
 @pytest.mark.parametrize(
@@ -289,12 +255,6 @@ def test_materialization_values_are_deeply_immutable_canonical_data_only():
     [
         ("address", None, "invalid_source_address"),
         ("artifact", None, "invalid_source_artifact"),
-        ("materialized_as", None, "invalid_source_materialization"),
-        (
-            "address",
-            ArtifactAddress("other-space", "inputs/amplifier.in"),
-            "source_address_space_mismatch",
-        ),
     ],
 )
 def test_plan_independently_rejects_malformed_source_declarations(

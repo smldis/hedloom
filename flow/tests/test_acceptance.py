@@ -10,10 +10,8 @@ from hedloom_flow import (
     PlanningScopeError,
     address,
     artifact,
-    codec,
     flow,
     input_artifact,
-    materialization,
     operation,
     parameter,
     plan,
@@ -25,19 +23,12 @@ from examples import refinement
 GRID = artifact("grid-declaration")
 QUADRATURE = artifact("quadrature-result")
 VERDICT = artifact("refinement-verdict")
-JSON_CODEC = codec("json", encoding="utf-8")
-REPOSITORY_JSON = materialization(
-    codec=JSON_CODEC,
-    address_space="repository-relative",
-    access_scope="repository-checkout",
-)
 
 
 def _source(locator, artifact_contract):
     return input_artifact(
         address("repository-relative", locator),
         artifact=artifact_contract,
-        materialized_as=REPOSITORY_JSON,
     )
 
 
@@ -114,8 +105,7 @@ def test_refinement_collection_fan_in_is_ordered_and_fully_keyed(
     assert all(item.authored_key is not None for item in normalized.invocations)
     assert all(item.authored_key is not None for item in normalized.boundaries)
     assert normalized.sources[0].address.address_space == "repository-relative"
-    assert normalized.sources[0].materialized_as.codec.name == "json"
-    assert normalized.sources[0].materialized_as.codec.options == JSON_CODEC.options
+    assert normalized.sources[0].artifact.kind == "refinement-points"
     assert all(reference.value_class == "ephemeral" for reference in binding.references)
     assert all(edge.source.value_class == "ephemeral" for edge in positioned_edges)
 

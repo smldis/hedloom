@@ -204,7 +204,7 @@ placement is added afterwards with `Site.with_transports(...)`.
 
 ### Fingerprints: a source's identity must change when its content does
 
-`hedloom_exec` identifies a declared source by its address and codec, never by
+`hedloom_exec` identifies a declared source by its address and contract, never by
 what is *at* that address — deliberately, since it resolves no addresses and
 should not start. The consequence, before this unit existed: editing an
 input file in place changed nothing about its declared address, so every

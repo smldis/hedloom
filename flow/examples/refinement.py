@@ -35,10 +35,8 @@ from hedloom_flow import (
     address,
     artifact,
     artifacts,
-    codec,
     flow,
     input_artifact,
-    materialization,
     operation,
     parameter,
     planned,
@@ -49,12 +47,6 @@ from hedloom_flow.authoring import file, returned
 POINTS = artifact("refinement-points")
 QUADRATURE = artifact("quadrature-result")
 VERDICT = artifact("refinement-verdict")
-JSON_V1 = codec("json", version="1", encoding="utf-8")
-REPOSITORY_JSON = materialization(
-    codec=JSON_V1,
-    address_space="repository-relative",
-    access_scope="repository-checkout",
-)
 
 # The refinements, coarsest first. Each is four times the last, which is what
 # makes the answer checkable: the trapezoid rule is second order, so every
@@ -149,7 +141,6 @@ def build_refinement_plan(*, include_refinements: bool = True):
     points = input_artifact(
         address("repository-relative", "inputs/refinement-points.json"),
         artifact=POINTS,
-        materialized_as=REPOSITORY_JSON,
     )
     return refine_grid.named("refine-grid")(
         points,
