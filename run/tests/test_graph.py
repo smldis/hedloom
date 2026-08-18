@@ -721,7 +721,7 @@ def test_a_transport_that_cannot_reach_a_worker_is_refused_by_name(client, tmp_p
     assert "local" in str(raised.value)
 
 
-def test_a_task_is_named_after_the_corner_it_runs():
+def test_a_task_is_named_after_the_point_it_runs():
     """The point of watching a sweep is knowing which point is running."""
 
     from hedloom_exec.planned import plan_bundles

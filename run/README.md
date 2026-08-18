@@ -9,9 +9,9 @@ from hedloom_run import run_plan
 report = run_plan(
     plan_document,
     transport,
-    plan_id="ota-pvt",
+    plan_id="refinement",
     root="attempts",
-    workspace_root="/nfs/studies/ota-pvt",
+    workspace_root="/nfs/studies/refinement",
     commands={"solve": ["awk", "-f", "rule.awk", "point.in"]},
     outputs={"simulate": {"raw": {"path": "point.raw"}}},
 )
@@ -59,7 +59,7 @@ with Client(cluster) as client:
         plan_document,
         client=client,
         transports={"local": local, "lsf-direct": lsf},
-        plan_id="ota-pvt",
+        plan_id="refinement",
         root="attempts",
         on_event=lambda outcome: print(outcome.authored_key, outcome.outcome),
     )

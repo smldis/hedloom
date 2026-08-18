@@ -44,27 +44,28 @@ directory with:
 
 ```console
 python -m pip install -e .
-PYTHONPATH=src python examples/characterization.py | python -m json.tool
+PYTHONPATH=src python examples/refinement.py | python -m json.tool
 ```
 
 The base distribution keeps `dependencies = []`: `import hedloom_flow` and the
-planning-only characterization command do not require Dask. To inspect the
+planning-only refinement command do not require Dask. To inspect the
 non-reexported local lowering experiment, select the exact optional dependency
 and run its tool-free example explicitly:
 
 ```console
 python -m pip install -e '.[dask]'
 python -m pytest -q
-PYTHONPATH=src python examples/local_dask_characterization.py \
+PYTHONPATH=src:. python examples/local_dask_refinement.py \
   | python -m json.tool
 ```
 
-That example reuses the public characterization Plan, binds its two operation
+That example reuses the public refinement Plan, binds its two operation
 identities to explicit callables, injects the one already-decoded source value,
 and asks Dask to compute synchronously with optimization disabled. Its canonical
 stdout contains semantic results and stable Plan metadata, not the fresh Dask
-task namespace. The summary visibly retains the authored `tt`, `ss`, `ff`
-collection order.
+task namespace. The verdict visibly retains the authored `coarse`, `medium`,
+`fine` collection order, and its three estimates are the ones
+`../examples/grid_refinement.py` gets from real `awk`.
 
 Flow bodies are ordinary authored Python used to construct a static plan;
 their freedom from side effects is an authoring discipline. `submit(...)` still

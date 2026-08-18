@@ -42,9 +42,9 @@ returns. Like everything else here that names `bjobs`, its parsing has never
 met a real farm.
 
 The unit now also studies whether content-addressed identity derived from a
-Plan document makes rerunning honest. `examples/planned_characterization.py`
+Plan document makes rerunning honest. `examples/planned_refinement.py`
 is the current evidence: three points and a reduction run, rerun with nothing
-recomputed, then one point retuned so that it and the reduction rerun while
+recomputed, then one point refined so that it and the reduction rerun while
 its siblings are reused and the superseded results stay nameable.
 
 ## Current contracts

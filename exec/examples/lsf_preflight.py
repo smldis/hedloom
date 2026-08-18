@@ -209,7 +209,7 @@ def main() -> int:
         default=None,
         help=(
             "a licence resource name configured at this site (e.g. the "
-            "tool token an analog sweep contends for); checks that a job "
+            "tool token a wide sweep contends for); checks that a job "
             "can request it"
         ),
     )

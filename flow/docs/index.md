@@ -43,9 +43,9 @@ names, by pairing this package's Plan with `hedloom_run`'s kernels and
 The non-reexported `hedloom_flow.experimental.local_dask` module is a bounded
 instrument for testing whether Plan IR lowers to Dask Delayed. Install the
 optional dependency with `python -m pip install -e '.[dask]'`, then run
-`PYTHONPATH=src python examples/local_dask_characterization.py`. The
-[experimental characterization example](../examples/local_dask_characterization.py)
-reuses the public [planning example](../examples/characterization.py), injects
+`PYTHONPATH=src:. python examples/local_dask_refinement.py`. The
+[experimental refinement example](../examples/local_dask_refinement.py)
+reuses the public [planning example](../examples/refinement.py), injects
 decoded source data, binds exact operation identities to explicit callables,
 and prints deterministic semantic results without Dask keys. It is runnable
 evidence, not a convenience layer or a working `submit(...)` path.
@@ -56,8 +56,8 @@ execution, Distributed/Futures, LSF, retries, persistence, recovery, plugins,
 dynamic replanning, production hardening, and sequential convenience remain
 excluded.
 
-The focused tests, planning-only characterization, and explicit local Dask
-characterization command are the current evidence for this prototype boundary.
+The focused tests, planning-only refinement, and explicit local Dask
+refinement command are the current evidence for this prototype boundary.
 
 The unit's development history — phase trackers `PLANNING.md` and
 `IMPLEMENTATION.md`, and the inactive sequential-convenience design in

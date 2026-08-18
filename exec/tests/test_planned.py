@@ -227,7 +227,7 @@ def test_the_real_hedloom_flow_example_plan_derives(tmp_path):
 
     environment = dict(os.environ, PYTHONPATH=os.path.join(flow, "src"))
     completed = subprocess.run(
-        [sys.executable, os.path.join(flow, "examples", "characterization.py")],
+        [sys.executable, os.path.join(flow, "examples", "refinement.py")],
         capture_output=True,
         text=True,
         env=environment,
@@ -257,7 +257,7 @@ def test_the_end_to_end_example_reuses_and_supersedes():
         pytest.skip("hedloom-flow is not a sibling of this unit")
 
     completed = subprocess.run(
-        [sys.executable, os.path.join(unit, "examples", "planned_characterization.py")],
+        [sys.executable, os.path.join(unit, "examples", "planned_refinement.py")],
         capture_output=True,
         text=True,
         cwd=unit,

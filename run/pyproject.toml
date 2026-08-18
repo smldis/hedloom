@@ -34,7 +34,7 @@ dask = ["distributed>=2023.9.2"]
 # Pooled LSF placement, where invocations reach a second cluster whose workers
 # are themselves LSF jobs. Separate from `dask` rather than folded into it,
 # because they answer different questions: `dask` is how much of *this* plan
-# runs at once, and a farm sweep placing one job per corner needs it without
+# runs at once, and a farm sweep placing one job per point needs it without
 # ever needing a pool. Only the pooled transport imports `dask_jobqueue`.
 #
 # It belongs here and nowhere lower. `hedloom-exec` imports neither

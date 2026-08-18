@@ -12,7 +12,7 @@ The invariant this module exists to hold:
     any ancestor's declaration changes.
 
 That makes reuse transitive. Editing a source locator or one point's
-temperature invalidates that invocation and everything downstream of it, while
+configuration invalidates that invocation and everything downstream of it, while
 sibling branches keep their published results. It is a Merkle identity over the
 plan, and it is the reason a rerun can honestly skip work.
 

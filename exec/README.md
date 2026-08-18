@@ -81,21 +81,21 @@ no rerun; the third must fail loudly rather than guess.
 bundles, so a rerun skips what is unchanged. Run it:
 
 ```console
-PYTHONPATH=src:../flow/src python examples/planned_characterization.py
+PYTHONPATH=src:../flow/src python examples/planned_refinement.py
 ```
 
 ```
 First run — nothing is published yet
-  ran     point-tt    23f06873c974
-  ran     point-ss    29a9d0839b44
-  ran     point-ff    9c5522647f21
-  ran     summary      9ce639729b3e
+  ran     point-medium   a6f0cf46bcb7
+  ran     point-coarse   fc7add2a366f
+  ran     point-fine     b9f4de332091
+  ran     compare        634f63ac1fb4
 
-Third run — ss retuned to 150C
-  reused  point-tt    23f06873c974
-  ran     point-ss    ee96c3bf59dc
-  reused  point-ff    9c5522647f21
-  ran     summary      65a90b965369
+Third run — the fine grid refined to 512 steps
+  reused  point-medium   a6f0cf46bcb7
+  reused  point-coarse   fc7add2a366f
+  ran     point-fine     4d4cfd81fd6a
+  ran     compare        6dc68ab1d541
 ```
 
 The coupling is to the Plan *document*, not the package: nothing imports

@@ -48,10 +48,10 @@ def test_placement_does_not_participate_in_identity():
 
 
 def test_nominated_environment_does_participate():
-    with_pdk = dict(BUNDLE, identity_env={"TOOL_ROOT": "/toolchain/sky130A"})
-    other_pdk = dict(BUNDLE, identity_env={"TOOL_ROOT": "/toolchain/gf180"})
-    assert input_digest(with_pdk) != input_digest(other_pdk)
-    assert input_digest(with_pdk) != input_digest(BUNDLE)
+    one_toolchain = dict(BUNDLE, identity_env={"TOOL_ROOT": "/toolchain/a"})
+    another = dict(BUNDLE, identity_env={"TOOL_ROOT": "/toolchain/b"})
+    assert input_digest(one_toolchain) != input_digest(another)
+    assert input_digest(one_toolchain) != input_digest(BUNDLE)
 
 
 def test_unserializable_inputs_are_refused_with_an_explanation():

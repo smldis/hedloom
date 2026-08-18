@@ -104,7 +104,7 @@ def test_a_study_runs_entirely_on_a_pool(tmp_path, farm):
     assert submitted, "the pool should have submitted LSF jobs for its workers"
 
 
-def test_a_mixed_plan_places_some_corners_directly_and_some_on_the_pool(
+def test_a_mixed_plan_places_some_points_directly_and_some_on_the_pool(
     tmp_path, farm
 ):
     """Spike step 4. Two substrates, one plan, one run, one report."""

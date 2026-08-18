@@ -106,8 +106,8 @@ and that future was destroyed by the same `client.cancel`. It raises
 actually succeeded.
 
 That is a worse lie than the one it replaces. `blocked` is a claim about the
-scheduler; `failed` is a claim about the circuit. An engineer reading "this
-invocation failed" concludes something about the design.
+scheduler; `failed` is a claim about the work itself. An engineer reading
+"this invocation failed" concludes something about what they authored.
 
 The distinction the model forces is between *classification* and *evidence*.
 Both have to come from the record, because the cancel destroyed the only other

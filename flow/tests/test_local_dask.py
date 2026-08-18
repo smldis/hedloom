@@ -13,7 +13,7 @@ from dask import delayed
 from dask.callbacks import Callback
 import pytest
 
-from examples import characterization
+from examples import refinement
 from hedloom_flow import (
     OperationDefinition,
     OperationIdentity,
@@ -738,13 +738,13 @@ else:
     assert "optional dependency" not in broken.stderr
 
 
-def test_characterization_command_is_semantic_repeatable_and_uses_injected_source(
+def test_refinement_command_is_semantic_repeatable_and_uses_injected_source(
     tmp_path,
 ):
     component_root = Path(__file__).resolve().parents[1]
     source_root = component_root / "src"
-    example = component_root / "examples" / "local_dask_characterization.py"
-    poison_source = tmp_path / "inputs" / "two-stage-opamp.json"
+    example = component_root / "examples" / "local_dask_refinement.py"
+    poison_source = tmp_path / "inputs" / "refinement-points.json"
     poison_source.mkdir(parents=True)
     environment = os.environ.copy()
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -768,7 +768,7 @@ def test_characterization_command_is_semantic_repeatable_and_uses_injected_sourc
     assert first.stderr == second.stderr == ""
     assert first.stdout == second.stdout
 
-    normalized = characterization.build_characterization_plan()
+    normalized = refinement.build_refinement_plan()
     observed = json.loads(first.stdout)
     assert observed == {
         "plan": {
@@ -789,28 +789,31 @@ def test_characterization_command_is_semantic_repeatable_and_uses_injected_sourc
             },
             "schema_version": 3,
         },
+        # The trapezoid rule is second order, so each refinement by four cuts
+        # the error by sixteen. These are the same three estimates that
+        # ../../examples/grid_refinement.py obtains from real awk.
         "results": {
-            "points__ff": {
-                "point": "ff",
-                "design": "two-stage-opamp",
-                "temperature_c": -40,
+            "points__coarse": {
+                "point": "coarse",
+                "steps": 8,
+                "estimate": 0.63294341821,
             },
-            "points__ss": {
-                "point": "ss",
-                "design": "two-stage-opamp",
-                "temperature_c": 125,
+            "points__fine": {
+                "point": "fine",
+                "steps": 128,
+                "estimate": 0.632123773957,
             },
-            "points__tt": {
-                "point": "tt",
-                "design": "two-stage-opamp",
-                "temperature_c": 27,
+            "points__medium": {
+                "point": "medium",
+                "steps": 32,
+                "estimate": 0.632172000094,
             },
-            "summary": {
-                "corner_count": 3,
-                "corner_order": ["tt", "ss", "ff"],
-                "temperatures_c": [27, 125, -40],
+            "verdict": {
+                "point_order": ["coarse", "medium", "fine"],
+                "estimates": [0.63294341821, 0.632172000094, 0.632123773957],
+                "order_ratios": [15.996095, 15.999754],
             },
         },
     }
-    assert normalized.sources[0].address.locator == "inputs/two-stage-opamp.json"
+    assert normalized.sources[0].address.locator == "inputs/refinement-points.json"
     assert poison_source.is_dir()

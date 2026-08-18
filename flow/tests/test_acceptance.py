@@ -19,12 +19,12 @@ from hedloom_flow import (
     plan,
     submit,
 )
-from examples import characterization
+from examples import refinement
 
 
-DESIGN = artifact("analog-design-description")
-CORNER_METRICS = artifact("point-metrics")
-SUMMARY = artifact("characterization-summary")
+GRID = artifact("grid-declaration")
+QUADRATURE = artifact("quadrature-result")
+VERDICT = artifact("refinement-verdict")
 JSON_CODEC = codec("json", encoding="utf-8")
 REPOSITORY_JSON = materialization(
     codec=JSON_CODEC,
@@ -42,14 +42,14 @@ def _source(locator, artifact_contract):
 
 
 @pytest.mark.parametrize(
-    ("include_extremes", "expected_points"),
-    [(False, ("tt",)), (True, ("tt", "ss", "ff"))],
+    ("include_refinements", "expected_points"),
+    [(False, ("coarse",)), (True, ("coarse", "medium", "fine"))],
 )
-def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
-    include_extremes, expected_points
+def test_refinement_collection_fan_in_is_ordered_and_fully_keyed(
+    include_refinements, expected_points
 ):
-    normalized = characterization.build_characterization_plan(
-        include_extremes=include_extremes
+    normalized = refinement.build_refinement_plan(
+        include_refinements=include_refinements
     )
 
     assert normalized.validate() is normalized
@@ -64,21 +64,21 @@ def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
     ]
     assert len(roots) == 1
     root = roots[0]
-    assert root.authored_key == "characterize-design"
+    assert root.authored_key == "refine-grid"
     assert {
         boundary.parent_id
         for boundary in normalized.boundaries
         if boundary.parent_id is not None
     } == {root.id}
     assert {boundary.authored_key for boundary in normalized.boundaries} == {
-        "characterize-design",
+        "refine-grid",
         *(f"point-{point}" for point in expected_points),
     }
 
     summary = next(
         invocation
         for invocation in normalized.invocations
-        if invocation.authored_key == "reduce-characterization"
+        if invocation.authored_key == "compare-refinements"
     )
     binding = summary.inputs[0]
     assert isinstance(binding, CollectionInputBinding)
@@ -92,14 +92,14 @@ def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
         bound_points.append(
             next(item.value for item in producer.config if item.name == "point")
         )
-        assert producer.authored_key == "estimate-point-metrics"
+        assert producer.authored_key == "integrate-point"
         producer_boundary_ids.append(producer.boundary_id)
     assert tuple(bound_points) == expected_points
     assert len(set(producer_boundary_ids)) == len(expected_points)
     assert set(producer_boundary_ids) == {
         boundary.id
         for boundary in normalized.boundaries
-        if boundary.authored_key != "characterize-design"
+        if boundary.authored_key != "refine-grid"
     }
 
     positioned_edges = sorted(
@@ -121,26 +121,26 @@ def test_characterization_collection_fan_in_is_ordered_and_fully_keyed(
 
     assert {output.name for output in normalized.outputs} == {
         *(f"points__{point}" for point in expected_points),
-        "summary",
+        "verdict",
     }
     assert json.loads(normalized.to_json()) == normalized.to_data()
 
 
-def test_characterization_example_prints_canonical_json(capsys):
-    normalized = characterization.build_characterization_plan()
+def test_refinement_example_prints_canonical_json(capsys):
+    normalized = refinement.build_refinement_plan()
 
-    characterization.main()
+    refinement.main()
     printed = capsys.readouterr().out.strip()
     assert printed == normalized.to_json()
 
 
-@pytest.mark.parametrize("include_extremes", [False, True])
-def test_same_example_inputs_reconstruct_identical_data_and_ids(include_extremes):
-    first = characterization.build_characterization_plan(
-        include_extremes=include_extremes
+@pytest.mark.parametrize("include_refinements", [False, True])
+def test_same_example_inputs_reconstruct_identical_data_and_ids(include_refinements):
+    first = refinement.build_refinement_plan(
+        include_refinements=include_refinements
     )
-    second = characterization.build_characterization_plan(
-        include_extremes=include_extremes
+    second = refinement.build_refinement_plan(
+        include_refinements=include_refinements
     )
 
     assert first.to_data() == second.to_data()
@@ -154,9 +154,9 @@ def test_same_example_inputs_reconstruct_identical_data_and_ids(include_extremes
 def test_example_operation_bodies_are_never_executed():
     # Both public operation bodies raise unconditionally. Reaching a valid plan
     # is direct evidence that flow authoring recorded calls without running them.
-    full = characterization.build_characterization_plan()
-    nominal_only = characterization.build_characterization_plan(
-        include_extremes=False
+    full = refinement.build_refinement_plan()
+    nominal_only = refinement.build_refinement_plan(
+        include_refinements=False
     )
 
     assert len(full.invocations) == 4
@@ -166,16 +166,16 @@ def test_example_operation_bodies_are_never_executed():
 def test_nested_flow_failure_rolls_back_graph_and_all_id_counters():
     @operation(
         name="acceptance.estimate",
-        inputs={"design": DESIGN},
-        outputs={"metrics": CORNER_METRICS},
+        inputs={"design": GRID},
+        outputs={"metrics": QUADRATURE},
     )
     def estimate(design):
         raise AssertionError("must not run")
 
     @operation(
         name="acceptance.summarize",
-        inputs={"metrics": CORNER_METRICS},
-        outputs={"summary": SUMMARY},
+        inputs={"metrics": QUADRATURE},
+        outputs={"summary": VERDICT},
     )
     def summarize(metrics):
         raise AssertionError("must not run")
@@ -197,7 +197,7 @@ def test_nested_flow_failure_rolls_back_graph_and_all_id_counters():
 
     with plan() as draft:
         result = rollback_study(
-            _source("inputs/design.json", DESIGN)
+            _source("inputs/grid.json", GRID)
         )
     normalized = draft.finish(outputs={"summary": result})
 
@@ -219,24 +219,24 @@ def test_nested_flow_failure_rolls_back_graph_and_all_id_counters():
 
 def test_foreign_source_only_and_incompatible_values_fail_before_finish_returns():
     @operation(
-        inputs={"design": DESIGN},
-        outputs={"metrics": CORNER_METRICS},
+        inputs={"design": GRID},
+        outputs={"metrics": QUADRATURE},
     )
     def estimate(design):
         raise AssertionError("must not run")
 
-    @operation(inputs={"metrics": CORNER_METRICS}, outputs={"summary": SUMMARY})
+    @operation(inputs={"metrics": QUADRATURE}, outputs={"summary": VERDICT})
     def summarize(metrics):
         raise AssertionError("must not run")
 
     with plan() as foreign_draft:
         foreign_result = estimate(
-            _source("inputs/foreign.json", DESIGN)
+            _source("inputs/foreign.json", GRID)
         )
     foreign_draft.finish(outputs={"metrics": foreign_result})
 
     with plan() as local_draft:
-        local_source = _source("inputs/local.json", DESIGN)
+        local_source = _source("inputs/local.json", GRID)
         with pytest.raises(BindingError, match="different plan"):
             summarize(foreign_result)
         with pytest.raises(BindingError, match="expects artifact kind"):
@@ -257,45 +257,45 @@ def test_foreign_source_only_and_incompatible_values_fail_before_finish_returns(
 
 def test_no_run_or_ambient_execution_surface_and_submit_is_explicit():
     assert not hasattr(hedloom_flow, "run")
-    assert not hasattr(characterization.characterize_design, "run")
-    assert not hasattr(characterization.estimate_corner_metrics, "run")
+    assert not hasattr(refinement.refine_grid, "run")
+    assert not hasattr(refinement.integrate, "run")
 
     with pytest.raises(PlanningScopeError, match="active plan"):
-        characterization.characterize_design(object(), include_extremes=True)
+        refinement.refine_grid(object(), include_refinements=True)
     with pytest.raises(PlanningScopeError, match="active plan"):
-        _source("inputs/design.json", DESIGN)
+        _source("inputs/grid.json", GRID)
     with pytest.raises(NotImplementedError, match="outside this planning spike"):
-        submit(characterization.build_characterization_plan())
+        submit(refinement.build_refinement_plan())
 
 
 def _mapping_order_plan(*, reverse_inputs):
     @operation(
         name="acceptance.mapping_order.estimate",
-        inputs={"design": DESIGN},
+        inputs={"design": GRID},
         config={"point": parameter(str)},
-        outputs={"metrics": CORNER_METRICS},
+        outputs={"metrics": QUADRATURE},
     )
     def estimate(design, *, point):
         raise AssertionError("must not run")
 
     reducer_inputs = (
-        {"right": CORNER_METRICS, "left": CORNER_METRICS}
+        {"right": QUADRATURE, "left": QUADRATURE}
         if reverse_inputs
-        else {"left": CORNER_METRICS, "right": CORNER_METRICS}
+        else {"left": QUADRATURE, "right": QUADRATURE}
     )
 
     @operation(
         name="acceptance.mapping_order.reduce",
         inputs=reducer_inputs,
-        outputs={"summary": SUMMARY},
+        outputs={"summary": VERDICT},
     )
     def reduce(left, right):
         raise AssertionError("must not run")
 
     with plan() as draft:
-        design = _source("inputs/design.json", DESIGN)
-        left = estimate(design, point="ss")
-        right = estimate(design, point="ff")
+        design = _source("inputs/grid.json", GRID)
+        left = estimate(design, point="medium")
+        right = estimate(design, point="fine")
         summary = reduce(left=left, right=right)
     return draft.finish(outputs={"summary": summary})
 

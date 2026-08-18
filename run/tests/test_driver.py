@@ -8,12 +8,12 @@ from hedloom_exec.transport import InProcessTransport
 from hedloom_run.driver import run_plan
 
 
-def point(key, temperature):
+def point(key, setting):
     return {
         "id": f"invoke:{key}",
         "authored_key": key,
         "operation": {"name": "estimate", "version": "1"},
-        "config": [{"name": "t", "value": temperature}],
+        "config": [{"name": "t", "value": setting}],
         "inputs": [],
     }
 
@@ -41,7 +41,7 @@ def summary(members):
     }
 
 
-def document(temperatures=(27, 125), stragglers=()):
+def document(settings=(8, 32), stragglers=()):
     """``stragglers`` are points nothing summarises, so nothing depends on them.
 
     They are what tells "this run stopped" apart from "this dependent could not
@@ -49,7 +49,7 @@ def document(temperatures=(27, 125), stragglers=()):
     ``stop_on_failure`` decides whether unrelated work goes ahead.
     """
 
-    keys = ["tt", "ss"]
+    keys = ["coarse", "medium"]
     return {
         "schema_version": 2,
         "sources": [],
@@ -64,7 +64,7 @@ def document(temperatures=(27, 125), stragglers=()):
             },
         ],
         "invocations": [
-            point(key, value) for key, value in zip(keys, temperatures)
+            point(key, value) for key, value in zip(keys, settings)
         ] + [summary(keys)] + [
             point(key, value) for key, value in stragglers
         ],
@@ -91,7 +91,7 @@ def test_a_plan_runs_in_dependency_order(tmp_path):
     )
 
     assert report.succeeded
-    assert [item.authored_key for item in report.outcomes] == ["tt", "ss", "summary"]
+    assert [item.authored_key for item in report.outcomes] == ["coarse", "medium", "summary"]
 
 
 def test_outputs_are_threaded_into_the_inputs_that_reference_them(tmp_path):
@@ -99,7 +99,7 @@ def test_outputs_are_threaded_into_the_inputs_that_reference_them(tmp_path):
     final = report.outcomes[-1]
 
     assert final.value["count"] == 2
-    assert final.value["worst"] == pytest.approx(60.0 - 0.05 * 125)
+    assert final.value["worst"] == pytest.approx(60.0 - 0.05 * 32)
 
 
 def test_a_second_run_reuses_everything(tmp_path):
@@ -110,7 +110,7 @@ def test_a_second_run_reuses_everything(tmp_path):
 
     assert len(second.reused) == 3
     assert second.ran == ()
-    assert runs == [27, 125]
+    assert runs == [8, 32]
 
 
 def test_editing_one_input_reruns_it_and_its_dependents_only(tmp_path):
@@ -118,25 +118,25 @@ def test_editing_one_input_reruns_it_and_its_dependents_only(tmp_path):
     shared = transport(runs)
     run_plan(document(), shared, plan_id="p", root=str(tmp_path))
     report = run_plan(
-        document((27, 150)), shared, plan_id="p", root=str(tmp_path)
+        document((8, 128)), shared, plan_id="p", root=str(tmp_path)
     )
 
     reran = {item.authored_key for item in report.ran}
     reused = {item.authored_key for item in report.reused}
-    assert reran == {"ss", "summary"}
-    assert reused == {"tt"}
-    assert runs == [27, 125, 150]
+    assert reran == {"medium", "summary"}
+    assert reused == {"coarse"}
+    assert runs == [8, 32, 128]
 
 
 def test_a_failure_blocks_its_successors_rather_than_running_them(tmp_path):
     report = run_plan(
-        document(), transport(failing=125), plan_id="p", root=str(tmp_path)
+        document(), transport(failing=32), plan_id="p", root=str(tmp_path)
     )
 
     assert not report.succeeded
     by_key = {item.authored_key: item for item in report.outcomes}
-    assert by_key["tt"].outcome == "succeeded"
-    assert by_key["ss"].outcome == "failed"
+    assert by_key["coarse"].outcome == "succeeded"
+    assert by_key["medium"].outcome == "failed"
     assert by_key["summary"].outcome == "blocked"
     assert report.blocked
 
@@ -151,15 +151,15 @@ def test_continuing_past_a_failure_still_refuses_to_run_its_dependents(tmp_path)
     """
 
     report = run_plan(
-        document(stragglers=(("late", 27),)),
-        transport(failing=125),
+        document(stragglers=(("late", 8),)),
+        transport(failing=32),
         plan_id="p",
         root=str(tmp_path),
         stop_on_failure=False,
     )
 
     by_key = {item.authored_key: item for item in report.outcomes}
-    assert by_key["ss"].outcome == "failed"
+    assert by_key["medium"].outcome == "failed"
     # Nothing depends on this one, so continuing means it runs.
     assert by_key["late"].outcome == "succeeded"
     # This one named the failure as an input, so it cannot run at all.
@@ -171,14 +171,14 @@ def test_stopping_also_holds_back_work_that_had_nothing_to_do_with_it(tmp_path):
     """The other half of the same scope: the default stops the whole run."""
 
     report = run_plan(
-        document(stragglers=(("late", 27),)),
-        transport(failing=125),
+        document(stragglers=(("late", 8),)),
+        transport(failing=32),
         plan_id="p",
         root=str(tmp_path),
     )
 
     by_key = {item.authored_key: item for item in report.outcomes}
-    assert by_key["ss"].outcome == "failed"
+    assert by_key["medium"].outcome == "failed"
     assert by_key["late"].outcome == "blocked"
     assert by_key["summary"].outcome == "blocked"
 
@@ -192,25 +192,25 @@ def test_progress_is_reportable_while_the_run_proceeds(tmp_path):
         root=str(tmp_path),
         on_event=seen.append,
     )
-    assert [item.authored_key for item in seen] == ["tt", "ss", "summary"]
+    assert [item.authored_key for item in seen] == ["coarse", "medium", "summary"]
 
 
 def test_the_report_summarises_what_happened(tmp_path):
     report = run_plan(document(), transport(), plan_id="p", root=str(tmp_path))
     text = report.summary()
-    assert "tt" in text and "succeeded" in text
+    assert "coarse" in text and "succeeded" in text
 
 
-def test_a_failed_corner_is_retried_on_the_next_run(tmp_path):
+def test_a_failed_point_is_retried_on_the_next_run(tmp_path):
     """Failures are not cached, so a fixed environment reruns them."""
 
     first = run_plan(
-        document(), transport(failing=125), plan_id="p", root=str(tmp_path)
+        document(), transport(failing=32), plan_id="p", root=str(tmp_path)
     )
     assert not first.succeeded
 
     second = run_plan(document(), transport(), plan_id="p", root=str(tmp_path))
     assert second.succeeded
     by_key = {item.authored_key: item for item in second.outcomes}
-    assert by_key["tt"].reused, "the point that worked must not rerun"
-    assert by_key["ss"].ran
+    assert by_key["coarse"].reused, "the point that worked must not rerun"
+    assert by_key["medium"].ran

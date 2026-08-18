@@ -76,6 +76,15 @@ printed output is real.
 * `examples/farm_multi_client.py` — what happens when two studies, or two
   controllers, want the farm at once, measured from the attempt journals.
 
+The same study appears twice more, one layer down each time, which is the
+shortest way to see what each unit is responsible for:
+[`flow/examples/refinement.py`](../flow/examples/refinement.py) authors it and
+prints the Plan while running nothing, and
+[`exec/examples/planned_refinement.py`](../exec/examples/planned_refinement.py)
+executes that document through the attempt API, refines one point, and reuses
+the rest. All three arrive at the same three estimates — one of them by way of
+real `awk` — because the trapezoid rule does not care who evaluates it.
+
 Nothing in `examples/` names a domain. The studies that do — real simulators,
 real circuits, real sign-off limits — live in [`../studies/`](../../studies/README.md),
 one level up from this package, and are where hedloom is exercised hardest.

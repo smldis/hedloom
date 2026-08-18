@@ -1,21 +1,29 @@
 """Author a flow, plan it, execute it, edit one input, and rerun.
 
 This is the first end-to-end slice across both units: Hedloom Flow authors and
-normalizes a static Plan, Hedloom Exec derives content-addressed bundles from that
-Plan document and executes them with durable records.
+normalizes a static Plan, Hedloom Exec derives content-addressed bundles from
+that Plan document and executes them with durable records.
 
-The point of the demonstration is the second run. Change one point's
-temperature and rerun: that point and the reduction downstream of it recompute,
-the untouched points are reused from their published manifests, and the
-superseded result is still on disk and nameable rather than overwritten.
+The point of the demonstration is the third run. Refine one point's grid and
+rerun: that point and the reduction downstream of it recompute, the untouched
+points are reused from their published manifests, and the superseded result is
+still on disk and nameable rather than overwritten. Nothing is asked to declare
+that it changed — the digest of what went in is what decides.
+
+The work is the trapezoid rule over a definite integral whose value is
+analytic, so a reused result and a recomputed one can be checked against each
+other rather than trusted. `../../examples/grid_refinement.py` is the same
+study one layer up, where the integration is done by real `awk` on whatever
+placement the site names; it gets the same numbers.
 
 Run it from the unit directory with both source trees on the path:
 
-    PYTHONPATH=src:../flow/src python examples/planned_characterization.py
+    PYTHONPATH=src:../flow/src python examples/planned_refinement.py
 """
 
 from __future__ import annotations
 
+import math
 import shutil
 import sys
 import tempfile
@@ -33,11 +41,12 @@ try:
         parameter,
         planned,
     )
+    from hedloom_flow.authoring import returned
 except ModuleNotFoundError:  # pragma: no cover - guidance, not logic
     sys.exit(
         "hedloom_flow is required for this example.\n"
         "Run: PYTHONPATH=src:../flow/src python "
-        "examples/planned_characterization.py"
+        "examples/planned_refinement.py"
     )
 
 from hedloom_exec.durability import Durability, execute
@@ -45,74 +54,86 @@ from hedloom_exec.planned import plan_bundles
 from hedloom_exec.reuse import describe_staleness, scan_attempts, stale_attempts
 from hedloom_exec.transport import InProcessTransport
 
-PLAN_ID = "characterization"
-POINTS = {"tt": 27, "ss": 125, "ff": -40}
+PLAN_ID = "refinement"
+POINTS = {"coarse": 8, "medium": 32, "fine": 128}
+
+# The integral is exp(-x) over [0, 1], whose exact value is 1 - 1/e. Declared
+# here rather than measured so the estimates below have something to be wrong
+# against.
+LOWER = 0.0
+UPPER = 1.0
+EXACT = math.exp(-LOWER) - math.exp(-UPPER)
 
 
 @operation(
-    inputs={"design": artifact("design")},
-    config={"point": parameter(str), "temperature_c": parameter(int)},
-    outputs={"metrics": artifact("point-metrics")},
+    inputs={"grid": artifact("grid-declaration")},
+    config={"point": parameter(str), "steps": parameter(int)},
+    outputs={"result": returned(kind="quadrature-result")},
 )
-def estimate(design, *, point, temperature_c):
+def integrate(grid, *, point, steps):
     raise AssertionError("operation bodies do not run during planning")
 
 
 @operation(
-    inputs={"measurements": artifacts("point-metrics")},
-    outputs={"summary": artifact("summary")},
+    inputs={"results": artifacts("quadrature-result")},
+    outputs={"verdict": returned(kind="refinement-verdict")},
 )
-def summarize(measurements):
+def compare(results):
     raise AssertionError("operation bodies do not run during planning")
 
 
 @flow
-def characterize(design, *, points):
+def refine(grid, *, points):
     results = [
-        estimate.named(f"point-{name}")(
-            design, point=name, temperature_c=temperature
-        )
-        for name, temperature in points.items()
+        integrate.named(f"point-{name}")(grid, point=name, steps=steps)
+        for name, steps in points.items()
     ]
-    return summarize.named("summary")(results)
+    return compare.named("compare")(results)
 
 
 @planned
-def characterization(points):
+def refinement(points):
     """The plan. Calling this builds one; nothing inside it runs."""
 
-    design = input_artifact(
-        address("repository-relative", "inputs/opamp.json"),
-        artifact=artifact("design"),
+    grid = input_artifact(
+        address("repository-relative", "inputs/grid.json"),
+        artifact=artifact("grid-declaration"),
         materialized_as=materialization(
             address_space="repository-relative",
             codec=codec("json", encoding="utf-8"),
             access_scope="repository-checkout",
         ),
     )
-    return {"summary": characterize(design, points=points)}
+    return {"verdict": refine(grid, points=points)}
 
 
 def build_plan(points):
     """The document, which is what this example's executor consumes."""
 
-    return characterization(points).to_data()
+    return refinement(points).to_data()
 
 
-# Implementations. Deliberately arithmetic rather than a tool: the slice
-# under demonstration is identity and reuse, not analog meaning.
-def estimate_impl(*, point, temperature_c, design=None):
-    return {"point": point, "gain_db": 60.0 - 0.05 * temperature_c}
+# Implementations. Deliberately arithmetic rather than a tool: the slice under
+# demonstration is identity and reuse, not what the number means.
+def integrate_impl(*, point, steps, grid=None):
+    width = (UPPER - LOWER) / steps
+    total = (math.exp(-LOWER) + math.exp(-UPPER)) / 2.0
+    for index in range(1, steps):
+        total += math.exp(-(LOWER + index * width))
+    return {"point": point, "steps": steps, "estimate": total * width}
 
 
-def summarize_impl(*, measurements=None):
-    values = [item["gain_db"] for item in (measurements or [])]
-    return {"worst_gain_db": min(values), "points": len(values)}
+def compare_impl(*, results=None):
+    estimates = [item["estimate"] for item in (results or [])]
+    return {
+        "points": len(estimates),
+        "worst_error": max((abs(value - EXACT) for value in estimates), default=None),
+    }
 
 
 def run(document, root, label):
     transport = InProcessTransport(
-        {"__main__.estimate": estimate_impl, "__main__.summarize": summarize_impl}
+        {"__main__.integrate": integrate_impl, "__main__.compare": compare_impl}
     )
     values: dict[str, object] = {}
     print(f"\n{label}")
@@ -136,9 +157,9 @@ def run(document, root, label):
             invocation_id=item.invocation_id,
         )
         verb = "reused " if result.disposition == "completed" else "ran    "
-        print(f"  {verb} {item.authored_key:<12} {item.input_digest[:12]}")
+        print(f"  {verb} {item.authored_key:<14} {item.input_digest[:12]}")
 
-        for output in ("metrics", "summary"):
+        for output in ("result", "verdict"):
             values[f"output:{item.input_digest}:{output}"] = result.value
 
     return values
@@ -151,12 +172,12 @@ def main():
         run(first, root, "First run — nothing is published yet")
         run(first, root, "Second run — unchanged inputs, nothing recomputes")
 
-        edited = dict(POINTS, ss=150)
+        edited = dict(POINTS, fine=512)
         second = build_plan(edited)
-        values = run(second, root, "Third run — ss retuned to 150C")
+        values = run(second, root, "Third run — the fine grid refined to 512 steps")
 
-        summary = [value for key, value in values.items() if "summary" in key]
-        print(f"\n  final summary: {summary[-1] if summary else None}")
+        verdicts = [value for key, value in values.items() if "verdict" in key]
+        print(f"\n  final verdict: {verdicts[-1] if verdicts else None}")
 
         known = scan_attempts(root)
         superseded = [

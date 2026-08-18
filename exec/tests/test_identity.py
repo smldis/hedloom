@@ -51,7 +51,7 @@ def test_ordinary_planner_ids_are_accepted():
     """Planner IDs carry colons; only the rendered form must be name-safe."""
 
     identity = attempt_identity(
-        plan_id="characterization",
+        plan_id="refinement",
         invocation_id="invoke:key:9f2c4b1e",
     )
     assert identity.rendered.startswith("hedloom-")
