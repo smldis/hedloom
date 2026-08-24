@@ -343,6 +343,13 @@ new child or adapter unit is justified by data-only declarations alone.
 
 ### Authorized immutable model
 
+> **Subsequent design change (2026-08-18).** This authorized model and the
+> worked sample below remain intact as a historical work-order record. Commit
+> `e9fe635` removed `materializable()` and `can_materialize_as`; commit `7934f19`
+> then removed `codec()`, `CodecContract`, `materialization()`,
+> `MaterializationSpec`, `access_scope`, and source `materialized_as`. A current
+> source declaration consists of its artifact contract and address.
+
 Keep `ArtifactContract(kind)` purely logical. Add four data-only concepts:
 
 - `CodecContract(name, version, options)` identifies a codec contract; options
