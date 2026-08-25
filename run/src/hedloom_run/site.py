@@ -110,7 +110,7 @@ class Site:
     Two forms, and the second is the same vocabulary a profile's `[placement.x]`
     table uses — deliberately, so that a site written in Python and a site read
     from TOML are the same declaration in two notations rather than two code
-    paths that must agree:
+    paths that must agree::
 
         placements={"local": 4}                        # a bare budget
         placements={"lsf": {"kind": "lsf-interactive", # a whole placement

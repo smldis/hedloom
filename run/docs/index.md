@@ -276,3 +276,10 @@ own the cluster: it neither creates, sizes, nor tears one down, and with
 distinguishes a point pending in the queue from one running — that
 observation belongs to a watcher over the attempt records
 (`hedloom_exec.watch`), not to this unit.
+
+```{toctree}
+:maxdepth: 1
+:caption: Reference
+
+api
+```

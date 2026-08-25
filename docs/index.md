@@ -103,6 +103,13 @@ guide/refusals
 
 ```{toctree}
 :maxdepth: 2
+:caption: Reference
+
+api
+```
+
+```{toctree}
+:maxdepth: 2
 :caption: Working on Hedloom
 
 internals/index

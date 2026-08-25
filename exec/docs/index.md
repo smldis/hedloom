@@ -63,6 +63,13 @@ See [`DECISIONS.md`](../DECISIONS.md) for what is settled, what is open, and
 what would change our minds.
 
 ```{toctree}
+:maxdepth: 1
+:caption: Reference
+
+api
+```
+
+```{toctree}
 :hidden:
 :maxdepth: 1
 

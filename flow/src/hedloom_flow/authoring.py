@@ -432,7 +432,7 @@ def sweep(items: Iterable[Any], key: Callable[[Any], str] | str) -> Iterator[Any
     wrong is silent staleness rather than an error.
 
     This opens a keyed scope per point instead. Calls inside the loop take
-    ``<point>:<operation>`` unless they name a key themselves.
+    ``<point>:<operation>`` unless they name a key themselves::
 
         for point in sweep(POINTS, key=lambda item: item["key"]):
             result = solve(write_input(**point))

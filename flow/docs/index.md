@@ -71,4 +71,5 @@ current contracts.
 :caption: Architecture
 
 architecture
+api
 ```

@@ -160,7 +160,7 @@ class AttemptJournal:
         producing two real jobs for one attempt. An advisory lock on a file in
         the attempt directory is enough: every writer goes through here.
 
-        ==================================================================
+        ==== DEVNOTE =============================================
         DEVNOTE/TODO -- REVIEW BEFORE ANY MULTI-HOST USE. Raised 2026-08-16.
 
         "An advisory lock on a file is enough" assumes a filesystem that
@@ -222,7 +222,7 @@ class AttemptJournal:
 
         Do not treat the current single-host green test suite as evidence about
         any of this. It is evidence that the lock works on a local filesystem.
-        ==================================================================
+        ==== END DEVNOTE =========================================
         """
 
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -392,7 +392,7 @@ class AttemptJournal:
         evidence behind it -- and not only on a crash, since the window between
         the two writes is itself such a state for any concurrent reader.
 
-        ==================================================================
+        ==== DEVNOTE =============================================
         DEVNOTE/TODO -- NO WRITER EXCLUSION HERE. Raised 2026-08-17 by the
         TLA+ model in `docs/attempt-claim/`; see `docs/attempt-claim-protocol.md`.
 
@@ -421,7 +421,7 @@ class AttemptJournal:
         Same exposure gate as the claim DEVNOTE above -- it needs two live
         callers for one identity, which one controller with one task per
         invocation never produces. Fix it before pooled placement lands.
-        ==================================================================
+        ==== END DEVNOTE =========================================
         """
 
         if outcome not in TERMINAL_OUTCOMES:
