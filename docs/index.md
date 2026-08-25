@@ -86,7 +86,7 @@ the rest. All three arrive at the same three estimates — one of them by way of
 real `awk` — because the trapezoid rule does not care who evaluates it.
 
 Nothing in `examples/` names a domain. The studies that do — real simulators,
-real circuits, real sign-off limits — live in [`../studies/`](../../studies/README.md),
+real circuits, real sign-off limits — live in `../studies/`,
 one level up from this package, and are where hedloom is exercised hardest.
 
 ```{toctree}
