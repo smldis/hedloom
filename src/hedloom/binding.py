@@ -66,13 +66,16 @@ def shell(*argv: Any) -> Shell:
 class Workspace:
     """The declared outputs of one attempt, as paths inside its own directory.
 
-    An operation writes to `out.<name>`, which is where the executor will
-    afterwards look for that declared output. The two cannot drift apart,
-    because they are the same declaration read once.
+    Attribute access is only for declared outputs: an operation writes to
+    `out.<name>`, which is where the executor will afterwards look for that
+    declared output. The workspace itself is the attempt directory as an
+    `os.PathLike`, usable with `Path(out)`, `os.fspath(out)`, `open(out)`, and
+    string interpolation. The two cannot drift apart, because they are the
+    same declaration read once.
     """
 
     def __init__(self, directory: str | Path, bindings: Mapping[str, Mapping[str, Any]]):
-        self.directory = Path(directory)
+        self._directory = Path(directory)
         self._bindings = dict(bindings)
 
     def __getattr__(self, name: str) -> Path:
@@ -82,10 +85,16 @@ class Workspace:
                 f"this operation declares no file output named {name!r} "
                 f"(declares: {', '.join(sorted(self._bindings)) or 'none'})"
             )
-        return self.directory / binding["path"]
+        return self._directory / binding["path"]
+
+    def __fspath__(self) -> str:
+        return str(self._directory)
+
+    def __str__(self) -> str:
+        return str(self._directory)
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostics
-        return f"Workspace({self.directory}, {sorted(self._bindings)})"
+        return f"Workspace({self._directory}, {sorted(self._bindings)})"
 
 
 class BoundTransport:

@@ -73,8 +73,10 @@ that would place each point on its own job as a comment rather than a claim.
   of what an operation is.
 - An operation body **runs**. It receives the inputs the Plan resolved, its
   declared config, and — if it names the reserved parameter `out` — a
-  `Workspace` addressing that attempt's own directory. A body that computes a
-  value returns it; a body that writes files writes to `out.<name>`.
+  `Workspace` addressing that attempt's own directory. Attribute access on the
+  workspace resolves declared outputs only; the workspace itself is the attempt
+  directory as an `os.PathLike`. A body that computes a value returns it; a body
+  that writes files writes to `out.<name>`.
 - Returning a `Shell` makes the body a launcher: the command is executed at the
   placement the invocation resolved to. Locally that is a subprocess bound to
   this process's lifetime, and on `lsf` it is the delegate's `bsub -I` job with

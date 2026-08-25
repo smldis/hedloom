@@ -7,6 +7,7 @@ operation said it would, and that nothing is spent before `submit`.
 
 import importlib
 import inspect
+import os
 from pathlib import Path
 
 import pytest
@@ -218,9 +219,15 @@ def test_an_operation_with_no_bound_body_refuses(tmp_path):
 
 def test_a_workspace_offers_only_declared_file_outputs(tmp_path):
     workspace = Workspace(tmp_path, {"raw": {"path": "point.raw"},
+                                     "directory": {"path": "directory.txt"},
                                      "value": {"value": True}})
 
+    assert Path(workspace) == tmp_path
+    assert os.fspath(workspace) == str(tmp_path)
+    assert str(workspace) == str(tmp_path)
+    assert f"{workspace}" == str(tmp_path)
     assert workspace.raw == tmp_path / "point.raw"
+    assert workspace.directory == tmp_path / "directory.txt"
     with pytest.raises(AttributeError):
         workspace.value
     with pytest.raises(AttributeError):
