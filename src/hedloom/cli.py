@@ -10,8 +10,16 @@ from typing import Sequence
 from hedloom_exec.alias import alias_path
 from hedloom_exec.identity import IdentityError, parse_try_name
 from hedloom_exec.lineage import is_behind, lineage, why_reran
+from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.pins import (
+    PinError,
+    PinSelectionError,
+    pin as pin_workspace,
+    resolve_selector,
+    unpin as unpin_workspace,
+)
 from hedloom_exec.reuse import scan_attempts
-from hedloom_run.site import Site
+from hedloom_run.site import Site, SiteError
 
 
 def _location(parser: argparse.ArgumentParser) -> None:
@@ -22,6 +30,27 @@ def _location(parser: argparse.ArgumentParser) -> None:
 
 def _root(arguments: argparse.Namespace) -> str:
     return Site.from_file(arguments.site).root if arguments.site else arguments.root
+
+
+def _storage_location(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--site", help="site TOML naming both storage roots")
+    parser.add_argument("--root", help="attempt-record root")
+    parser.add_argument("--workspace-root", help="try-workspace root")
+
+
+def _storage_roots(arguments: argparse.Namespace) -> tuple[str, str]:
+    if arguments.site:
+        if arguments.root or arguments.workspace_root:
+            raise ValueError("--site cannot be combined with explicit roots")
+        site = Site.from_file(arguments.site)
+        if site.workspace_root is None:
+            raise ValueError(
+                "the site declares no workspace_root; this operation needs both roots"
+            )
+        return site.root, site.workspace_root
+    if not arguments.root or not arguments.workspace_root:
+        raise ValueError("this operation needs --site or both --root and --workspace-root")
+    return arguments.root, arguments.workspace_root
 
 
 def _selector(value: str) -> tuple[str, str]:
@@ -47,6 +76,23 @@ def _parser() -> argparse.ArgumentParser:
     log = commands.add_parser("log", help="show an invocation's iterations")
     _location(log)
     log.add_argument("selector")
+
+    pin = commands.add_parser("pin", help="protect terminal try workspaces")
+    _storage_location(pin)
+    pin.add_argument("selector")
+    pin.add_argument("--reason", required=True)
+    pin.add_argument("--actor")
+    pin.add_argument("--no-freeze", action="store_true")
+
+    unpin = commands.add_parser("unpin", help="release one pin")
+    _storage_location(unpin)
+    unpin.add_argument("selector", help="pin id or unique pin-id prefix")
+    unpin.add_argument("--reason", required=True)
+    unpin.add_argument("--actor")
+    unpin.add_argument("--no-thaw", action="store_true")
+
+    pins = commands.add_parser("pins", help="list active pins")
+    _storage_location(pins)
     return parser
 
 
@@ -167,6 +213,79 @@ def _log(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _pin(arguments: argparse.Namespace) -> int:
+    try:
+        root, workspace_root = _storage_roots(arguments)
+        record, tries = resolve_selector(root, arguments.selector)
+        if not tries:
+            raise PinSelectionError(
+                f"record {record.identity} has no terminal try to pin"
+            )
+        journal = AttemptJournal(root, record.identity)
+        for item in tries:
+            made = pin_workspace(
+                journal, try_number=item.number, workspace_root=workspace_root,
+                reason=arguments.reason, actor=arguments.actor,
+                freeze=not arguments.no_freeze,
+            )
+            print(f"{made.pin_id}  {made.identity}#{made.try_number}  {made.reason}")
+        return 0
+    except (ValueError, PinError, SiteError) as error:
+        print(f"hedloom pin: {error}", file=sys.stderr)
+        return 2
+
+
+def _pin_matches(root: str, selector: str):
+    found = []
+    for record in scan_attempts(root):
+        state = AttemptJournal(root, record.identity).fold()
+        found.extend(
+            (record, item) for item in state.pins
+            if item.is_active and item.pin_id.startswith(selector)
+        )
+    if not found:
+        raise PinSelectionError(f"no active pin matches {selector!r}")
+    if len(found) != 1:
+        raise PinSelectionError(
+            f"pin selector {selector!r} is ambiguous: "
+            + ", ".join(item.pin_id for _record, item in found)
+        )
+    return found[0]
+
+
+def _unpin(arguments: argparse.Namespace) -> int:
+    try:
+        root, _workspace_root = _storage_roots(arguments)
+        record, selected = _pin_matches(root, arguments.selector)
+        released = unpin_workspace(
+            AttemptJournal(root, record.identity), pin_id=selected.pin_id,
+            reason=arguments.reason, actor=arguments.actor,
+            thaw=not arguments.no_thaw,
+        )
+        print(f"released {released.pin_id}  {released.identity}#{released.try_number}")
+        return 0
+    except (ValueError, PinError, SiteError) as error:
+        print(f"hedloom unpin: {error}", file=sys.stderr)
+        return 2
+
+
+def _pins(arguments: argparse.Namespace) -> int:
+    try:
+        root, _workspace_root = _storage_roots(arguments)
+        for record in scan_attempts(root):
+            state = AttemptJournal(root, record.identity).fold()
+            for item in state.pins:
+                if item.is_active:
+                    print(
+                        f"{item.pin_id}  {item.identity}#{item.try_number}  "
+                        f"{item.actor}  {item.reason}"
+                    )
+        return 0
+    except (ValueError, PinError, SiteError) as error:
+        print(f"hedloom pins: {error}", file=sys.stderr)
+        return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the operator CLI, returning a process exit status."""
 
@@ -177,4 +296,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _check(arguments)
     if arguments.command == "log":
         return _log(arguments)
+    if arguments.command == "pin":
+        return _pin(arguments)
+    if arguments.command == "unpin":
+        return _unpin(arguments)
+    if arguments.command == "pins":
+        return _pins(arguments)
     raise AssertionError(f"unhandled command {arguments.command!r}")

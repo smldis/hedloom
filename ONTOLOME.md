@@ -132,6 +132,10 @@ that would place each point on its own job as a comment rather than a claim.
   their changed identity keys. They accept either a site profile or an explicit
   attempt root. Live run output names reruns by changed key and labels completed
   reuse as `reused` rather than inventing a rerun reason.
+- `hedloom pin`, `hedloom unpin`, and `hedloom pins` protect and inspect
+  terminal try workspaces by human selector, record identity or unique prefix.
+  Pinning is an operator action with a reason and actor; it is never authored
+  into a study and never implied by accepting a result for reuse.
 - A study may begin from a file it did not write. An operation declaring an
   `input_artifact` source as an input is handed its located path, and the same
   reading that locates it fingerprints it, so delivery and staleness cannot

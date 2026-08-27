@@ -49,6 +49,15 @@ manifests stay intact, contention skips instead of waiting, and
 safe to resume because the still-present workspace makes the unfinished side
 effect visible.
 
+A pin protects one terminal try when another tool or report holds its path.
+It lives in the record, not the workspace, and carries the operator, reason,
+record layout, and a digest inventory. Hedloom refuses to prune an active pin;
+`verify(pin, layout=...)` detects drift or reports that a layout change voided
+the promise. Removing write bits is only a guardrail: it does not revoke open
+descriptors, stop the owner restoring permissions, or prevent a rename from a
+writable parent. The enforceable contract is refuse, detect, and record—not
+prevent.
+
 ## Rerunning without repeating work
 
 Declare what an invocation depends on and let the identity be derived from it.

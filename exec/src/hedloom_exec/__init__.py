@@ -18,6 +18,7 @@ from hedloom_exec import durability as _durability
 from hedloom_exec import identity as _identity
 from hedloom_exec import journal as _journal
 from hedloom_exec import lineage as _lineage
+from hedloom_exec import pins as _pins
 from hedloom_exec import prune as _prune
 from hedloom_exec import reuse as _reuse
 from hedloom_exec import transport as _transport
@@ -29,6 +30,7 @@ from hedloom_exec.durability import *  # noqa: F401,F403
 from hedloom_exec.identity import *  # noqa: F401,F403
 from hedloom_exec.journal import *  # noqa: F401,F403
 from hedloom_exec.lineage import *  # noqa: F401,F403
+from hedloom_exec.pins import *  # noqa: F401,F403
 from hedloom_exec.prune import *  # noqa: F401,F403
 from hedloom_exec.reuse import *  # noqa: F401,F403
 from hedloom_exec.transport import *  # noqa: F401,F403
@@ -39,6 +41,7 @@ __all__ = [
     *_identity.__all__,
     *_journal.__all__,
     *_lineage.__all__,
+    *_pins.__all__,
     *_prune.__all__,
     *_reuse.__all__,
     *_transport.__all__,

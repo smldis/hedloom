@@ -254,6 +254,16 @@ its siblings are reused and the superseded results stay nameable.
   skips rather than waits. A durable `workspace_removed` event precedes byte
   removal, record directories and manifests remain, optional diagnostics
   remain, and a byte limit bounds each pass.
+- A pin is one durable, attributable promise over one terminal try workspace:
+  Hedloom refuses to prune it, records a frozen inventory and content digests
+  in the record, and `verify()` detects additions, removals, or drift. Pins are
+  never stored in the workspace, never implied by reuse acceptance, and become
+  explicitly void as `layout-changed` when the record layout moves.
+- Pinning may remove write bits as an accident-catching guardrail, but this is
+  not operating-system enforcement: the owner can restore them, open file
+  descriptors survive, and a writable parent permits rename. The contract is
+  refuse, detect, and record—not prevent. Unpinning appends a release event and
+  can restore the modes captured privately when the pin was made.
 
 ## Contribution to the parent
 
