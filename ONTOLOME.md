@@ -143,7 +143,10 @@ that would place each point on its own job as a comment rather than a claim.
   submitted, which assumes a shared filesystem for any placement that is not
   local.
 - Nothing about the site is authored into the study. Placements, roots, address
-  spaces and thread counts come from a `Site`, which a profile file can supply.
+  spaces, thread counts, and retention come from a `Site`, which a profile file
+  can supply. Named `retention.automatic.after_run` rules run only after a
+  completed run and warn rather than changing its result. No `submit(prune=...)`
+  surface exists: a study decides what is produced, never what is kept.
 
 ## Contribution to the parent
 

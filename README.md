@@ -90,7 +90,13 @@ the current output, detect a cached stale path, and inspect why records reran.
   be lost to renumbering — the trap that made unnamed invocations dangerous.
   `.named("...")` does it by hand for a single call.
 - **`Site`** holds what is not the study: placements, roots, address spaces,
-  threads. From TOML, with relative paths anchored to the profile.
+  threads, and retention. From TOML, with relative paths anchored to the profile.
+
+`hedloom prune --site site.toml` is always a survey unless `--apply` is
+present. It reports candidates and exclusions from the Site's named retention
+rules; `--json` makes that plan usable in CI. Pins are separate operator
+promises: `hedloom pin`, `hedloom unpin`, and `hedloom pins` protect terminal
+try paths with durable reasons and attribution.
 
 ## What it does not change
 

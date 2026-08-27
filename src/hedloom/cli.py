@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
+import json
 from pathlib import Path
 import sys
 from typing import Sequence
@@ -17,6 +19,9 @@ from hedloom_exec.pins import (
     pin as pin_workspace,
     resolve_selector,
     unpin as unpin_workspace,
+)
+from hedloom_exec.prune import (
+    RetentionError, RetentionPolicy, RetentionRule, _size, survey,
 )
 from hedloom_exec.reuse import scan_attempts
 from hedloom_run.site import Site, SiteError
@@ -93,6 +98,20 @@ def _parser() -> argparse.ArgumentParser:
 
     pins = commands.add_parser("pins", help="list active pins")
     _storage_location(pins)
+
+    prune = commands.add_parser("prune", help="survey or reclaim try workspaces")
+    _storage_location(prune)
+    prune.add_argument("--rule")
+    prune.add_argument("--outcome")
+    prune.add_argument("--failed", action="store_true")
+    prune.add_argument("--older-than")
+    prune.add_argument("--larger-than")
+    prune.add_argument("--keep-latest", type=int)
+    prune.add_argument("--plan")
+    prune.add_argument("--invocation")
+    prune.add_argument("--apply", action="store_true")
+    prune.add_argument("--json", action="store_true")
+    prune.add_argument("--limit-bytes")
     return parser
 
 
@@ -286,6 +305,113 @@ def _pins(arguments: argparse.Namespace) -> int:
         return 2
 
 
+def _prune_policy(arguments: argparse.Namespace) -> tuple[RetentionPolicy, tuple]:
+    site = Site.from_file(arguments.site) if arguments.site else None
+    declared = RetentionPolicy.from_toml(site.retention if site else {})
+    rules = list(declared.rules)
+    if arguments.rule:
+        rules = [item for item in rules if item.name == arguments.rule]
+        if not rules:
+            raise RetentionError(f"no retention rule is named {arguments.rule!r}")
+
+    outcomes = None
+    if arguments.failed:
+        outcomes = ("failed", "cancelled")
+    if arguments.outcome:
+        if outcomes is not None:
+            raise RetentionError("--failed and --outcome cannot be combined")
+        outcomes = tuple(item.strip() for item in arguments.outcome.split(",") if item.strip())
+    selection_override = any(
+        value is not None
+        for value in (outcomes, arguments.older_than, arguments.larger_than)
+    )
+    overrides = {
+        "outcome": outcomes,
+        "older_than": arguments.older_than,
+        "larger_than": arguments.larger_than,
+        "keep_latest": arguments.keep_latest,
+    }
+    if selection_override and not arguments.rule:
+        rules = [RetentionRule(
+            "command-line", outcome=outcomes or (),
+            older_than=arguments.older_than, larger_than=arguments.larger_than,
+            keep_latest=arguments.keep_latest if arguments.keep_latest is not None else 1,
+        )]
+    elif rules:
+        rules = [
+            replace(rule, **{key: value for key, value in overrides.items()
+                             if value is not None})
+            for rule in rules
+        ]
+    if not rules:
+        raise RetentionError(
+            "no retention rule was selected; declare one in the site or use "
+            "--outcome, --failed, --older-than, or --larger-than"
+        )
+    records = scan_attempts(site.root if site else arguments.root)
+    records = tuple(
+        item for item in records
+        if (arguments.plan is None or item.plan_id == arguments.plan)
+        and (
+            arguments.invocation is None
+            or item.authored_key == arguments.invocation
+            or item.invocation_id == arguments.invocation
+        )
+    )
+    return RetentionPolicy(tuple(rules), floor=declared.floor), records
+
+
+def _prune(arguments: argparse.Namespace) -> int:
+    try:
+        root, workspace_root = _storage_roots(arguments)
+        policy, records = _prune_policy(arguments)
+        found = survey(root, policy, workspace_root=workspace_root, records=records)
+        if not arguments.apply:
+            data = found.as_data()
+            if arguments.json:
+                print(json.dumps(data, sort_keys=True))
+            else:
+                print(found.summary())
+                for item in found.candidates:
+                    print(
+                        f"candidate {item.identity}#{item.try_number}  "
+                        f"{item.bytes} bytes  {item.rule}"
+                    )
+            return 0
+        limit = (
+            _size(arguments.limit_bytes, field="--limit-bytes")
+            if arguments.limit_bytes else None
+        )
+        report = found.apply(limit_bytes=limit)
+        data = {
+            "applied_at": report.applied_at,
+            "freed_bytes": report.freed_bytes,
+            "stopped_at_limit": report.stopped_at_limit,
+            "removed": [
+                {"identity": item.identity, "try": item.try_number,
+                 "workspace": str(item.workspace), "bytes": item.bytes,
+                 "rule": item.rule}
+                for item in report.removed
+            ],
+            "skipped": [
+                {"identity": item.identity, "try": item.try_number,
+                 "reason": item.reason, "detail": item.detail}
+                for item in report.skipped
+            ],
+        }
+        if arguments.json:
+            print(json.dumps(data, sort_keys=True))
+        else:
+            print(
+                f"removed {len(report.removed)} workspace(s), "
+                f"freed {report.freed_bytes} byte(s)"
+            )
+        return 0
+    except (ValueError, RetentionError, SiteError) as error:
+        print(f"hedloom prune: {error}", file=sys.stderr)
+        return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the operator CLI, returning a process exit status."""
 
@@ -302,4 +428,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _unpin(arguments)
     if arguments.command == "pins":
         return _pins(arguments)
+    if arguments.command == "prune":
+        return _prune(arguments)
     raise AssertionError(f"unhandled command {arguments.command!r}")

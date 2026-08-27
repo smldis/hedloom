@@ -98,6 +98,11 @@ dashboard, and failure isolation are untested against anything but fakes.
   a study run from elsewhere means the same thing. A placement kind it cannot
   build is refused rather than skipped, since a missing placement would surface
   later as `UnsupportedPlacement` and blame the Plan for a configuration error.
+- `Site.retention` carries strict, operator-owned `[retention]` data alongside
+  the two storage roots. It is preserved by overrides, local debugging, and
+  transport binding because changing how work runs must not silently discard
+  how that installation keeps spent work. Unknown policy keys and automatic
+  rule names are refused when the Site is built.
 - `site.fingerprints(document)` identifies each declared source by its
   **content**, and both kernels pass the result to `plan_bundles`. This closes a
   real defect: a source's declared address does not change when the file at it
