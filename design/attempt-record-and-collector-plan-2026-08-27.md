@@ -31,9 +31,27 @@ work/hedloom-016ea5b1…-0/            try 0's workspace, and its job name
 work/hedloom-016ea5b1…-1/            try 1's
 ```
 
-`attempt_identity()` is unchanged: the record identity is what it already
-returns for `sequence=0`. `<identity>-<seq>` is string formatting, not a fifth
-hash input, so nothing about content addressing moves.
+`attempt_identity()` takes three components — plan, invocation, digest — and
+`<identity>-<seq>` is string formatting, not a fourth hash input.
+
+**The rendered values change, and that is fine.** An earlier draft said the
+record identity "is what it already returns for `sequence=0`", which is true of
+the *meaning* and false of the *bytes*: the hash material joins four slots
+(`identity.py:90-92`), so removing the sequence removes a slot and every
+rendering moves.
+
+Do not preserve a vestigial `"0"` in the material to keep the old values. There
+is nothing to keep compatible with — this prototype supports no migration
+(Part 4), and every run root on the machine was deleted on 2026-08-27. Freezing
+a literal zero into the hash forever, to protect records that do not exist,
+would keep the sequence inside identity while claiming to have removed it,
+which is the whole change reversed for no benefit.
+
+One test asserts a rendering: `test_an_identity_computed_before_phase_zero_is_unchanged_after_it`
+(`exec/tests/test_created_event.py:108`). It was written to prove **Phase 0**
+added nothing to identity, and it did its job. Phase 1 updates it to the new
+rendering — deliberately, in the commit that states the new contract, like every
+other test that specifies the design being replaced.
 
 Consequences that are the point rather than side effects: identity becomes
 purely content-addressed; slot selection stops being a probe; `max_attempts`
