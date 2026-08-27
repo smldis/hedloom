@@ -61,7 +61,9 @@ with Client(cluster) as client:
         transports={"local": local, "lsf-direct": lsf},
         plan_id="refinement",
         root="attempts",
-        on_event=lambda outcome: print(outcome.authored_key, outcome.outcome),
+        on_event=lambda outcome: print(
+            outcome.authored_key, outcome.outcome, outcome.changed_keys
+        ),
     )
 ```
 

@@ -16,7 +16,8 @@ raising `KeyError` for a key nothing was authored with rather than returning
 `None` and deferring the mistake.
 
 Each outcome carries `authored_key`, `operation`, `input_digest`,
-`disposition`, `outcome`, `placement`, `value`, `artifacts` and `error`. Those
+`disposition`, `outcome`, `placement`, `value`, `artifacts`, `changed_keys` and
+`error`. Those
 first three are public join keys on purpose: **result tooling — a summary table,
 a run diff — is a consumer of this data and needs no change to hedloom.**
 
@@ -56,6 +57,39 @@ own verdict, or something incidental to it — an OOM kill, a preempted node —
 that the record cannot tell apart. Failed attempts are retained rather than
 silently retried, and accepting one is a separate, durable, human action
 (`hedloom_exec.reuse.accept_for_reuse`).
+
+## Following the current file output
+
+An attempt workspace is evidence and therefore keeps its content-addressed
+name. Editing an identity-bearing input must move that name. For each declared
+file output, Hedloom also maintains a stable view:
+
+```text
+<Site.root>/latest/<plan>/<authored-key>/<output>
+```
+
+The entry is a symlink to the selected attempt's workspace file. It is created
+or atomically repointed before the work launches, so reopening it follows the
+current try and can observe a file while it grows. A program that already has
+the old file open keeps that file descriptor until it reopens. Before the work
+first writes the file, the symlink intentionally dangles; Hedloom does not
+pre-create the declared output, because existence is evidence that the work
+produced it.
+
+The operator commands accept either `--site site.toml` or `--root ATTEMPTS`:
+
+```console
+hedloom where --site site.toml study:point:write --output result
+hedloom check --site site.toml /path/cached/by/a/consumer
+hedloom log --site site.toml study:point:write
+```
+
+`where` prints the current workspace path for a script that resolves rather
+than remembers. `check` exits zero for a current recorded path, one for a stale
+one, and two for a path that is not a recorded attempt. `log` lists distinct
+record creations newest first, marking the alias target as current and naming
+which identity keys changed. Returning to an earlier result moves the current
+marker back to it without weakening or replacing its original identity.
 
 ```{warning}
 **Reuse trusts your declaration.** An operation whose result depends on an

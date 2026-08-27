@@ -67,6 +67,12 @@ needed a second file supplying implementations, command lines, output paths,
 transports and roots; for this project's reference study that file is six
 hundred lines whose only job is to agree with the first one.
 
+Declared file outputs also get a stable current-result name under
+`<Site.root>/latest/`. The identity-named workspace remains immutable evidence;
+editing an input still moves identity, while the alias is repointed before the
+next launch. Use `hedloom where`, `hedloom check`, and `hedloom log` to resolve
+the current output, detect a cached stale path, and inspect why records reran.
+
 - **The body is the implementation.** `@operation` here is `hedloom_flow`'s,
   wrapped so the function it already kept is remembered as callable. The Plan
   records `module:qualname` and a fingerprint of the source, so an edited body

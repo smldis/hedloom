@@ -4,11 +4,18 @@ The invariant: an operation's declared outputs exist after a successful run,
 and a downstream invocation resolves them to the same paths.
 """
 
+from pathlib import Path
 import sys
 
 import pytest
 
-from hedloom_exec.artifacts import MissingOutput, OutputDeclarationError, capture_outputs
+from hedloom_exec.artifacts import (
+    MissingOutput,
+    OutputDeclarationError,
+    capture_outputs,
+    workspace_for,
+    workspace_path,
+)
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.lsf import LSFInteractiveTransport, SubprocessRunner
 from hedloom_exec.transport import InProcessTransport
@@ -18,6 +25,31 @@ WRITES_A_FILE = [
     "-c",
     "open('sim.raw','w').write('waveform'); print('progress: done')",
 ]
+
+
+def test_workspace_path_does_not_create_the_directory(tmp_path):
+    located = workspace_path(tmp_path, "attempt")
+
+    assert located == tmp_path / "attempt"
+    assert not located.exists()
+
+
+def test_workspace_path_does_not_stat_the_directory(tmp_path, monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("pure resolution must not stat")
+
+    monkeypatch.setattr(Path, "stat", fail)
+    assert workspace_path(tmp_path, "attempt") == tmp_path / "attempt"
+
+
+def test_workspace_for_still_creates_for_the_execution_path(tmp_path):
+    located = workspace_for(tmp_path, "attempt")
+
+    assert located.is_dir()
+
+
+def test_workspace_path_and_workspace_for_agree_on_the_location(tmp_path):
+    assert workspace_path(tmp_path, "attempt") == workspace_for(tmp_path, "attempt")
 
 
 def farm(tmp_path, monkeypatch):

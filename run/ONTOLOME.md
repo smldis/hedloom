@@ -127,6 +127,10 @@ dashboard, and failure isolation are untested against anything but fakes.
   that is what a downstream command opens. Other outputs contribute values.
 - Work whose inputs are unchanged is reused rather than repeated; that decision
   belongs to `hedloom-exec` and is not re-implemented here.
+- Both kernels pass each invocation's authored key into execution attribution
+  and return the executor's `changed_keys` on `InvocationOutcome`. Thus a live
+  consumer can distinguish completed reuse from a changed-input rerun without
+  either readiness kernel recomputing identity or lineage.
 - On failure the sequential kernel stops. Successors are reported as `blocked`,
   never run against inputs that do not exist. `stop_on_failure=False` continues.
 - The graph kernel blocks *dependents*: a dependent of failed work returns a

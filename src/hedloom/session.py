@@ -47,8 +47,14 @@ def _printer(label: str | None) -> Callable[[InvocationOutcome], None]:
 
     def report(outcome: InvocationOutcome) -> None:
         name = outcome.authored_key or outcome.invocation_id
+        disposition = "reused" if outcome.reused else outcome.disposition
+        reason = (
+            f"  rerun: {', '.join(outcome.changed_keys)} changed"
+            if outcome.changed_keys
+            else ""
+        )
         detail = f"  {outcome.error}" if outcome.error else ""
-        print(f"{prefix}[{outcome.disposition:>9}] {name:<34}{outcome.outcome}{detail}")
+        print(f"{prefix}[{disposition:>9}] {name:<34}{outcome.outcome}{reason}{detail}")
 
     return report
 

@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["hedloom-flow", "hedloom-exec", "hedloom-run"]
 
+[project.scripts]
+hedloom = "hedloom.cli:main"
+
 [project.optional-dependencies]
 # A floor rather than a pin; `hedloom-run` carries the reasoning.
 dask = ["distributed>=2023.9.2"]
