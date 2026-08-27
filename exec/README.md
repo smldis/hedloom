@@ -41,6 +41,14 @@ tries, excluded tries, reasons, and measured reclaimable bytes without
 creating or deleting anything. It never selects the standing result, a live
 alias, a non-terminal try, or `unreconciled` evidence.
 
+Applying that returned survey is the deliberate destructive gesture. Every
+candidate is checked again under its record claim, then a
+`workspace_removed` event is flushed before bytes are removed. Records and
+manifests stay intact, contention skips instead of waiting, and
+`limit_bytes=` bounds one pass. A crash after the event but before deletion is
+safe to resume because the still-present workspace makes the unfinished side
+effect visible.
+
 ## Rerunning without repeating work
 
 Declare what an invocation depends on and let the identity be derived from it.

@@ -57,6 +57,7 @@ _EVENTS = frozenset(
         "terminal",
         "reuse_accepted",
         "placement",
+        "workspace_removed",
     }
 )
 

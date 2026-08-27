@@ -8,16 +8,17 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping
 import os
 import re
+import shutil
 
 from hedloom_exec.alias import aliases_into
 from hedloom_exec.artifacts import workspace_path
 from hedloom_exec.identity import try_name
-from hedloom_exec.journal import AttemptJournal, TERMINAL_OUTCOMES
+from hedloom_exec.journal import AttemptJournal, ConcurrentClaim, TERMINAL_OUTCOMES
 from hedloom_exec.reuse import AttemptRecord, scan_attempts
 
 __all__ = [
     "Candidate", "RetentionError", "RetentionPolicy", "RetentionRule",
-    "Skip", "SkipReason", "Survey", "survey",
+    "PruneReport", "Skip", "SkipReason", "Survey", "survey",
 ]
 
 
@@ -244,6 +245,94 @@ class Survey:
             ],
         }
 
+    def apply(
+        self, *, limit_bytes: int | None = None, actor: str | None = None
+    ) -> "PruneReport":
+        """Re-check this proposal under each record claim, then remove it."""
+
+        if limit_bytes is not None and (
+            not isinstance(limit_bytes, int)
+            or isinstance(limit_bytes, bool)
+            or limit_bytes < 0
+        ):
+            raise RetentionError("limit_bytes must be a non-negative integer")
+        removed: list[Candidate] = []
+        skipped: list[Skip] = []
+        freed = 0
+        stopped = False
+
+        for proposed in self.candidates:
+            if limit_bytes is not None and freed >= limit_bytes:
+                stopped = True
+                break
+            journal = AttemptJournal(self.root, proposed.identity)
+            try:
+                with journal.claim():
+                    records = tuple(
+                        item for item in scan_attempts(self.root)
+                        if item.identity == proposed.identity
+                    )
+                    refreshed = survey(
+                        self.root, self.policy, workspace_root=self.workspace_root,
+                        records=records,
+                    )
+                    current = next(
+                        (item for item in refreshed.candidates
+                         if item.identity == proposed.identity
+                         and item.try_number == proposed.try_number),
+                        None,
+                    )
+                    if current is None:
+                        reason = next(
+                            (item for item in refreshed.skipped
+                             if item.identity == proposed.identity
+                             and item.try_number == proposed.try_number),
+                            Skip(proposed.identity, proposed.try_number, "no-rule",
+                                 "candidate no longer satisfies policy"),
+                        )
+                        skipped.append(reason)
+                        continue
+
+                    already_recorded = any(
+                        event.event == "workspace_removed"
+                        and event.data.get("try") == current.try_number
+                        for event in journal.events()
+                    )
+                    if not already_recorded:
+                        data: dict[str, Any] = {
+                            "try": current.try_number,
+                            "workspace": str(current.workspace),
+                            "bytes": current.bytes,
+                            "rule": current.rule,
+                        }
+                        if actor is not None:
+                            data["actor"] = actor
+                        journal.append("workspace_removed", **data)
+                    rule = next(
+                        item for item in self.policy.rules if item.name == current.rule
+                    )
+                    _remove_workspace(current.workspace, keep_logs=rule.keep_logs)
+                    removed.append(current)
+                    freed += current.bytes
+            except ConcurrentClaim:
+                skipped.append(
+                    Skip(proposed.identity, proposed.try_number, "contended")
+                )
+
+        return PruneReport(
+            tuple(removed), tuple(skipped), freed, stopped,
+            datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PruneReport:
+    removed: tuple[Candidate, ...]
+    skipped: tuple[Skip, ...]
+    freed_bytes: int
+    stopped_at_limit: bool
+    applied_at: str
+
 
 def _within(path: Path, root: Path) -> bool:
     try:
@@ -270,6 +359,23 @@ def _workspace_bytes(workspace: Path, *, keep_logs: bool) -> int:
                 continue
             total += child.lstat().st_size
     return total
+
+
+def _remove_workspace(workspace: Path, *, keep_logs: bool) -> None:
+    """Remove only the surveyed try payload, optionally preserving diagnostics."""
+
+    if not workspace.exists():
+        return
+    if not keep_logs:
+        shutil.rmtree(workspace)
+        return
+    for child in workspace.iterdir():
+        if child.name in _LOG_NAMES and child.is_file() and not child.is_symlink():
+            continue
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
 
 
 def _validate_artifact_kinds(
@@ -353,10 +459,16 @@ def survey(
                 continue
 
             workspace = workspace_path(work_root, try_name(record.identity, number))
-            if (not _within(workspace.absolute(), work_root.absolute())
+            if (workspace.is_symlink()
+                    or not _within(workspace.absolute(), work_root.absolute())
                     or not _within(workspace.resolve(strict=False),
                                    work_root.resolve(strict=False))):
                 skipped.append(Skip(record.identity, number, "outside-roots"))
+                continue
+            if not workspace.is_dir():
+                skipped.append(
+                    Skip(record.identity, number, "no-rule", "workspace is missing")
+                )
                 continue
             if aliases_into(record_root, workspace):
                 skipped.append(Skip(record.identity, number, "aliased"))

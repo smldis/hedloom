@@ -249,6 +249,11 @@ its siblings are reused and the superseded results stay nameable.
   claims, and explains every exclusion. Standing reusable evidence, current
   aliases, non-terminal and unreconciled tries, and workspaces escaping the
   declared root are never candidates.
+- `Survey.apply()` is the only destructive retention operation. Each proposed
+  try is reclassified while its non-blocking record claim is held; contention
+  skips rather than waits. A durable `workspace_removed` event precedes byte
+  removal, record directories and manifests remain, optional diagnostics
+  remain, and a byte limit bounds each pass.
 
 ## Contribution to the parent
 
@@ -266,8 +271,9 @@ is tested by reconciling an attempt from a record that carries no topology. It
 does not own Dask transports, worker pools, placement enforcement, policy
 resolution, evidence promotion, or the study lifecycle. It records where
 outputs are but owns no artifact store, performs no transfer between
-filesystems, verifies no content digest, and does not garbage-collect
-workspaces. It reads a Plan document but neither
+filesystems, and verifies no content digest. Retention removes only selected
+try-workspace bytes; it never removes record evidence or external artifact
+addresses. It reads a Plan document but neither
 produces nor validates one, and it resolves no declared address: derivation
 consumes only what the Plan already states.
 
