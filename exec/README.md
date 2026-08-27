@@ -135,6 +135,18 @@ only if an operation declares `{"stream": "stdout"}`. A declared output that
 never appears fails the invocation rather than publishing a manifest that points
 at nothing.
 
+For a planned invocation with an authored key, execution also maintains
+`<attempt-root>/latest/<plan>/<authored-key>/<output>` as an atomic symlink to
+each declared file output. It points at the workspace before launch, which
+makes a fresh open useful while the file grows. The link may dangle until the
+work writes; Hedloom never touches the target in advance. This stable view is
+additional to the content-addressed record and does not change its identity.
+
+The `created` event records the authored key, try, prior different-digest record,
+and a digest for each identity key. `lineage()` uses those facts to explain
+creation order while taking currentness from the alias, so edit → revert can
+correctly make an older reusable record current again.
+
 ## Running on LSF
 
 One selected invocation becomes one `bsub -I` job with its own name, resource

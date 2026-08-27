@@ -31,7 +31,7 @@ from hedloom_exec.artifacts import (
 )
 from hedloom_exec.errors import AttemptError
 from hedloom_exec.journal import AttemptJournal, AttemptState
-from hedloom_exec.reuse import input_digest
+from hedloom_exec.reuse import input_digest, input_digests
 from hedloom_exec.transport import Observation, SubmissionRefused, Transport, substrate_of
 
 __all__ = [
@@ -219,15 +219,21 @@ def _launch_or_attach_locked(
         )
 
     if not state.events:
-        journal.append(
-            "created",
-            plan=bundle.get("plan"),
-            invocation=bundle.get("invocation"),
-            operation=bundle.get("operation"),
+        created = {
+            "plan": bundle.get("plan"),
+            "invocation": bundle.get("invocation"),
+            "operation": bundle.get("operation"),
             # Recorded so a later run can name what this result was computed
             # from, and explain it as superseded rather than silently replace it.
-            input_digest=input_digest(bundle),
-        )
+            "input_digest": input_digest(bundle),
+            # Additional evidence only. The aggregate above remains the exact
+            # whole-bundle digest that participates in attempt identity.
+            "input_digests": input_digests(bundle),
+        }
+        for name in ("try", "authored_key", "supersedes"):
+            if bundle.get(name) is not None:
+                created[name] = bundle[name]
+        journal.append("created", **created)
 
     # What was asked for and what the run resolved to, recorded before the
     # substrate is touched. What was actually observed arrives with the receipt

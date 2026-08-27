@@ -122,12 +122,25 @@ its siblings are reused and the superseded results stay nameable.
   operation, command, arguments, cwd, declared inputs, and explicitly nominated
   `identity_env`. Queue, walltime, cores, host, and general `env` are excluded,
   so changing where work runs never invalidates what it produced.
+- `input_digests(...)` records one explanatory digest for each of the nine
+  identity-bearing keys. These are additional evidence only: the aggregate
+  `input_digest(...)` remains the same BLAKE2b over the same canonical mapping,
+  so adding the evidence moves no existing attempt identity.
 - Attempt identity may be content-addressed by folding that digest in. Reuse is
   then sound by construction: a manifest at an identity was produced by exactly
   those inputs, and changed inputs land elsewhere rather than colliding.
 - `stale_attempts(...)` names prior results for an invocation whose inputs have
   since changed. Superseded work is retained and explainable, never silently
   overwritten.
+- A new record's `created` event also carries its derived try number, authored
+  key, component digests, and the prior different-digest identity it supersedes.
+  All are attribution: none participates in identity. Older records missing
+  these additive fields remain readable. `supersedes` orders first creation;
+  it does not claim to record a later return to an already-existing identity.
+- `lineage(...)` reads creation order from `supersedes`, reports which identity
+  keys changed, and reads currentness separately from the output aliases. That
+  separation is required after an edit is reverted: the older record becomes
+  current again without receiving a second `created` event.
 - `hedloom_exec.planned.plan_bundles(...)` derives content-addressed bundles from a
   Hedloom Flow Plan **document**, at schema 2 or 3; a document at any other
   schema is refused by version rather than misread. The coupling is to the portable
@@ -175,6 +188,16 @@ its siblings are reused and the superseded results stay nameable.
   overwrite the evidence of what the previous attempt produced. Only declared
   outputs are recorded; anything else the command left behind stays as unnamed
   evidence.
+- Declared file outputs also have a derived live view at
+  `<attempt-root>/latest/<plan>/<authored-key>/<output>`. Each entry is a
+  symlink atomically created or repointed after workspace preparation and
+  before launch, so a fresh open follows the try currently selected even while
+  that file grows. The target is deliberately not pre-created: until the work
+  writes it, the honest state is a dangling alias. This view never participates
+  in content-addressed identity.
+- Because `latest/` is inside the attempt root, every attempt-root reader admits
+  a directory only when it contains `events.jsonl`. The alias tree and any
+  other ordinary directory are not attempt records.
 - A declared filesystem output that does not exist with its declared file or
   directory shape after the work reports success fails the invocation.
   Publishing a manifest without it would let downstream work resolve an
