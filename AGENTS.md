@@ -89,9 +89,15 @@ study in `../studies/` still runs entirely at `local`.
 ## Checks
 
 ```console
-PYTHONPATH=src:flow/src:exec/src:run/src python -m pytest -q
+PYTHONPATH=src:flow/src:exec/src:run/src python -m pytest -q \
+    tests exec/tests run/tests flow/tests
 python ../composition.py docs          # from the repository root: python composition.py docs
 ```
+
+**Name all four unit test directories.** Every unit's `pyproject.toml` sets
+`testpaths = ["tests"]`, so a bare `pytest -q` from here collects only the
+façade's 58 tests and silently skips the other 400. It exits zero either way,
+which is the worst shape a check can have.
 
 A successful Sphinx build can still report missing toctree entries and
 unresolved cross-references, so read the warnings rather than the exit status.
