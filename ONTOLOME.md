@@ -112,6 +112,16 @@ that would place each point on its own job as a comment rather than a claim.
   rather than a different way of running this one.
 - `StudyRun` is addressable the way the study was authored: `run["coarse:integrate"]`
   is that invocation's outcome, and `run.value` is the plan's conclusion.
+- A recorded file output has a stable live view under
+  `<Site.root>/latest/<plan>/<authored-key>/<output>`. The attempt identity and
+  workspace still move whenever an identity-bearing input moves; only this
+  operator-facing view stays put. Every run repoints it before launch, including
+  a run that returns to an older reusable identity.
+- `hedloom where`, `hedloom check`, and `hedloom log` resolve the current output,
+  reject a cached path that is behind, and list creation-order iterations with
+  their changed identity keys. They accept either a site profile or an explicit
+  attempt root. Live run output names reruns by changed key and labels completed
+  reuse as `reused` rather than inventing a rerun reason.
 - A study may begin from a file it did not write. An operation declaring an
   `input_artifact` source as an input is handed its located path, and the same
   reading that locates it fingerprints it, so delivery and staleness cannot

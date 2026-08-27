@@ -60,8 +60,8 @@ The rule that follows: **do not cite a `design/` file as evidence of current
 behaviour, and do not update one to match the code.** If something in there is
 still right and load-bearing, promote it into `docs/` or an `ONTOLOME.md`.
 `design/README.md` says which of the proposals are still live — today,
-cancellation and binding the attempt identity are; everything else is delivered
-or superseded.
+cancellation, binding the attempt identity, and reclaiming produced files
+are; everything else is delivered or superseded.
 
 Two files in `design/` are also *unanswered correspondence*: the 2026-08-14
 architecture review and its concurrency companion still carry blank

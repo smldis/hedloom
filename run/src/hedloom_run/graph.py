@@ -188,6 +188,7 @@ def _run_one(
             workspace_root=config.workspace_root,
             plan_id=config.plan_id,
             invocation_id=item.invocation_id,
+            authored_key=item.authored_key,
         )
     except (AttemptError, TransportError) as error:
         return _Step(
@@ -212,6 +213,7 @@ def _run_one(
             placement=placement_name,
             value=result.value,
             artifacts=dict(result.artifacts),
+            changed_keys=result.changed_keys,
             error=(result.detail or {}).get("error"),
         ),
         contributed,

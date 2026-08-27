@@ -31,6 +31,7 @@ __all__ = [
     "OutputDeclarationError",
     "capture_outputs",
     "workspace_for",
+    "workspace_path",
 ]
 
 
@@ -72,6 +73,12 @@ class ArtifactRef:
         return data
 
 
+def workspace_path(root: str | os.PathLike[str], name: str) -> Path:
+    """Where a workspace is, without creating or inspecting it."""
+
+    return Path(root) / name
+
+
 def workspace_for(root: str | os.PathLike[str], identity: str) -> Path:
     """The directory one attempt runs in.
 
@@ -79,7 +86,7 @@ def workspace_for(root: str | os.PathLike[str], identity: str) -> Path:
     write over the evidence of what the previous attempt produced.
     """
 
-    directory = Path(root) / identity
+    directory = workspace_path(root, identity)
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 

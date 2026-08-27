@@ -53,6 +53,7 @@ class InvocationOutcome:
     placement: str | None = None
     value: Any = None
     artifacts: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    changed_keys: tuple[str, ...] = ()
     error: str | None = None
 
     @property
@@ -214,6 +215,7 @@ def run_plan(
                 workspace_root=workspace_root,
                 plan_id=plan_id,
                 invocation_id=item.invocation_id,
+                authored_key=item.authored_key,
             )
         except (AttemptError, TransportError) as error:
             stopped = True
@@ -249,6 +251,7 @@ def run_plan(
             placement=placement_name,
             value=result.value,
             artifacts=dict(result.artifacts),
+            changed_keys=result.changed_keys,
             error=(result.detail or {}).get("error"),
         )
         outcomes.append(outcome)

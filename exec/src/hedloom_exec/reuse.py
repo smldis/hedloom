@@ -23,7 +23,7 @@ that promise explicit.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import blake2b
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -37,6 +37,7 @@ __all__ = [
     "IDENTITY_KEYS",
     "attempts_for",
     "input_digest",
+    "input_digests",
     "scan_attempts",
     "stale_attempts",
 ]
@@ -84,6 +85,34 @@ def input_digest(bundle: Mapping[str, Any]) -> str:
     return blake2b(canonical.encode(), digest_size=16).hexdigest()
 
 
+def input_digests(bundle: Mapping[str, Any]) -> dict[str, str]:
+    """One additional explanatory digest for each identity-bearing key.
+
+    These digests do not compose the aggregate returned by :func:`input_digest`.
+    That aggregate intentionally remains a BLAKE2b digest of the complete
+    canonical mapping, byte-for-byte as it was before component evidence was
+    recorded.  Missing and explicit ``None`` values compare alike because the
+    aggregate omits both.
+    """
+
+    digests: dict[str, str] = {}
+    for key in IDENTITY_KEYS:
+        material = (
+            {key: bundle[key]}
+            if key in bundle and bundle[key] is not None
+            else {}
+        )
+        try:
+            canonical = json.dumps(material, sort_keys=True, separators=(",", ":"))
+        except TypeError as error:
+            raise ValueError(
+                "bundle inputs must be JSON-serializable to have a stable identity; "
+                "pass a digest or a declared reference rather than a live object"
+            ) from error
+        digests[key] = blake2b(canonical.encode(), digest_size=16).hexdigest()
+    return digests
+
+
 @dataclass(frozen=True, slots=True)
 class AttemptRecord:
     """What one attempt directory says about itself, without opening the payload."""
@@ -94,6 +123,11 @@ class AttemptRecord:
     input_digest: str | None
     outcome: str | None
     directory: Path
+    authored_key: str | None = None
+    try_number: int | None = None
+    supersedes: str | None = None
+    input_digests: Mapping[str, str] = field(default_factory=dict)
+    created_at: str | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -129,6 +163,11 @@ def scan_attempts(root: str | Path) -> tuple[AttemptRecord, ...]:
                 input_digest=data.get("input_digest"),
                 outcome=state.outcome,
                 directory=directory,
+                authored_key=data.get("authored_key"),
+                try_number=data.get("try"),
+                supersedes=data.get("supersedes"),
+                input_digests=dict(data.get("input_digests") or {}),
+                created_at=created.at if created else None,
             )
         )
     return tuple(records)
