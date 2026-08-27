@@ -239,6 +239,16 @@ its siblings are reused and the superseded results stay nameable.
   `EPHEMERAL` touches no filesystem, requires no identity or root, and reruns
   on every call. `RECORDED` runs the full protocol and completes from an
   selected standing evidence without rerunning the payload.
+- `RetentionPolicy` is operator-owned storage policy. Conditions within one
+  named rule are ANDed and rules are ORed; the global age floor overrides all
+  of them, `keep_latest` defaults to one, and `unreconciled` is never
+  selectable. Unknown keys, empty rules, and malformed sizes or durations are
+  refused rather than interpreted generously.
+- `prune.survey(...)` is a read-only classification of every try. It creates
+  no directory, measures actual workspace trees rather than manifest size
+  claims, and explains every exclusion. Standing reusable evidence, current
+  aliases, non-terminal and unreconciled tries, and workspaces escaping the
+  declared root are never candidates.
 
 ## Contribution to the parent
 

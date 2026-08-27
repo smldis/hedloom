@@ -34,6 +34,13 @@ per-try manifests under `manifest/<n>.json`, and `standing.json` when evidence
 has been selected for reuse. Try workspaces and batch jobs are named
 `<record>-<n>`. All of these are readable without this package.
 
+Storage policy is inspectable before it is destructive. A
+`RetentionPolicy` contains named rules whose conditions narrow one another;
+`prune.survey(record_root, policy, workspace_root=...)` reports candidate
+tries, excluded tries, reasons, and measured reclaimable bytes without
+creating or deleting anything. It never selects the standing result, a live
+alias, a non-terminal try, or `unreconciled` evidence.
+
 ## Rerunning without repeating work
 
 Declare what an invocation depends on and let the identity be derived from it.
