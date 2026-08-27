@@ -7,7 +7,7 @@ import pytest
 
 from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.journal import AttemptJournal
-from hedloom_exec.pins import pin as make_pin, unpin, verify
+from hedloom_exec.pins import PinError, pin as make_pin, unpin, verify
 
 
 def _pinned(tmp_path, *, empty=False):
@@ -137,3 +137,13 @@ def test_a_crash_between_chmod_and_the_event_leaves_an_explainable_state(
                  reason="reference")
     assert workspace.stat().st_mode & 0o222 == 0
     assert journal.fold().pins == ()
+
+
+def test_a_thaw_failure_is_reported_after_the_release(tmp_path, monkeypatch):
+    journal, _workspace, made = _pinned(tmp_path)
+    import hedloom_exec.pins as pins_module
+
+    monkeypatch.setattr(pins_module, "_thaw", lambda workspace, modes: False)
+    with pytest.raises(PinError, match="was released"):
+        unpin(journal, pin_id=made.pin_id, reason="done")
+    assert not journal.fold().pins[0].is_active

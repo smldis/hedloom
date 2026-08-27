@@ -188,6 +188,14 @@ def pin(
             raise PinError(
                 f"attempt {journal.identity} try {try_number} is already pinned"
             )
+        if any(
+            event.event == "workspace_removed" and event.data.get("try") == try_number
+            for event in state.events
+        ):
+            raise PinError(
+                f"attempt {journal.identity} try {try_number} has a recorded "
+                "workspace removal and cannot be pinned"
+            )
         workspace = workspace_path(
             workspace_root, try_name(journal.identity, try_number)
         )
@@ -243,7 +251,13 @@ def unpin(
                "actor": actor, "thaw": thaw},
         )
         if thaw:
-            _thaw(Path(selected.workspace), dict(pinned_event.data.get("modes") or {}))
+            if not _thaw(
+                Path(selected.workspace), dict(pinned_event.data.get("modes") or {})
+            ):
+                raise PinError(
+                    f"pin {pin_id} was released but not every recorded mode "
+                    "could be restored"
+                )
         return next(item for item in journal.fold().pins if item.pin_id == pin_id)
 
 

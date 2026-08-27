@@ -228,3 +228,12 @@ def test_a_try_selector_names_exactly_one_try(tmp_path):
         journal.directory.parent, f"{journal.identity}#1"
     )
     assert [item.number for item in tries] == [1]
+
+
+def test_a_removal_recorded_before_a_crash_cannot_later_be_pinned(tmp_path):
+    journal, _ = _record(tmp_path)
+    with journal.claim():
+        journal.append("workspace_removed", **{"try": 0, "workspace": "pending"})
+    with pytest.raises(PinError, match="recorded workspace removal"):
+        make_pin(journal, try_number=0, workspace_root=tmp_path / "work",
+                 reason="too late", freeze=False)

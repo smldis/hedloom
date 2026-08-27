@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+from hedloom_exec.durability import Durability, execute
 from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.prune import RetentionPolicy, RetentionRule, survey
+from hedloom_exec.transport import Observation
 
 
 def _record(tmp_path, label="point", *, content=b"payload", outcome="failed"):
@@ -162,3 +164,44 @@ def test_keep_logs_preserves_diagnostics_while_removing_payload(tmp_path):
     assert sorted(item.name for item in workspace.iterdir()) == [
         "stderr.log", "stdout.log"
     ]
+
+
+def test_a_run_after_pruning_behaves_as_if_nothing_was_pruned(tmp_path):
+    class FailedWork:
+        name = "failed-work"
+        discovery_is_authoritative = True
+
+        def __init__(self):
+            self.results = {}
+
+        def submit(self, name, bundle):
+            workdir = bundle["workdir"]
+            from pathlib import Path
+
+            Path(workdir, "evidence").write_text(name)
+            self.results[name] = Observation("failed", {"expected": True})
+            return {"identity": name, "workdir": workdir}
+
+        def discover(self, name):
+            return self.results.get(name)
+
+        def poll(self, handle):
+            return self.results[handle["identity"]]
+
+        def cancel(self, handle):
+            return None
+
+    transport = FailedWork()
+    options = {
+        "durability": Durability.RECORDED,
+        "root": str(tmp_path / "records"),
+        "workspace_root": str(tmp_path / "work"),
+        "plan_id": "plan",
+        "invocation_id": "point",
+    }
+    first = execute(transport, {"operation": "work"}, **options)
+    survey(tmp_path / "records", _policy(), workspace_root=tmp_path / "work").apply()
+    second = execute(transport, {"operation": "work"}, **options)
+    assert first.outcome == second.outcome == "failed"
+    assert [item.number for item in second.journal.fold().tries] == [0, 1]
+    assert (tmp_path / "work" / try_name(second.journal.identity, 1)).is_dir()
