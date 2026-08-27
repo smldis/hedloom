@@ -1,293 +1,163 @@
-# The attempt claim, model-checked
+# The record claim and try protocol
 
-This page documents the synchronisation in `hedloom_exec` — the claim, the
-journal, and the two durable writes that publish a result — and reports what a
-TLA+ model of it found. The model is in `attempt-claim/`, starting from
-[`AttemptClaim.tla`](attempt-claim/AttemptClaim.tla), and
-it is checkable in about a second.
+This page documents the synchronisation in `hedloom_exec`: one durable record,
+the numbered tries beneath it, and the writes that make a try recoverable and
+its result reusable.
 
-It exists because the argument for this protocol is entirely a prose argument.
-The docstrings in `journal.py` and `attempt.py` state four ordering rules and
-one exclusion rule, the test suite exercises them on a local filesystem with one
-process, and nothing else stands behind them. That is a good argument. It is not
-a checked one, and the place it is weakest — a second controller against the
-same study root — is exactly the place no test goes.
+The TLA+ model in
+[`AttemptClaim.tla`](attempt-claim/AttemptClaim.tla) predates the record/try
+split. It modelled one old sequence identity, so its single attempt corresponds
+most closely to one try now. Its counterexamples established the ordering and
+exclusion rules that the current implementation retains, but it does not model
+try allocation or standing evidence. Its old filenames and state vocabulary
+are historical, not the layout contract below.
 
-## The protocol
+## Names and layout
 
-One invocation, one set of declared inputs, one attempt identity, one directory
-under the study root. Everything that follows is per identity; two identities
-share nothing.
+One invocation with one input digest has one record identity:
 
-`execute(..., Durability.RECORDED)` runs three phases, and only the middle one
-is locked:
-
-```
-_select_sequence()          read each sequence's manifest, pick the first free   [unlocked]
-launch_or_attach()
-    with journal.claim():   read manifest, fold the journal, decide,             [LOCKED]
-                            append submit_intent, submit, append submit_receipt
-reconcile()                 poll, write manifest.json.partial, rename,           [unlocked]
-                            append terminal
+```text
+attempt_identity(plan_id, invocation_id, input_digest)
+    -> hedloom-<blake2b-80bit>
 ```
 
-The claim is `flock(LOCK_EX | LOCK_NB)` on `claim.lock` in the attempt
-directory. Non-blocking on purpose: a second caller is told `ConcurrentClaim`
-rather than made to wait, because a second submission of one attempt is the
-defect and the honest response is to name who is already doing it.
+The Phase 1 rendering deliberately differs from every earlier rendering: the
+old sequence hash slot was removed rather than filled with a vestigial zero.
+There is no migration in this prototype. A record must declare layout version
+1; missing or unknown layouts are refused, and roots written before Phase 1 are
+unreadable.
 
-Two ordering rules carry the recovery argument, and both are about what a
-*crash* leaves behind:
+Each execution within a record has an unbounded non-negative try number. The
+workspace, LSF job name, discovery key, cancellation key and watcher key are
+all the strict try name:
 
-* `submit_intent` is flushed **before** the transport is asked to accept work,
-  so an accepted submission whose receipt is lost still has a durable trace
-  naming the identity to look for.
-* `terminal` is appended **after** the manifest is atomically visible, so a
-  journal that claims a terminal outcome always has readable evidence.
-
-## What the model is
-
-[`AttemptClaim.tla`](attempt-claim/AttemptClaim.tla) is those steps as discrete
-atomic actions, with two callers running them concurrently against one attempt
-directory and a crash action that can kill either caller at any point. Durable
-state survives a crash; the advisory lock does not, because the kernel drops it
-when the file descriptor closes; and the farm job does not either, because its
-`bsub -I` client *was* that process.
-
-Kept faithful where it matters:
-
-* `Fold` is `journal.fold()` transcribed — a left fold over the event log, later
-  events overriding earlier ones. `submit_lost` really does return the phase to
-  `unsubmitted`, which is what makes one of the counterexamples below possible.
-* The claim is released where `launch_or_attach` returns, so `reconcile` and
-  `publish_terminal` run **unlocked**, as they do today.
-* `bsub -I` blocks until the job is over, so submission is two actions with the
-  job live in between. That live window is where a crash costs money.
-
-Abstracted away: bytes, filesystems, weak memory. Every action is atomic and TLC
-explores all interleavings, which is enough here because every claim rests on
-*which* durable fact is consulted and *in what order* the two durable writes
-happen — not on the width of any single write.
-
-Five constants make the load-bearing assumptions switchable, so denying one and
-re-running shows what it was holding up: `LockHonoured`, `DiscoveryIsAccurate`,
-`OwnerBoundLifetime`, `PublishUnderClaim`, `PublishOrder`.
-
-The four invariants:
-
-| Invariant | The rule it encodes |
-|---|---|
-| `AtMostOneLive` | One identity, at most one farm job at a time. What the claim is for, and the only property that costs money when lost. |
-| `LiveJobHasDurableTrace` | A job that exists is a job the record can name. The `submit_intent`-before-submit rule. |
-| `TerminalHasEvidence` | A journal claiming a terminal outcome has a readable manifest behind it. The publish-before-record rule. |
-| `RecordMatchesEvidence` | The outcome the record names is the outcome the visible manifest carries. `execute` returns the phase from the journal and the artifacts from the manifest; the two disagreeing is a result reported under the wrong verdict. |
-
-## Reproduce
-
-With a JRE 21 and [`tla2tools.jar`](https://github.com/tlaplus/tlaplus/releases):
-
-```console
-cd docs/internals/attempt-claim
-java -cp tla2tools.jar tlc2.TLC -config MCShipped.cfg AttemptClaim.tla
+```text
+<record>-<try>
 ```
 
-Each configuration runs in about a second and explores a few hundred states.
+The record directory is shared by its tries and contains:
 
-## What TLC found
-
-| Configuration | What it denies | Result |
-|---|---|---|
-| `MCShipped` | nothing — the protocol as shipped | **`RecordMatchesEvidence` violated**, 18-state trace, no crash needed |
-| `MCClaimedPublication` | nothing; adds the repair below | no violation, no deadlock, 250 distinct states |
-| `MCNoLock` | `LockHonoured` | **`LiveJobHasDurableTrace` violated** in 9 states; `AtMostOneLive` in 11 |
-| `MCRecordFirst` | `PublishOrder` | **`TerminalHasEvidence` violated** in 10 states, no crash needed |
-| `MCStaleDiscovery` | `DiscoveryIsAccurate`, and the refusal | no violation — see below |
-| `MCDetached` | `DiscoveryIsAccurate`, `OwnerBoundLifetime`, and the refusal | **`LiveJobHasDurableTrace` violated** in 10 states; `AtMostOneLive` in 12 |
-| `MCPooled` | `DiscoveryIsAccurate` and `OwnerBoundLifetime`, **keeping** the refusal | no violation — pooled placement as shipped |
-
-Trace lengths for `AtMostOneLive` are from a run with the other invariants
-removed, since TLC stops at whichever is violated first.
-
-Three of these are mutations that had to fail, and did. The first one is a
-finding.
-
-### The finding: publication has no writer exclusion
-
-`AtMostOneLive` holds under `MCShipped`. The claim does the job it was written
-for: a second caller arriving while the first holds the lock is refused, and a
-second caller arriving *after* the first has submitted folds `submitted` and
-attaches instead of submitting again. No duplicate farm job.
-
-But `launch_or_attach` returns before `reconcile` runs, and the claim goes with
-it. The attached caller then reconciles too — `execute` calls `reconcile` for
-both the `claimed` and the `attached` disposition — so two callers can be inside
-`publish_terminal` for one identity at once. `reconcile` does guard against
-this: its first act is to re-read the manifest and return if one is visible. The
-guard is just read outside the lock, so both callers can pass it before either
-publishes.
-
-TLC's trace, with no crash in it:
-
-```
-c1  claim → created → submit_intent → submit → submit_receipt → release
-c2  claim → fold sees "submitted" → attached → release
-c1  poll → succeeded          c2  poll → unreconciled
-c1  rename  (manifest = succeeded)
-c1  append terminal:succeeded (journal = succeeded)
-c2  rename  (manifest = unreconciled)
+```text
+layout                 # integer 1
+events.jsonl           # append-only events, every event names its try
+claim.lock              # advisory record claim
+manifest/<try>.json     # immutable terminal evidence for one try
+standing.json           # atomic selection of reusable evidence, when present
 ```
 
-The run ends with `events.jsonl` saying `succeeded` and `manifest.json` saying
-`unreconciled`. `execute` reports the outcome from the journal and the artifacts
-from the manifest, so this is a result returned under a verdict that is not its
-own. One more step of that trace has `c2` appending its own `terminal` event,
-leaving two terminal records for one attempt.
+Try workspaces are siblings of the record directory. This separation lets a
+failed try remain intact while a later try runs, without duplicating the
+record's identity and attribution.
 
-The same unlocked window has a second consequence the model does not cover,
-found by reading the code while writing it: `publish_terminal` stages through
-`manifest.json.partial`, a fixed name in the shared attempt directory. Two
-concurrent publishers open the same temp file with `"w"`. The rename is atomic
-and the published file is never torn — but *which* writer's bytes get renamed is
-whoever wrote last, not whoever renames.
+## The claimed transition
 
-**The repair, and what it costs.** `MCClaimedPublication` holds the claim until
-the terminal record is written, and every invariant holds with no deadlock. It
-is not an expensive change: the claim is *already* held across the entire
-blocking `bsub -I`, so extending it through a poll and two file writes adds
-nothing to how long an attempt holds the lock. The re-read guard inside
-`reconcile` then means what it looks like it means, because it is read under the
-lock that makes it true.
+`execute(..., Durability.RECORDED)` performs the stateful work under one record
+claim:
 
-**How exposed is this today?** Not at all, and for exactly the reason the NFS
-note in `journal.claim()` gives: it needs two live callers for one identity.
-`run_plan_graph` submits one task per invocation, so a single controller never
-produces two. It opens with two controllers against one study root — two people,
-or the same study started twice on two login hosts — and with pooled placement,
-where journals would be written from farm nodes. That is the same exposure
-`design/pooled-placement-plan.md` §2 already defers, and this is one more thing to
-fix before it lands, alongside the flock question.
-
-### The mutations
-
-**`MCNoLock`** models a study root on an NFS mount that answers `flock` locally
-(`local_lock=flock`, `local_lock=all`, or `-o nolock`): both hosts are granted
-the lock and neither is told. The interesting part is what breaks *first*. Not
-the duplicate job — the record:
-
-```
-c1  claim → created → submit_intent      (phase: intended)
-c2  claim → fold sees "intended" → discover finds nothing (c1 has not
-    started yet) → append submit_lost    (phase: unsubmitted)
-c1  bsub -I starts                       (a job is now running)
+```text
+with journal.claim():
+    validate layout and identity
+    fold every event into its own TryState
+    return standing evidence if it is valid
+    resume an allocated try that has no submission intent,
+        otherwise begin_try() reserves the next number
+    flush try_started
+    prepare that try's workspace and aliases
+    flush submit_intent
+    submit or discover using <record>-<try>
+    append submit_receipt when available
+    reconcile
+    atomically publish manifest/<try>.json
+    append terminal
+    atomically replace standing.json when the outcome is reusable
 ```
 
-Nine states in, a job is live on the farm and the durable record says nothing
-was ever submitted. Two states later both callers have a job running. This is
-the concrete form of the warning already in `journal.claim()`: a silently
-degraded lock does not merely produce two `bsub` jobs, it makes the journal lie
-about the one it already had.
+`begin_try()` both reserves and records. It is refused unless the caller holds
+the record claim, and its `try_started` event is flushed before workspace work
+or any transport call. A crash after allocation but before `submit_intent`
+therefore resumes the same try; it cannot silently consume a number or cause
+two jobs to share one.
 
-**`MCRecordFirst`** reverses the two writes in `publish_terminal`. TLC violates
-`TerminalHasEvidence` in ten states *without a crash*, which is sharper than the
-docstring's own reasoning: the window between the two writes is itself a state
-where the journal claims a terminal outcome no manifest backs. Any reader
-arriving there — including `_launch_or_attach_locked`, which checks for exactly
-this — raises `ReconciliationError`. The shipped order has a window too, but its
-window is manifest-visible-with-no-terminal-record, and that one the code
-repairs on sight (`repaired=True`). One order's crash window is recoverable and
-the other's is a hard error; that is the whole content of the rule.
+The claim is `flock(LOCK_EX | LOCK_NB)` on `claim.lock`. It is non-blocking on
+purpose: a second caller receives `ConcurrentClaim` instead of waiting while a
+first caller may be inside a blocking `bsub -I`. A filesystem that silently
+implements `flock` only per host does not satisfy this protocol.
 
-**`MCStaleDiscovery`** was meant to show that `discovery_is_authoritative = True`
-is load-bearing for `LSFInteractiveTransport`. It does not: with discovery
-returning a false negative for accepted work, every invariant still holds. The
-reason is worth writing down, because it was not obvious before the model said
-it. The window in which a stale answer could do damage is the window in which a
-job is live and someone else is deciding — and there is no such window. The
-claim is held across the entire blocking submission, so no second caller can
-decide anything while a job runs; and if the first caller dies, the lock is
-released *and the job dies with it*, so "not found" is the truth.
+## Recovery and publication order
 
-So the crash-window argument is carried by owner-bound lifetime, not by
-discovery. `MCDetached` denies both and gets the duplicate immediately: a caller
-crashes mid-`bsub`, its job keeps running, the next caller finds `intended`,
-discovers nothing, records `submit_lost`, and submits a second job for an
-identity that already has one. That pairing — work that outlives its submitter,
-and discovery that cannot see it — is what the `attached` disposition and
-`UnrecoverableAttempt` were written for, and `attempt.py` says as much: they are
-unreachable today because nothing detaches. The model agrees, and adds that
-`discovery_is_authoritative` is a claim that starts mattering on the same day
-detached work does.
+Three orderings carry the recovery argument:
 
-### That day arrived: pooled placement
+1. `try_started` is durable before any transport call, so all later evidence
+   has one already-reserved number.
+2. `submit_intent` is durable before the transport is asked to accept work, so
+   a lost receipt is recovered by discovering the exact try name. Discovering
+   the bare record would report a false negative and risk duplicate farm work.
+3. `manifest/<try>.json` is atomically visible before `terminal` is appended,
+   so every terminal journal claim has readable evidence behind it.
 
-**Updated 2026-08-17.** Pooled LSF placement is the thing that detaches, so the
-paragraph above stopped being about a hypothetical. It also exposed a fidelity
-gap: `Decide` recorded `submit_lost` whenever discovery came up empty, but
-`launch_or_attach` does not — it raises `UnrecoverableAttempt` when the
-transport declares `discovery_is_authoritative = False`, because a transport
-that cannot confirm acceptance must not be read as denying it. The model was
-checking a caller that guesses; the code refuses. `RefusesWhenBlind` is now that
-branch, and `MCStaleDiscovery` and `MCDetached` deny it, which is what preserves
-their findings above.
+Publication remains under the record claim. The older protocol released its
+claim before reconciliation; the model found that two publishers could then
+leave the journal verdict and fixed manifest disagreeing. Per-try immutable
+manifests remove cross-try replacement, while claimed publication retains one
+writer for the same try.
 
-`MCPooled` is the same substrate as `MCDetached` with the refusal kept — pooled
-placement exactly as shipped — and **every invariant holds**. Set against
-`MCDetached` still failing, that isolates what buys the safety:
+`standing.json` is an atomically replaced materialized pointer: a copy of the
+selected manifest, including its record identity and try number, so the reuse
+fast path remains one read. Automatic success writes it;
+`accept_for_reuse(...)` may select the current failed try after inspection.
+Acceptance does not imply a pin.
 
-> On a pooled substrate, neither discovery nor owner-bound lifetime is doing the
-> work. **Refusing to guess is.** It is the only thing standing between the
-> crash window and a duplicate farm job.
+## Folding is per try
 
-Which makes `discovery_is_authoritative = False` on `LSFPooledTransport` a
-load-bearing declaration rather than a disclaimer. Setting it to `True` for a
-substrate that cannot really answer would not degrade recovery — it would
-reintroduce `MCDetached` exactly.
+The record fold partitions every mutable field before projecting a current
+state. In particular, these are never sticky across tries:
 
-**What it costs, which no invariant here measures.** The refusal is permanent.
-A pooled invocation caught in the crash window can never be resumed: its phase
-stays `intended`, so every later `launch_or_attach` raises again, and no rerun
-of the study will get past it without someone editing the journal. Direct
-placement recovers here — the job died with its client, discovery is
-authoritative, `submit_lost` is the truth, and the work is simply resubmitted.
-Pooled placement trades that recoverability for safety.
+- phase, handle, result and manifest;
+- `cancel_requested` and `cancel_reason`;
+- `reuse_accepted` and `reuse_reason`;
+- placement and diagnostics;
+- watcher observations and their timestamps.
 
-That trade is reasoned, not model-checked, and the model cannot check it as it
-stands: a caller refused the *claim* never retries, so TLC cannot distinguish
-"stuck because the transport is blind" from "stuck because it lost a race and
-this model has no retry loop". Making it checkable means giving `Claim` a retry,
-which is a bigger change than this finding needs.
+Compatibility accessors on `AttemptState` project only the current try. They do
+not merge an earlier cancellation, acceptance or observation into a later run.
 
-## What is not modelled
+## Cancellation and watching
 
-* **One identity.** Different inputs derive different identities and share no
-  state, so N identities are N independent copies. Nothing here says anything
-  about `_select_sequence` choosing *between* sequences, which is an unlocked
-  read of several manifests and deserves its own look.
-* **The filesystem.** `flock` is modelled as exclusion when `LockHonoured`
-  holds. Whether a given mount delivers that is the open question in
-  `journal.claim()`, and a model cannot answer it — only `/proc/mounts` can.
-  `O_APPEND` atomicity is assumed, which NFS does not provide.
-* **Dask, and the cluster.** No `SpecCluster` surface is modelled: not placement
-  annotation, not the resource budget, not the lockout that annotating every
-  task prevents. Deliberately — a model of Dask's scheduler would only be as
-  good as this author's reading of Dask, and would "prove" things about a
-  scheduler that does not exist. Those claims are cited to `distributed` source
-  lines in `dask-scheduling-rules.md` and measured in probes, which is the
-  right kind of evidence for someone else's implementation.
+Cancellation is per try. `request_cancel(...)` records intent under the record
+claim and calls the substrate with `<record>-<try>`; `bkill -J` never receives a
+bare record name. A successful return still establishes only requested
+cancellation, not a terminal outcome.
 
-  Worth stating explicitly, though, because it is a dependency in the other
-  direction: **what keeps the shipped protocol safe today is supplied by
-  `graph.py`.** One task per invocation, `pure=False` so Dask cannot decide two
-  invocations are one call, and a key made unique before submission — together
-  those are why one controller never produces two live callers for one
-  identity, which is the precondition every counterexample above needs. Retries
-  do not break it (a retry is sequential, not concurrent). Two controllers, or
-  pooled placement writing journals from farm nodes, do.
+The watcher scans record directories but joins scheduler rows by strict try
+name. Its `observations.jsonl` entries carry the try number, and deduplication
+is per try, so a later try may independently pass through the same queue states.
+Observations remain evidence about work, never state transitions of it.
 
-  What *is* worth modelling on that side is `_stop_admitting` — hedloom's own
-  protocol over Dask rather than Dask itself. That is done, in
-  [`stop-admitting-protocol.md`](stop-admitting-protocol.md): the loss its
-  comment calls bounded turns out to be a false report line, and repairing it
-  needs the attempt record for both the classification and the outcome.
-* **Liveness.** Only safety invariants and deadlock. The model says a bad state
-  is unreachable, not that a run finishes.
+## What the model still establishes
+
+The historical model remains useful for the local safety rules it actually
+checked:
+
+- with an honoured claim and publication under it, at most one matching job is
+  live and record evidence agrees with the published outcome;
+- recording terminal state before evidence is visible violates
+  `TerminalHasEvidence` even without a crash;
+- a silently ineffective lock can leave a live job without a truthful durable
+  trace, then permit a duplicate;
+- a detached substrate with inaccurate negative discovery cannot be recovered
+  safely; refusing is better than guessing.
+
+It does not establish layout-1 compatibility, allocation correctness, or
+per-try folding. Those are executable tests in `test_claim.py`,
+`test_try_allocation.py`, `test_fold_partitioning.py`,
+`test_recovery_names.py`, and `test_watch_keys.py`.
+
+## Not modelled
+
+- Filesystem guarantees beyond the assumed advisory exclusion, atomic rename,
+  append and fsync behaviour. The mount configuration remains operational fact.
+- Dask scheduling. The record owns no readiness or topology, and
+  `hedloom_exec` imports neither `hedloom_flow` nor Dask.
+- Retry, retention or pin policy. Phase 1 supplies unbounded mechanical tries;
+  later phases decide what to retain and protect.
+- Liveness. The argument and model concern safety, not whether a farm finishes.

@@ -1,7 +1,7 @@
-"""The attempt protocol: claim, attach, reconcile, or refuse to guess.
+"""The record/try protocol: claim, attach, reconcile, or refuse to guess.
 
 This module encodes the ownership hypothesis under test. The durable journal
-owns attempt identity; the transport owns delivery; the substrate owns external
+owns record identity; the transport owns try delivery; the substrate owns external
 state after acceptance. No live object is treated as the authority for any of
 them.
 
@@ -27,17 +27,20 @@ from typing import Any, Mapping
 from hedloom_exec.artifacts import (
     MissingOutput,
     capture_outputs,
+    workspace_for,
+    workspace_path,
     write_diagnostics,
 )
+from hedloom_exec.alias import point_alias
 from hedloom_exec.errors import AttemptError
-from hedloom_exec.journal import AttemptJournal, AttemptState
+from hedloom_exec.identity import try_name
+from hedloom_exec.journal import AttemptJournal, AttemptState, TryState
 from hedloom_exec.reuse import input_digest, input_digests
 from hedloom_exec.transport import Observation, SubmissionRefused, Transport, substrate_of
 
 __all__ = [
     "AttemptCancelled",
     "AttemptError",
-    "AttemptSpent",
     "StaleIdentity",
     "LaunchResult",
     "REUSABLE_OUTCOMES",
@@ -60,8 +63,8 @@ guessing in either direction is worse than not guessing. Caching an infrastructu
 failure would poison an invocation permanently; discarding a real negative
 result would waste the run that produced it.
 
-So a failed attempt is kept, not reused: rerunning is the default, the earlier
-attempt stays on disk for inspection, and an operator who has looked at it can
+So a failed try is kept, not reused: rerunning is the default, the earlier try
+stays on disk for inspection, and an operator who has looked at it can
 mark it reusable with `accept_for_reuse`.
 """
 
@@ -80,7 +83,7 @@ class ReconciliationError(AttemptError):
 
 
 class AttemptCancelled(AttemptError):
-    """Cancellation was recorded for this attempt; it must not be launched.
+    """Cancellation was recorded for this try; it must not be launched.
 
     Recorded intent outlives the process that recorded it. Submitting anyway
     would start work an operator has already stopped.
@@ -95,21 +98,20 @@ class StaleIdentity(AttemptError):
     """
 
 
-class AttemptSpent(AttemptError):
-    """This attempt reached a terminal outcome that may not be reused.
-
-    Not a failure of the protocol: the work is finished and its record stands.
-    The caller should run a fresh attempt at a later sequence, leaving this one
-    intact for inspection.
-    """
-
-
-def is_reusable(state: AttemptState, manifest: Mapping[str, Any] | None) -> bool:
+def is_reusable(
+    state: AttemptState | TryState, manifest: Mapping[str, Any] | None
+) -> bool:
     """Whether a published result may stand in for running the work again."""
 
     if manifest is None:
         return False
-    if state.reuse_accepted:
+    selected: TryState | None
+    if isinstance(state, AttemptState):
+        number = manifest.get("try")
+        selected = next((item for item in state.tries if item.number == number), None)
+    else:
+        selected = state
+    if selected is not None and selected.reuse_accepted:
         return True
     return manifest.get("outcome") in REUSABLE_OUTCOMES
 
@@ -122,13 +124,29 @@ def accept_for_reuse(journal: AttemptJournal, *, reason: str) -> AttemptState:
     It is durable and attributable rather than a flag on a command line.
     """
 
-    published = journal.read_manifest()
-    if published is None:
-        raise AttemptError(
-            f"attempt {journal.identity} has no published result to accept"
+    with journal.claim():
+        state = journal.fold()
+        current = state.current
+        if current is None or not current.is_terminal:
+            raise AttemptError(
+                f"attempt {journal.identity} has no terminal try to accept"
+            )
+        published = journal.read_manifest(current.number)
+        if published is None:
+            raise AttemptError(
+                f"attempt {journal.identity} try {current.number} has no "
+                "published result to accept"
+            )
+        journal.append(
+            "reuse_accepted",
+            **{
+                "try": current.number,
+                "reason": reason,
+                "outcome": published.get("outcome"),
+            },
         )
-    journal.append("reuse_accepted", reason=reason, outcome=published.get("outcome"))
-    return journal.fold()
+        journal.make_standing(current.number)
+        return journal.fold()
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,8 +162,10 @@ def launch_or_attach(
     journal: AttemptJournal,
     transport: Transport,
     bundle: Mapping[str, Any],
+    *,
+    workspace_root: str | Path | None = None,
 ) -> LaunchResult:
-    """Resolve one attempt to exactly one of three durable dispositions.
+    """Resolve the current record try to one of three durable dispositions.
 
     ``completed`` — a manifest is already visible; the payload does not rerun.
     ``attached`` — the substrate already holds this attempt; no new submission.
@@ -153,125 +173,218 @@ def launch_or_attach(
     """
 
     with journal.claim():
-        return _launch_or_attach_locked(journal, transport, bundle)
+        return _launch_or_attach_locked(
+            journal, transport, bundle, workspace_root=workspace_root
+        )
 
 
 def _launch_or_attach_locked(
     journal: AttemptJournal,
     transport: Transport,
     bundle: Mapping[str, Any],
+    *,
+    workspace_root: str | Path | None = None,
 ) -> LaunchResult:
-    published = journal.read_manifest()
     state = journal.fold()
     _require_matching_inputs(journal, state, bundle)
 
-    if state.cancel_requested and not state.is_terminal and published is None:
-        raise AttemptCancelled(
-            f"attempt {journal.identity} has a recorded cancellation "
-            f"({state.cancel_reason!r}) and will not be launched"
+    standing = journal.read_manifest()
+    if standing is not None:
+        standing_try = standing.get("try")
+        selected = next(
+            (item for item in state.tries if item.number == standing_try), None
         )
-
-    if published is not None:
-        if not state.is_terminal:
-            # Crash between atomic publication and the terminal record. The
-            # manifest is the evidence; the journal is repaired to match it.
+        if selected is None:
+            raise ReconciliationError(
+                f"attempt {journal.identity} has a standing result for unknown "
+                f"try {standing_try!r}"
+            )
+        if not selected.is_terminal:
             journal.append(
                 "terminal",
-                outcome=published.get("outcome"),
-                manifest=str(journal.manifest_path),
-                repaired=True,
+                **{
+                    "try": selected.number,
+                    "outcome": standing.get("outcome"),
+                    "manifest": str(journal.manifest_path(selected.number)),
+                    "repaired": True,
+                },
             )
             state = journal.fold()
-        if not is_reusable(state, published):
-            raise AttemptSpent(
-                f"attempt {journal.identity} ended as "
-                f"{published.get('outcome')!r}, which is not reused "
-                f"automatically. Run a later sequence, or call "
-                f"accept_for_reuse(...) after inspecting it."
+        if not is_reusable(state, standing):
+            raise ReconciliationError(
+                f"attempt {journal.identity} has a non-reusable standing result"
             )
-        return LaunchResult("completed", state, published)
-
-    if state.is_terminal:
-        raise ReconciliationError(
-            f"attempt {journal.identity} claims a terminal outcome but no "
-            f"manifest is visible at {journal.manifest_path}"
+        _bundle_for_try(
+            journal,
+            bundle,
+            selected.number,
+            workspace_root=workspace_root,
+            create_workspace=False,
         )
+        return LaunchResult("completed", state, standing)
 
-    if state.phase == "submitted":
-        return LaunchResult("attached", state)
-
-    if state.phase == "intended":
-        handle = transport.discover(journal.identity)
-        if handle is not None:
-            journal.append("submit_receipt", handle=dict(handle), recovered=True)
-            return LaunchResult("attached", journal.fold())
-        if not transport.discovery_is_authoritative:
-            raise UnrecoverableAttempt(
-                f"attempt {journal.identity} recorded submission intent to "
-                f"transport {transport.name!r}, which cannot authoritatively "
-                f"confirm or deny acceptance; recoverable execution is "
-                f"unsupported here"
+    current = state.current
+    if current is not None:
+        published = journal.read_manifest(current.number)
+        if published is not None:
+            if not current.is_terminal:
+                journal.append(
+                    "terminal",
+                    **{
+                        "try": current.number,
+                        "outcome": published.get("outcome"),
+                        "manifest": str(journal.manifest_path(current.number)),
+                        "repaired": True,
+                    },
+                )
+                state = journal.fold()
+                current = state.current
+            assert current is not None
+            if is_reusable(current, published):
+                journal.make_standing(current.number)
+                _bundle_for_try(
+                    journal,
+                    bundle,
+                    current.number,
+                    workspace_root=workspace_root,
+                    create_workspace=False,
+                )
+                return LaunchResult("completed", state, published)
+            # A retained, non-reusable terminal try is followed by a new one.
+        elif current.is_terminal:
+            raise ReconciliationError(
+                f"attempt {journal.identity} try {current.number} claims a "
+                f"terminal outcome but no manifest is visible at "
+                f"{journal.manifest_path(current.number)}"
             )
-        journal.append(
-            "submit_lost",
-            transport=transport.name,
-            substrate=substrate_of(transport),
-        )
+        elif current.cancel_requested:
+            raise AttemptCancelled(
+                f"attempt {journal.identity} try {current.number} has a recorded "
+                f"cancellation ({current.cancel_reason!r}) and will not be launched"
+            )
+        elif current.phase == "submitted":
+            return LaunchResult("attached", state)
+        elif current.phase == "intended":
+            job_name = try_name(journal.identity, current.number)
+            handle = transport.discover(job_name)
+            if handle is not None:
+                journal.append(
+                    "submit_receipt",
+                    **{
+                        "try": current.number,
+                        "handle": dict(handle),
+                        "recovered": True,
+                    },
+                )
+                return LaunchResult("attached", journal.fold())
+            if not transport.discovery_is_authoritative:
+                raise UnrecoverableAttempt(
+                    f"attempt {journal.identity} try {current.number} recorded "
+                    f"submission intent to transport {transport.name!r}, which "
+                    "cannot authoritatively confirm or deny acceptance; "
+                    "recoverable execution is unsupported here"
+                )
+            journal.append(
+                "submit_lost",
+                **{
+                    "try": current.number,
+                    "transport": transport.name,
+                    "substrate": substrate_of(transport),
+                },
+            )
 
-    if not state.events:
+    number = journal.begin_try()
+    state = journal.fold()
+    job_name = try_name(journal.identity, number)
+
+    if not any(event.event == "created" for event in state.events):
         created = {
+            "try": number,
             "plan": bundle.get("plan"),
             "invocation": bundle.get("invocation"),
             "operation": bundle.get("operation"),
-            # Recorded so a later run can name what this result was computed
-            # from, and explain it as superseded rather than silently replace it.
             "input_digest": input_digest(bundle),
-            # Additional evidence only. The aggregate above remains the exact
-            # whole-bundle digest that participates in attempt identity.
             "input_digests": input_digests(bundle),
         }
-        for name in ("try", "authored_key", "supersedes"):
+        for name in ("authored_key", "supersedes"):
             if bundle.get(name) is not None:
                 created[name] = bundle[name]
         journal.append("created", **created)
 
-    # What was asked for and what the run resolved to, recorded before the
-    # substrate is touched. What was actually observed arrives with the receipt
-    # and the poll, and is deliberately kept as a separate fact: a run that came
-    # out slow or misplaced is only explainable if the three do not collapse
-    # into one.
+    submitted_bundle = _bundle_for_try(
+        journal,
+        bundle,
+        number,
+        workspace_root=workspace_root,
+        create_workspace=True,
+    )
+
     placement = bundle.get("placement")
     if placement:
-        journal.append("placement", **placement)
+        journal.append("placement", **{"try": number, **placement})
 
-    # Intent is durable before the substrate is touched. Everything downstream
-    # depends on this ordering.
-    # Both, because they answer different questions. `transport` is what was
-    # asked to submit, which is what a wrapper's provenance depends on;
-    # `substrate` is where the job then lives, which is the only thing an
-    # outside observer can ask about.
     journal.append(
         "submit_intent",
-        transport=transport.name,
-        substrate=substrate_of(transport),
+        **{
+            "try": number,
+            "transport": transport.name,
+            "substrate": substrate_of(transport),
+        },
     )
     try:
-        handle = transport.submit(journal.identity, bundle)
+        handle = transport.submit(job_name, submitted_bundle)
     except SubmissionRefused as error:
-        # The transport established that nothing was accepted, so the attempt
-        # returns to the unsubmitted phase and may be retried directly.
-        journal.append("submit_refused", error=f"{type(error).__name__}: {error}")
-        raise
-    except Exception as error:
-        # Any other failure is indeterminate: the substrate may already hold
-        # this work. The attempt stays in the crash window, where only
-        # discovery may release it.
         journal.append(
-            "submit_indeterminate", error=f"{type(error).__name__}: {error}"
+            "submit_refused",
+            **{"try": number, "error": f"{type(error).__name__}: {error}"},
         )
         raise
-    journal.append("submit_receipt", handle=dict(handle))
+    except Exception as error:
+        journal.append(
+            "submit_indeterminate",
+            **{"try": number, "error": f"{type(error).__name__}: {error}"},
+        )
+        raise
+    journal.append("submit_receipt", **{"try": number, "handle": dict(handle)})
     return LaunchResult("claimed", journal.fold())
+
+
+def _bundle_for_try(
+    journal: AttemptJournal,
+    bundle: Mapping[str, Any],
+    number: int,
+    *,
+    workspace_root: str | Path | None,
+    create_workspace: bool,
+) -> Mapping[str, Any]:
+    """Bind one try's workspace and repoint its derived current aliases."""
+
+    prepared: Mapping[str, Any] = {**bundle, "try": number}
+    declared_outputs = bundle.get("outputs")
+    if not declared_outputs and workspace_root is None:
+        return prepared
+    root = workspace_root or journal.directory.parent
+    name = try_name(journal.identity, number)
+    workdir = (
+        workspace_for(root, name)
+        if create_workspace
+        else workspace_path(root, name)
+    )
+    prepared = {**prepared, "workdir": str(workdir)}
+    plan_id = bundle.get("plan")
+    invocation_id = bundle.get("invocation")
+    if declared_outputs and plan_id and invocation_id:
+        alias_key = bundle.get("authored_key") or invocation_id
+        for output, declaration in sorted(declared_outputs.items()):
+            if isinstance(declaration, Mapping) and "path" in declaration:
+                point_alias(
+                    journal.directory.parent,
+                    plan_id=plan_id,
+                    authored_key=alias_key,
+                    output=output,
+                    target=workdir / declaration["path"],
+                )
+    return prepared
 
 
 def _require_matching_inputs(
@@ -313,11 +426,18 @@ def request_cancel(
     reconciled later, never a fact established by this call returning.
     """
 
-    journal.append("cancel_requested", reason=reason)
-    state = journal.fold()
-    if state.phase == "submitted" and state.handle is not None:
-        transport.cancel(state.handle)
-    return journal.fold()
+    with journal.claim():
+        state = journal.fold()
+        current = state.current
+        if current is None:
+            raise AttemptError(f"attempt {journal.identity} has no try to cancel")
+        journal.append(
+            "cancel_requested", **{"try": current.number, "reason": reason}
+        )
+        state = journal.fold()
+        if state.phase == "submitted" and state.handle is not None:
+            transport.cancel(state.handle)
+        return journal.fold()
 
 
 def reconcile(
@@ -333,9 +453,40 @@ def reconcile(
     published as ``unreconciled`` rather than normalized into either outcome.
     """
 
-    published = journal.read_manifest()
+    with journal.claim():
+        return _reconcile_locked(
+            journal, transport, bundle_outputs=bundle_outputs
+        )
+
+
+def _reconcile_locked(
+    journal: AttemptJournal,
+    transport: Transport,
+    *,
+    bundle_outputs: Mapping[str, Mapping[str, Any]] | None = None,
+) -> AttemptState:
     state = journal.fold()
-    if published is not None or state.is_terminal:
+    current = state.current
+    if current is None:
+        raise ReconciliationError(
+            f"attempt {journal.identity} has no allocated try to reconcile"
+        )
+    published = journal.read_manifest(current.number)
+    if published is not None:
+        if not current.is_terminal:
+            journal.append(
+                "terminal",
+                **{
+                    "try": current.number,
+                    "outcome": published.get("outcome"),
+                    "manifest": str(journal.manifest_path(current.number)),
+                    "repaired": True,
+                },
+            )
+            if published.get("outcome") == "succeeded":
+                journal.make_standing(current.number)
+        return journal.fold()
+    if current.is_terminal:
         return state
 
     if state.phase != "submitted" or state.handle is None:
@@ -346,12 +497,18 @@ def reconcile(
 
     observation: Observation = transport.poll(state.handle)
     journal.append(
-        "observed", state=observation.state, detail=dict(observation.detail or {})
+        "observed",
+        **{
+            "try": current.number,
+            "state": observation.state,
+            "detail": dict(observation.detail or {}),
+        },
     )
 
     if not observation.is_terminal:
         if observation.state == "absent":
             journal.publish_terminal(
+                try_number=current.number,
                 outcome="unreconciled",
                 manifest={
                     "reason": "substrate reports no such accepted work",
@@ -366,6 +523,7 @@ def reconcile(
         # Cancellation was requested and the work finished anyway. That is a
         # real, reportable disagreement rather than a plain success.
         journal.publish_terminal(
+            try_number=current.number,
             outcome="unreconciled",
             manifest={
                 "reason": "cancellation was requested but the work succeeded",
@@ -378,7 +536,14 @@ def reconcile(
     detail = dict(observation.detail or {})
     location = state.handle.get("workdir")
     workdir = Path(location) if location else None
-    write_diagnostics(workdir, detail.get("stdout", ""), detail.get("stderr", ""))
+    try:
+        write_diagnostics(
+            workdir, detail.get("stdout", ""), detail.get("stderr", "")
+        )
+    except OSError as error:
+        # Diagnostics are evidence, but failure to write them must not erase a
+        # completed substrate outcome or prevent terminal publication.
+        detail["diagnostics_error"] = f"{type(error).__name__}: {error}"
 
     if outcome == "succeeded":
         try:
@@ -393,6 +558,7 @@ def reconcile(
             # The work reported success but did not produce what it promised.
             # That is a failed invocation, not a successful one with a gap.
             journal.publish_terminal(
+                try_number=current.number,
                 outcome="failed",
                 manifest={**detail, "error": str(error)},
             )
@@ -416,5 +582,7 @@ def reconcile(
             },
         }
 
-    journal.publish_terminal(outcome=outcome, manifest=detail)
+    journal.publish_terminal(
+        try_number=current.number, outcome=outcome, manifest=detail
+    )
     return journal.fold()

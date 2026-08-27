@@ -30,6 +30,7 @@ import pytest
 from hedloom_exec.attempt import launch_or_attach, reconcile
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.lsf import LSFInteractiveTransport
 
 FARM = os.path.join(os.path.dirname(__file__), "fakefarm")
@@ -40,6 +41,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def record_identity(label):
+    return attempt_identity(plan_id="fake-farm", invocation_id=label).rendered
+
+
 @pytest.fixture
 def farm(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", FARM + os.pathsep + os.environ["PATH"])
@@ -48,7 +53,7 @@ def farm(tmp_path, monkeypatch):
 
 
 def test_a_real_submission_runs_the_command_and_records_success(farm, tmp_path):
-    journal = AttemptJournal(tmp_path, "hedloom-farm-ok")
+    journal = AttemptJournal(tmp_path, record_identity("ok"))
     bundle = {"command": [sys.executable, "-c", "print('simulated')"]}
 
     launch_or_attach(journal, farm, bundle)
@@ -59,7 +64,7 @@ def test_a_real_submission_runs_the_command_and_records_success(farm, tmp_path):
 
 
 def test_a_failing_command_propagates_its_exit_status(farm, tmp_path):
-    journal = AttemptJournal(tmp_path, "hedloom-farm-fail")
+    journal = AttemptJournal(tmp_path, record_identity("fail"))
     bundle = {
         "command": [
             sys.executable,
@@ -72,7 +77,7 @@ def test_a_failing_command_propagates_its_exit_status(farm, tmp_path):
     state = reconcile(journal, farm)
 
     assert state.outcome == "failed"
-    result = journal.read_manifest()["result"]
+    result = journal.read_manifest(state.current_try)["result"]
     assert result["returncode"] == 3
     assert result["stdout"] == "failure detail\n"
     assert result["error"] == "bsub -I exited with status 3"
@@ -91,8 +96,9 @@ def test_the_submission_reaches_bsub_with_its_declared_shape(farm, tmp_path):
     )
 
     identity = result.journal.identity
-    recorded = json.loads((tmp_path / "farm" / f"{identity}.json").read_text())
-    assert recorded["options"]["-J"] == identity
+    job = try_name(identity, 0)
+    recorded = json.loads((tmp_path / "farm" / f"{job}.json").read_text())
+    assert recorded["options"]["-J"] == job
     assert recorded["options"]["-W"] == "5"
     assert recorded["options"]["-q"] == "normal"
 
@@ -115,7 +121,7 @@ def test_a_finished_job_is_not_discovered(farm, tmp_path):
     )
 
     assert result.outcome == "succeeded"
-    assert farm.discover(result.journal.identity) is None
+    assert farm.discover(try_name(result.journal.identity, 0)) is None
 
 
 def test_discovery_and_cancellation_reach_the_real_commands(farm, tmp_path):
@@ -128,22 +134,23 @@ def test_discovery_and_cancellation_reach_the_real_commands(farm, tmp_path):
 
     state = tmp_path / "farm"
     state.mkdir(parents=True, exist_ok=True)
-    identity = "hedloom-left-behind"
+    identity = record_identity("left-behind")
+    job = try_name(identity, 0)
     # No `owner_pid`: a leftover whose client this fake never saw, which is the
     # one thing it cannot prove is gone.
-    (state / f"{identity}.json").write_text(
-        json.dumps({"name": identity, "state": "RUN", "options": {"-q": "normal"}}),
+    (state / f"{job}.json").write_text(
+        json.dumps({"name": job, "state": "RUN", "options": {"-q": "normal"}}),
         encoding="utf-8",
     )
 
-    found = farm.discover(identity)
+    found = farm.discover(job)
     assert found is not None and found["kind"] == "live"
-    farm.cancel({"identity": identity})
-    assert farm.discover(identity) is None
+    farm.cancel({"identity": job})
+    assert farm.discover(job) is None
 
 
 def test_an_unknown_job_name_is_not_discovered(farm):
-    assert farm.discover("hedloom-never-submitted") is None
+    assert farm.discover(try_name(record_identity("never-submitted"), 0)) is None
 
 
 def submitter(tmp_path, root, identity, command, farm_state):
@@ -206,7 +213,8 @@ def test_a_job_dies_with_the_client_that_submitted_it(tmp_path, monkeypatch):
     root = tmp_path / "attempts"
     state = tmp_path / "farm"
     marker = tmp_path / "ran.txt"
-    identity = "hedloom-owner-bound"
+    identity = record_identity("owner-bound")
+    job = try_name(identity, 0)
     command = [
         "/bin/sh",
         "-c",
@@ -218,7 +226,7 @@ def test_a_job_dies_with_the_client_that_submitted_it(tmp_path, monkeypatch):
         assert wait_for(lambda: marker.exists() and marker.read_text() == "started"), (
             "the farm job should have started"
         )
-        record = state / f"{identity}.json"
+        record = state / f"{job}.json"
         assert wait_for(lambda: json.loads(record.read_text())["state"] == "RUN")
         child.kill()
         child.wait(timeout=10)
@@ -231,7 +239,7 @@ def test_a_job_dies_with_the_client_that_submitted_it(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_LSF_STATE", str(state))
     transport = LSFInteractiveTransport(defaults={"walltime": "5", "queue": "normal"})
 
-    assert wait_for(lambda: transport.discover(identity) is None), (
+    assert wait_for(lambda: transport.discover(job) is None), (
         "a job whose client was killed must leave the queue"
     )
     # The work itself is gone, not merely unreported: ask the kernel. The window
@@ -259,12 +267,13 @@ def test_the_crash_window_resubmits_instead_of_attaching(tmp_path, monkeypatch):
 
     root = tmp_path / "attempts"
     state = tmp_path / "farm"
-    identity = "hedloom-crash-window"
+    identity = record_identity("crash-window")
+    job = try_name(identity, 0)
     command = ["/bin/sh", "-c", "sleep 1"]
 
     child = submitter(tmp_path, root, identity, command, state)
     journal = AttemptJournal(root, identity)
-    record = state / f"{identity}.json"
+    record = state / f"{job}.json"
     try:
         assert wait_for(
             lambda: journal.exists()
@@ -320,7 +329,7 @@ def test_the_watcher_sees_a_job_pend_and_then_run(tmp_path, monkeypatch):
 
     root = tmp_path / "attempts"
     state = tmp_path / "farm"
-    identity = "hedloom-pending"
+    identity = record_identity("pending")
     monkeypatch.setenv("FAKE_LSF_PEND_SECONDS", "0.8")
     monkeypatch.setenv("PATH", FARM + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("FAKE_LSF_STATE", str(state))

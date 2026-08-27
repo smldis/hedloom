@@ -139,7 +139,7 @@ deterministic topological order, a bundle is hashed:
 | config arguments | `max_jobs`, queue, cores, memory |
 | resolved input identities (`output:<producer-digest>:<name>`, `source:<digest>`) | which kernel ran it |
 | declared output bindings (paths and filesystem shapes) | wall-clock, process, transport handle |
-| **implementation fingerprint** — blake2b of the body's source | attempt sequence (that's separate) |
+| **implementation fingerprint** — blake2b of the body's source | try number (that's separate) |
 | the `shell` command, `identity_env` | |
 
 Two consequences fall out of that split. Editing an operation's body reruns
@@ -151,20 +151,25 @@ about *how* work runs, never *what it means*.
 Digests chain: a producer's digest is part of its consumer's inputs, so one
 changed point invalidates exactly its own downstream cone and nothing sideways.
 
-**4. Attempt identity** — the durable name
+**4. Record identity and try name** — the durable names
 (`exec/src/hedloom_exec/identity.py:60`):
 
 ```
-attempt_identity(plan_id, invocation_id, sequence, input_digest)
+attempt_identity(plan_id, invocation_id, input_digest)
     -> "hedloom-<blake2b-80bit>"
 ```
 
-Chosen **before** a transport is asked to accept work, and used as both the
-record directory and the LSF `-J` job name. That ordering is the whole point: a
-submission whose receipt is lost can still be found afterwards by asking the
-scheduler about a name that was computed, not returned. Finding a valid manifest
-at this identity means the work was done with *exactly these inputs* — reuse
-cannot be stale by construction.
+The record identity is chosen from planning facts and names the record
+directory. Under its claim, `begin_try()` durably allocates a non-negative
+number; `<record>-<try>` names both the workspace and the LSF `-J` job. That
+ordering is the whole point: a submission whose receipt is lost is discovered
+by its exact try name, not the record name. Per-try manifests preserve every
+outcome, while `standing.json` selects reusable evidence. Because changed
+inputs choose another record, reuse cannot be stale by construction.
+
+Phase 1 removed the former sequence slot from the identity hash. Renderings
+therefore changed deliberately, and pre-Phase-1 roots are unreadable; this
+prototype provides no migration.
 
 ### Execution — readiness is the only thing the kernel owns
 
@@ -211,7 +216,7 @@ failing does not abandon the other forty-nine.
 | **Data-dependent branching** | **refused by construction** (handles raise on `__bool__`) | not in-graph; recompute and rebuild | yes — autograph lowers to `tf.cond`/`tf.while_loop` | steps are sequential; a step may act on prior metrics | no; the grid is declared |
 | **Who decides readiness** | Dask, or a sequential loop — **swappable, no result change** | Dask scheduler | TF runtime + Grappler | the flow, in order | a local job queue |
 | **Who decides placement** | the **Plan** (per-invocation policy), never the scheduler | scheduler, hinted by `resources=` / `workers=` | placer, with `tf.device` as a *soft* hint | the host it runs on | the host it runs on |
-| **HPC / batch** | first-class: `lsf()` per invocation, `pooled()` for shared workers, job name = attempt identity | via `dask-jobqueue` (workers are batch jobs, tasks are not) | no | no | no |
+| **HPC / batch** | first-class: `lsf()` per invocation, `pooled()` for shared workers, job name = record + try | via `dask-jobqueue` (workers are batch jobs, tasks are not) | no | no | no |
 | **Sweeps** | `sweep(points, key=...)` — a keyed scope, keys derived per point | a list comprehension; keys come from token hashing | vectorization / `vmap`-style batching | not a concept | **declared conditions grid** — its native idiom |
 | **Failure** | blocked outcome, siblings continue, recorded durably | exception propagates; `gather` raises | graph execution aborts | flow aborts at the failing step | parameter marked failed, others continue |
 | **Domain vocabulary** | **none** — generic operations; analog meaning is just another operation | none | tensors | digital implementation views (RTL→GDS) | **rich** — corners, limits, units, plots, datasheet |

@@ -8,6 +8,7 @@ import sys
 from typing import Sequence
 
 from hedloom_exec.alias import alias_path
+from hedloom_exec.identity import IdentityError, parse_try_name
 from hedloom_exec.lineage import is_behind, lineage, why_reran
 from hedloom_exec.reuse import scan_attempts
 from hedloom_run.site import Site
@@ -81,8 +82,15 @@ def _where(arguments: argparse.Namespace) -> int:
 
 def _record_containing(root: str, path: Path):
     resolved = path.resolve(strict=False)
+    identity = None
+    for part in resolved.parts:
+        try:
+            identity, _ = parse_try_name(part)
+        except IdentityError:
+            continue
+        break
     return next(
-        (record for record in scan_attempts(root) if record.identity in resolved.parts),
+        (record for record in scan_attempts(root) if record.identity == identity),
         None,
     )
 

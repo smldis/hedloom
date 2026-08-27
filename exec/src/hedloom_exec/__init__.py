@@ -1,9 +1,8 @@
-"""Hedloom Exec: durable attempt identity, evidence, and reconciliation.
+"""Hedloom Exec: durable record identity, try evidence, and reconciliation.
 
-This unit owns exactly one thing: the lifecycle of a single attempt at a single
-planned invocation, from an identity chosen before submission through terminal
-reconciliation. It owns no graph, decides no readiness, and releases no
-successors.
+This unit owns exactly one thing: the lifecycle of a content-addressed record
+and the tries made for that planned invocation. It owns no graph, decides no
+readiness, and releases no successors.
 
 Work launched here is owner-bound: it is not meant to outlive the caller that
 started it. The durable record therefore exists for evidence and for skipping

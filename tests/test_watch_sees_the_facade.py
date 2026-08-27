@@ -16,6 +16,7 @@ question has always been waiting for.
 from pathlib import Path
 
 from hedloom_exec.durability import Durability, execute
+from hedloom_exec.identity import try_name
 from hedloom_exec.transport import Observation, substrate_of
 from hedloom_exec.watch import live_attempts, observe, status_of
 
@@ -100,7 +101,7 @@ def test_the_observer_asks_the_farm_about_work_the_facade_submitted(tmp_path):
 
     identity = run_one(tmp_path)
 
-    rows = observe(tmp_path, FakeReader({identity: "pending"}))
+    rows = observe(tmp_path, FakeReader({try_name(identity, 0): "pending"}))
 
     assert [row.observed for row in rows] == ["pending"]
 
@@ -108,8 +109,8 @@ def test_the_observer_asks_the_farm_about_work_the_facade_submitted(tmp_path):
 def test_queue_latency_becomes_computable(tmp_path):
     identity = run_one(tmp_path)
 
-    observe(tmp_path, FakeReader({identity: "pending"}))
-    observe(tmp_path, FakeReader({identity: "running"}))
+    observe(tmp_path, FakeReader({try_name(identity, 0): "pending"}))
+    observe(tmp_path, FakeReader({try_name(identity, 0): "running"}))
 
     status = status_of(tmp_path, identity)
     assert status.queue_seconds is not None, (

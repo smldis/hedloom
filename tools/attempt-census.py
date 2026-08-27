@@ -13,16 +13,12 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
-import json
 import os
 from pathlib import Path
 import sys
 import time
 
-from hedloom_exec.identity import attempt_identity
-
-
-MAX_PROBE = 64
+from hedloom_exec.journal import AttemptJournal
 
 
 def _disk_usage(path: Path) -> tuple[int, int]:
@@ -64,47 +60,26 @@ def census(root: Path, workspace_root: Path | None = None) -> str:
         defaultdict(list)
     )
     outcomes: Counter[str] = Counter()
-    unresolved = 0
-
     started = time.perf_counter()
     for directory in attempt_directories:
-        events = [
-            json.loads(line)
-            for line in (directory / "events.jsonl").read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        journal = AttemptJournal(attempts, directory.name)
+        state = journal.fold()
+        events = state.events
         created = next(
-            (event.get("data") or {} for event in events if event.get("event") == "created"),
+            (event.data for event in events if event.event == "created"),
             {},
         )
-        terminal = next(
-            (event for event in reversed(events) if event.get("event") == "terminal"),
-            None,
-        )
-        accepted = any(event.get("event") == "reuse_accepted" for event in events)
-        outcome = (terminal or {}).get("data", {}).get("outcome") or "non-terminal"
-        outcomes[outcome] += 1
-
-        sequence = created.get("try")
-        if sequence is None and created.get("plan") and created.get("invocation"):
-            for candidate in range(MAX_PROBE):
-                rendered = attempt_identity(
-                    plan_id=created["plan"],
-                    invocation_id=created["invocation"],
-                    sequence=candidate,
-                    input_digest=created.get("input_digest"),
-                ).rendered
-                if rendered == directory.name:
-                    sequence = candidate
-                    break
-        if sequence is None:
-            unresolved += 1
         key = (
             created.get("plan"),
             created.get("invocation"),
             created.get("input_digest"),
         )
-        groups[key].append((sequence, outcome, accepted, directory))
+        for item in state.tries:
+            outcome = item.outcome or item.phase
+            outcomes[outcome] += 1
+            groups[key].append(
+                (item.number, outcome, item.reuse_accepted, directory)
+            )
     scan_seconds = time.perf_counter() - started
 
     depths = sorted(len(group) for group in groups.values())
@@ -120,16 +95,15 @@ def census(root: Path, workspace_root: Path | None = None) -> str:
 
     lines = [
         f"root                 {root}",
-        f"attempt directories  {len(attempt_directories)}",
-        f"outcomes             {dict(outcomes)}",
-        f"unresolved sequence  {unresolved}",
+        f"record directories   {len(attempt_directories)}",
+        f"try outcomes         {dict(outcomes)}",
         "",
         f"(invocation,digest) groups   {len(groups)}",
-        "  attempts per group  "
+        "  tries per record     "
         f"max {max(depths, default=0)}  p95 {_percentile(depths, 0.95)}  "
         f"median {_percentile(depths, 0.5)}",
-        f"  deepest sequence in use    {max(deepest, default=-1)}",
-        f"  groups with >=5 attempts   {len(large_groups)}",
+        f"  deepest try in use         {max(deepest, default=-1)}",
+        f"  records with >=5 tries     {len(large_groups)}",
         "",
         f"records   {record_bytes / 1048576:9.1f} MiB   {record_entries:>7} entries",
         f"workspaces{workspace_bytes / 1048576:9.1f} MiB   {workspace_entries:>7} entries",
@@ -143,7 +117,7 @@ def census(root: Path, workspace_root: Path | None = None) -> str:
             "",
             f"readdir+sort {directory_seconds * 1000:.1f} ms   "
             f"read+fold+derive {scan_seconds * 1000:.1f} ms   "
-            f"({scan_seconds / max(len(attempt_directories), 1) * 1e6:.0f} us/attempt)",
+            f"({scan_seconds / max(len(attempt_directories), 1) * 1e6:.0f} us/record)",
         ]
     )
     return "\n".join(lines)

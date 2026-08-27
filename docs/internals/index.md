@@ -5,8 +5,8 @@ author or run a study — that is [the guide](../index.md).
 
 ## Why this unit exists at all
 
-`hedloom_flow` owns authoring and the Plan. `hedloom_exec` owns one attempt's
-durable record and imports neither this package nor Dask. `hedloom_run` owns
+`hedloom_flow` owns authoring and the Plan. `hedloom_exec` owns one durable
+record and its tries, and imports neither this package nor Dask. `hedloom_run` owns
 binding and readiness. This package composes them and adds the one thing none of
 them could own alone: a `submit` that runs what was authored, because it holds
 both halves.

@@ -1,6 +1,7 @@
 # Hedloom Exec
 
-Hedloom Exec owns the durable lifecycle of one attempt at one planned invocation.
+Hedloom Exec owns the durable lifecycle of one record at one planned invocation,
+and the tries made under that record.
 It is the first unit in this repository to own any part of *execute*, and it
 deliberately owns only the part that must survive a crash.
 
@@ -12,11 +13,13 @@ substrate is touched, and used afterwards to find work whose receipt was lost.
 
 ## What the record guarantees
 
-Each attempt is a plain directory containing an append-only `events.jsonl` and,
-once terminal, an atomically published `manifest.json`. State is always derived
-by folding that record. Two orderings carry the recovery argument: submission
-intent is flushed before any transport call, and the terminal record is written
-only after the manifest is visible.
+Each record is a plain layout-1 directory containing an append-only
+`events.jsonl`, immutable `manifest/<try>.json` evidence, and an atomic
+`standing.json` pointer when one try is reusable. State is always derived by
+folding events per try. Three orderings carry the recovery argument: a try is
+reserved and recorded while the record claim is held, submission intent is
+flushed before any transport call, and the terminal event is written only
+after that try's manifest is visible.
 
 `launch_or_attach(...)` resolves to `claimed`, `attached`, or `completed` — or
 raises `UnrecoverableAttempt`, which reports a substrate that cannot say
@@ -25,7 +28,7 @@ place is what produces duplicate farm jobs.
 
 ## Transports declare what they can answer
 
-A transport moves one attempt to a substrate and reports observations. It never
+A transport moves one try to a substrate and reports observations. It never
 decides readiness or releases successors. Its `discovery_is_authoritative` flag
 governs the *negative* answer only: a positive match is always usable, because
 the identity predates the submission that created it.
@@ -35,7 +38,7 @@ the identity predates the submission that created it.
 | Transport | What it does | Evidence |
 | --- | --- | --- |
 | in-process | The honest degenerate case: accepted work cannot outlive its caller, so discovery is trivially authoritative. | Every test, and every domain study in this repository. |
-| `hedloom_exec.lsf.LSFInteractiveTransport` | One `bsub -I` job per attempt, owner-bound through the `bsub` client. | Has reached a **real LSF installation**, through the sequential kernel: argv, `-J` identity, an artifact chaining between jobs, failure recording and reuse. Concurrency and the `bjobs` parser remain fake-only. |
+| `hedloom_exec.lsf.LSFInteractiveTransport` | One `bsub -I` job per try, owner-bound through the `bsub` client. | Has reached a **real LSF installation**, through the sequential kernel: argv, `-J` try name, an artifact chaining between jobs, failure recording and reuse. Concurrency and the `bjobs` parser remain fake-only. |
 | `hedloom_exec.lsf.LSFPooledTransport` | Nothing. A refusing boundary that names the seam rather than letting a caller reach a half-implementation. | — |
 
 The name collision is worth stating plainly: **the pooled transport that works

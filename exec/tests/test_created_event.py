@@ -1,4 +1,4 @@
-"""Phase 0 attribution explains an attempt without changing its identity."""
+"""Record attribution remains outside the Phase 1 content identity."""
 
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.identity import attempt_identity
@@ -55,10 +55,11 @@ def test_created_records_the_try_number(tmp_path):
     assert created(run(tmp_path)).data["try"] == 0
 
 
-def test_created_omits_the_try_number_for_a_caller_supplied_identity(tmp_path):
-    result = run(tmp_path, identity="caller-supplied")
+def test_created_records_the_try_for_a_caller_supplied_record_identity(tmp_path):
+    supplied = attempt_identity(plan_id="supplied", invocation_id="record").rendered
+    result = run(tmp_path, identity=supplied)
 
-    assert "try" not in created(result).data
+    assert created(result).data["try"] == 0
 
 
 def test_created_records_the_authored_key(tmp_path):
@@ -105,7 +106,8 @@ def test_an_identity_computed_before_phase_zero_is_unchanged_after_it(tmp_path):
     )
     result = run(tmp_path, BUNDLE)
 
-    assert before.rendered == "hedloom-0b712cfed9b4cc671c6f"
+    # Phase 1 intentionally removed the sequence slot from the hash material.
+    assert before.rendered == "hedloom-f8985a4150657953e7cf"
     assert result.journal.identity == before.rendered
 
 
@@ -123,20 +125,26 @@ def test_no_created_field_participates_in_the_input_digest():
     assert input_digest(decorated) == input_digest(BUNDLE)
 
 
-def test_a_record_missing_the_phase_zero_fields_still_scans(tmp_path):
-    journal = AttemptJournal(tmp_path, "old-record")
-    journal.append(
-        "created",
-        plan="plan",
-        invocation="invoke:key:abc",
-        operation="op",
-        input_digest="old",
-    )
+def test_a_layout_one_record_missing_optional_attribution_still_scans(tmp_path):
+    identity = attempt_identity(plan_id="old", invocation_id="record").rendered
+    journal = AttemptJournal(tmp_path, identity)
+    with journal.claim():
+        number = journal.begin_try()
+        journal.append(
+            "created",
+            **{
+                "try": number,
+                "plan": "plan",
+                "invocation": "invoke:key:abc",
+                "operation": "op",
+                "input_digest": "old",
+            },
+        )
 
     records = scan_attempts(tmp_path)
     assert len(records) == 1
-    assert records[0].identity == "old-record"
-    assert records[0].try_number is None
+    assert records[0].identity == identity
+    assert records[0].try_number == 0
     assert records[0].authored_key is None
     assert records[0].supersedes is None
     assert records[0].input_digests == {}

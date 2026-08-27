@@ -10,6 +10,7 @@ import os
 import pytest
 
 from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.identity import parse_try_name
 from hedloom_exec.lsf import LSFInteractiveTransport, SubprocessRunner
 from hedloom_exec.transport import InProcessTransport
 from hedloom_run.driver import UnsupportedPlacement, run_plan
@@ -118,9 +119,9 @@ def test_requested_resolved_and_observed_are_recorded_separately(tmp_path):
         root=str(tmp_path),
     )
 
-    identity = direct.seen[0]
+    identity, number = parse_try_name(direct.seen[0])
     manifest = json.loads(
-        (tmp_path / identity / "manifest.json").read_text()
+        (tmp_path / identity / "manifest" / f"{number}.json").read_text()
     )
     placement = manifest["result"]["placement"]
 
@@ -139,9 +140,10 @@ def test_placement_is_recorded_before_the_substrate_is_touched(tmp_path):
         root=str(tmp_path),
     )
 
+    identity, _ = parse_try_name(direct.seen[0])
     events = [
         item.event
-        for item in AttemptJournal(tmp_path, direct.seen[0]).events()
+        for item in AttemptJournal(tmp_path, identity).events()
     ]
     assert events.index("placement") < events.index("submit_intent")
 

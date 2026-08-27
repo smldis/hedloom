@@ -10,10 +10,13 @@ import pytest
 from hedloom_exec.attempt import launch_or_attach, reconcile
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.lsf import CommandResult, LSFInteractiveTransport, LSFPooledTransport
 from hedloom_exec.transport import SubmissionRefused
 
 BUNDLE = {"command": ["simulate", "--point", "tt"]}
+IDENTITY = attempt_identity(plan_id="lsf", invocation_id="abc").rendered
+JOB = try_name(IDENTITY, 0)
 
 
 class FakeRunner:
@@ -47,12 +50,12 @@ def transport(**kwargs):
 
 def test_submission_is_interactive_named_and_walltime_bounded():
     lsf, runner = transport()
-    lsf.submit("hedloom-abc", BUNDLE)
+    lsf.submit(JOB, BUNDLE)
 
     argv = runner.calls[0]
     assert argv[0] == "bsub"
     assert "-I" in argv
-    assert argv[argv.index("-J") + 1] == "hedloom-abc"
+    assert argv[argv.index("-J") + 1] == JOB
     assert argv[argv.index("-W") + 1] == "30"
     assert argv[-3:] == ["simulate", "--point", "tt"]
 
@@ -64,7 +67,7 @@ def test_walltime_is_mandatory():
 
 def test_resource_request_is_passed_through():
     lsf, runner = transport(queue="normal", cores=4, resources="rusage[mem=8000]")
-    lsf.submit("hedloom-abc", BUNDLE)
+    lsf.submit(JOB, BUNDLE)
 
     argv = runner.calls[0]
     assert argv[argv.index("-q") + 1] == "normal"
@@ -75,13 +78,13 @@ def test_resource_request_is_passed_through():
 def test_a_bundle_without_a_command_is_refused_before_submission():
     lsf, runner = transport()
     with pytest.raises(SubmissionRefused):
-        lsf.submit("hedloom-abc", {"arguments": {"value": 1}})
+        lsf.submit(JOB, {"arguments": {"value": 1}})
     assert runner.calls == []
 
 
 def test_successful_exit_becomes_a_published_success(tmp_path):
     lsf, _ = transport()
-    journal = AttemptJournal(tmp_path, "hedloom-abc")
+    journal = AttemptJournal(tmp_path, IDENTITY)
     launch_or_attach(journal, lsf, BUNDLE)
     state = reconcile(journal, lsf)
 
@@ -94,14 +97,14 @@ def test_nonzero_exit_becomes_a_published_failure(tmp_path):
         CommandResult(returncode=137, stdout="payload detail", stderr="killed")
     )
     lsf, _ = transport(runner=runner)
-    journal = AttemptJournal(tmp_path, "hedloom-abc")
+    journal = AttemptJournal(tmp_path, IDENTITY)
     workdir = tmp_path / "work"
     workdir.mkdir()
     launch_or_attach(journal, lsf, {**BUNDLE, "workdir": str(workdir)})
     state = reconcile(journal, lsf)
 
     assert state.outcome == "failed"
-    result = journal.read_manifest()["result"]
+    result = journal.read_manifest(state.current_try)["result"]
     assert result["returncode"] == 137
     assert result["stdout"] == "payload detail"
     assert result["stderr"] == "killed"
@@ -112,22 +115,22 @@ def test_nonzero_exit_becomes_a_published_failure(tmp_path):
 
 def test_discovery_reports_nothing_when_no_job_survives():
     lsf, _ = transport()
-    assert lsf.discover("hedloom-abc") is None
+    assert lsf.discover(JOB) is None
 
 
 def test_discovery_finds_a_job_left_behind_by_an_earlier_run():
     runner = FakeRunner(bjobs=CommandResult(returncode=0, stdout="9001 RUN normal"))
     lsf, _ = transport(runner=runner)
 
-    found = lsf.discover("hedloom-abc")
+    found = lsf.discover(JOB)
     assert found is not None
     assert "9001" in found["observed"]
 
 
 def test_cancellation_targets_the_attempt_name():
     lsf, runner = transport()
-    lsf.cancel({"identity": "hedloom-abc"})
-    assert runner.calls[-1] == ["bkill", "-J", "hedloom-abc"]
+    lsf.cancel({"identity": JOB})
+    assert runner.calls[-1] == ["bkill", "-J", JOB]
 
 
 def test_recorded_execution_over_lsf_reuses_a_published_result(tmp_path):

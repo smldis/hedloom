@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping
 
 from hedloom_exec.alias import alias_path
+from hedloom_exec.identity import IdentityError, parse_try_name
 from hedloom_exec.reuse import AttemptRecord, scan_attempts
 
 __all__ = ["Iteration", "is_behind", "lineage", "why_reran"]
@@ -81,8 +82,13 @@ def _current_identities(
     for candidate in key_directory.iterdir():
         if not candidate.is_symlink():
             continue
-        parts = candidate.resolve(strict=False).parts
-        current.update(identity for identity in identities if identity in parts)
+        for part in candidate.resolve(strict=False).parts:
+            try:
+                identity, _ = parse_try_name(part)
+            except IdentityError:
+                continue
+            if identity in identities:
+                current.add(identity)
     return current
 
 
@@ -130,8 +136,15 @@ def is_behind(
 
     resolved = Path(path).resolve(strict=False)
     records = scan_attempts(root)
+    stale_identity = None
+    for part in resolved.parts:
+        try:
+            stale_identity, _ = parse_try_name(part)
+        except IdentityError:
+            continue
+        break
     stale = next(
-        (record for record in records if record.identity in resolved.parts), None
+        (record for record in records if record.identity == stale_identity), None
     )
     if stale is None or stale.plan_id is None or stale.authored_key is None:
         return None

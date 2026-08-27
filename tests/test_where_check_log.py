@@ -6,6 +6,7 @@ from hedloom import Site, local, operation, parameter, returned, study
 from hedloom.cli import main
 from hedloom_exec.alias import alias_path
 from hedloom_exec.durability import Durability, execute
+from hedloom_exec.identity import try_name
 from hedloom_exec.transport import Observation
 
 
@@ -73,7 +74,7 @@ def test_where_resolves_a_selector_to_an_output_path(tmp_path, capsys):
 
     assert status == 0
     assert Path(capsys.readouterr().out.strip()) == (
-        tmp_path / "work" / result.journal.identity / "result.txt"
+        tmp_path / "work" / try_name(result.journal.identity, 0) / "result.txt"
     )
 
 
@@ -89,7 +90,7 @@ def test_where_refuses_a_selector_that_matches_nothing(tmp_path, capsys):
 def test_check_exits_zero_for_a_current_path(tmp_path, capsys):
     root = tmp_path / "attempts"
     current = run(root, tmp_path / "work")
-    path = tmp_path / "work" / current.journal.identity / "result.txt"
+    path = tmp_path / "work" / try_name(current.journal.identity, 0) / "result.txt"
 
     assert main(["check", "--root", str(root), str(path)]) == 0
     assert "current" in capsys.readouterr().out
@@ -98,7 +99,7 @@ def test_check_exits_zero_for_a_current_path(tmp_path, capsys):
 def test_check_refuses_to_call_a_path_current_without_an_alias(tmp_path, capsys):
     root = tmp_path / "attempts"
     result = run(root, tmp_path / "work")
-    path = tmp_path / "work" / result.journal.identity / "result.txt"
+    path = tmp_path / "work" / try_name(result.journal.identity, 0) / "result.txt"
     alias_path(
         root, plan_id="study", authored_key="point:write", output="result"
     ).unlink()
@@ -111,7 +112,7 @@ def test_check_exits_non_zero_and_explains_for_a_superseded_path(tmp_path, capsy
     root = tmp_path / "attempts"
     stale = run(root, tmp_path / "work", "one")
     current = run(root, tmp_path / "work", "two")
-    path = tmp_path / "work" / stale.journal.identity / "result.txt"
+    path = tmp_path / "work" / try_name(stale.journal.identity, 0) / "result.txt"
 
     assert main(["check", "--root", str(root), str(path)]) == 1
     output = capsys.readouterr().out

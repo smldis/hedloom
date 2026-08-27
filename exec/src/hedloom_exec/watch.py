@@ -34,6 +34,7 @@ from typing import Any, Callable, Iterable, Mapping
 import json
 
 from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.identity import try_name
 from hedloom_exec.lsf import CommandResult, CommandUnavailable, SubprocessRunner
 from hedloom_exec.transport import TransportError
 
@@ -87,7 +88,7 @@ def _seconds_between(earlier: str | None, later: str | None) -> float | None:
 
 
 class ObservationLog:
-    """An observer's own append-only file beside one attempt's record.
+    """An observer's own append-only file beside one durable record.
 
     Deliberately not `events.jsonl`. That log carries the ordering rules the
     recovery argument depends on and has exactly one writer; a second process
@@ -114,11 +115,15 @@ class ObservationLog:
                     continue
         return tuple(found)
 
-    def last_state(self) -> str | None:
-        entries = self.entries()
+    def last_state(self, try_number: int) -> str | None:
+        entries = tuple(
+            entry for entry in self.entries() if entry.get("try") == try_number
+        )
         return entries[-1]["state"] if entries else None
 
-    def record(self, state: str, **detail: Any) -> Mapping[str, Any] | None:
+    def record(
+        self, try_number: int, state: str, **detail: Any
+    ) -> Mapping[str, Any] | None:
         """Append a state, but only when it is news.
 
         A sweep watched every ten seconds would otherwise write six identical
@@ -126,17 +131,22 @@ class ObservationLog:
         is also what makes queue latency computable afterwards.
         """
 
-        if state == self.last_state():
+        if state == self.last_state(try_number):
             return None
-        entry = {"at": _now(), "state": state, "detail": detail}
+        entry = {
+            "at": _now(),
+            "try": try_number,
+            "state": state,
+            "detail": detail,
+        }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True) + "\n")
         return entry
 
-    def first_at(self, state: str) -> str | None:
+    def first_at(self, try_number: int, state: str) -> str | None:
         for entry in self.entries():
-            if entry.get("state") == state:
+            if entry.get("try") == try_number and entry.get("state") == state:
                 return entry.get("at")
         return None
 
@@ -146,6 +156,8 @@ class AttemptStatus:
     """One row of a sweep: what the record says, and what the farm says."""
 
     identity: str
+    try_number: int | None = None
+    job_name: str | None = None
     invocation_id: str | None = None
     operation: str | None = None
     phase: str = "unsubmitted"
@@ -178,31 +190,35 @@ def _created(journal: AttemptJournal) -> Mapping[str, Any]:
     return {}
 
 
-def _submitted_at(journal: AttemptJournal) -> str | None:
+def _submitted_at(journal: AttemptJournal, try_number: int) -> str | None:
     for event in journal.events():
-        if event.event == "submit_intent":
+        if event.event == "submit_intent" and event.data.get("try") == try_number:
             return event.at
     return None
 
 
 def status_of(root: str | Path, identity: str) -> AttemptStatus:
-    """Read one attempt's status from the record and any observations."""
+    """Read one record's current-try status and any observations."""
 
     journal = AttemptJournal(root, identity)
     state = journal.fold()
     created = _created(journal)
     log = ObservationLog(root, identity)
+    current = state.current
+    number = current.number if current is not None else None
     return AttemptStatus(
         identity=identity,
+        try_number=number,
+        job_name=try_name(identity, number) if number is not None else None,
         invocation_id=created.get("invocation"),
         operation=created.get("operation"),
         phase=state.phase,
         outcome=state.outcome,
         transport=state.transport,
         substrate=state.substrate,
-        observed=log.last_state(),
-        submitted_at=_submitted_at(journal),
-        running_at=log.first_at("running"),
+        observed=log.last_state(number) if number is not None else None,
+        submitted_at=_submitted_at(journal, number) if number is not None else None,
+        running_at=log.first_at(number, "running") if number is not None else None,
     )
 
 
@@ -300,7 +316,7 @@ def observe(
     states = (reader or LSFStatusReader()).states()
     updated: dict[str, AttemptStatus] = {}
     for item in watched:
-        seen = states.get(item.identity)
+        seen = states.get(item.job_name or "")
         if seen is None:
             # Absent from LSF while the record says live: either it has
             # just finished and the owner has not published yet, or something
@@ -308,7 +324,8 @@ def observe(
             # to reconciliation, which owns the attempt.
             continue
         log = ObservationLog(root, item.identity)
-        log.record(seen)
+        assert item.try_number is not None
+        log.record(item.try_number, seen, job_name=item.job_name)
         updated[item.identity] = status_of(root, item.identity)
 
     return tuple(updated.get(item.identity, item) for item in live)
