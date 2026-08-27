@@ -19,8 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "FrozenFile", "Pin", "PinError", "PinSelectionError", "Verification",
-    "VerifyOutcome", "is_pinned", "pin", "pins_of", "resolve_selector",
-    "unpin", "verify",
+    "VerifyOutcome", "is_pinned", "pin", "pins_of", "unpin", "verify",
 ]
 
 _CHUNK = 1024 * 1024
