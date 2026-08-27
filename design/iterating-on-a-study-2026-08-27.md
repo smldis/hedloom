@@ -120,7 +120,11 @@ hedloom-3ef88d10  11:20  succeeded  (first)
 
 That is annoyance 4, and it converts the whole experience: hash churn stops
 being noise and becomes *a log of what you changed*. It is nearly free — the
-nine keys are already digested individually inside `input_digest`
+nine keys are **not** individually digested today — `input_digest`
+(`reuse.py:63`) takes one `blake2b` over one canonical mapping, so these are
+nine *additional* digests recorded beside an aggregate that must stay
+byte-identical. Recombining the parts into the whole would move every attempt
+identity; the nine keys
 (`reuse.py:44`); the function throws the parts away and keeps the whole.
 
 It also removes a real gap. The bundle is **never stored durably** — only the

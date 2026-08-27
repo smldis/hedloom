@@ -100,12 +100,28 @@ away, and available at the moment it is written but currently thrown away.
   debug iteration a *chain* rather than a pile: `hedloom log` walks it, and the
   pruner gains a `superseded` condition, which is the rule that today has no
   way to see the orphans an edit leaves behind.
-- **Record `input_digests` in the `created` event.** The nine identity keys
-  (`reuse.py:44`) are already digested individually inside `input_digest`; the
-  function keeps the whole and throws the parts away. Keeping them answers
-  *why did this rerun?* by comparing two records — `inputs changed (edits.py)`
-  rather than "the digest differs". The bundle is **never stored durably**, so
-  today nothing on disk can answer that question even in principle.
+- **Record `input_digests` in the `created` event.** Nine digests, one per
+  identity key, recorded **beside** the existing `input_digest` — not derived
+  from it.
+
+  *Corrected 2026-08-27 by the implementation census.* An earlier draft said the
+  nine keys were "already digested individually inside `input_digest`" and that
+  the function threw the parts away. **That is false.** `input_digest`
+  (`reuse.py:63`) builds one canonical JSON mapping of the present identity keys
+  and takes a single `blake2b` over the whole thing. There are no parts.
+
+  The correction matters because of where the wrong version led: making the
+  aggregate a hash-of-hashes would change **every input digest and therefore
+  every attempt identity**, which is the opposite of "Phase 0 changes no
+  behaviour" and would silently invalidate every existing record. The right
+  shape is additive — compute nine extra digests for explanation, leave the
+  aggregate byte-for-byte untouched.
+
+  What that buys is narrower than the draft claimed, and Phase 0b's contract is
+  narrowed to match: comparing two records names **which of the nine keys
+  moved**, not what changed inside one. The bundle is never stored durably, so
+  `inputs` moving is recoverable; *which* input, by its declared name, is not —
+  see Phase 0b.
 - **`tools/attempt-census.py`** — the census script into the repository, so the
   numbers in the design record can be reproduced rather than cited.
 
@@ -125,6 +141,21 @@ moves the digest, which moves the identity, which moves the directory you were
 watching. Content addressing requires that; nothing here weakens it. **The
 identity moves; the view stays.**
 
+- **The alias tree lives at `<Site.root>/latest/` and is built by default.**
+  (Decided 2026-08-27, user.) The census found the tree had no declared home;
+  the answer is not a third configurable root but a fixed location under the one
+  root that is always present. `Site.root` points at the attempts directory
+  itself (`examples/farm-smoke.site.toml:4`), so the aliases sit beside the
+  records they describe. No `latest_root` setting, no opt-in, nothing to
+  configure — a run that writes records writes aliases.
+
+  **The consequence to hold on to:** `latest/` then sits *inside* the directory
+  that `scan_attempts` (`reuse.py:115`) and `watch.live_attempts`
+  (`watch.py:221`) iterate. Both skip it today, because both guard on
+  `(directory / "events.jsonl").exists()` before treating an entry as an
+  attempt. That guard stops being incidental and becomes load-bearing: every
+  present and future reader of the attempts root must skip a non-record entry,
+  and a test says so rather than leaving it to be rediscovered.
 - **`latest/<plan>/<authored-key>/<output>`** — a symlink per declared output,
   created when the workspace is prepared, *before the command launches*, and
   repointed at the start of each try.
@@ -309,15 +340,27 @@ Operator protection, and the selector grammar that makes it usable.
 ### Command line
 
 ```console
-hedloom prune <root> [options]          # DRY RUN unless --apply
-hedloom pin     <root> <selector> --reason TEXT
-hedloom unpin   <root> <selector> --reason TEXT
-hedloom pins    <root>
+hedloom prune --site site.toml [options]          # DRY RUN unless --apply
+hedloom pin   --site site.toml <selector> --reason TEXT
+hedloom unpin --site site.toml <selector> --reason TEXT
+hedloom pins  --site site.toml
 
-hedloom where   <root> <selector> --output NAME   # resolve, for scripts
-hedloom check   <root> <path>                     # is this path behind?
-hedloom log     <root> <selector>                 # the iteration chain
+hedloom where --site site.toml <selector> --output NAME   # resolve, for scripts
+hedloom check --site site.toml <path>                     # is this path behind?
+hedloom log   --site site.toml <selector>                 # the iteration chain
 ```
+
+**A site, not a positional root.** An earlier draft took one `<root>`. The
+census caught that `Site` already permits `root` and `workspace_root` to be
+independent paths on different filesystems (`site.py:103`, `:105`), so one
+argument cannot name what `prune` needs — it reads records under one and
+reasons about bytes under the other.
+
+The alias tree is *not* a third thing to pass: it is `<root>/latest/`, derived.
+So `where`, `check` and `log` need only `--root`, and `--workspace-root` is
+required just by `prune` and `pin`. A command given fewer roots than it needs is
+refused rather than inferring one from another, which would be the same guess in
+a friendlier costume.
 
 `prune` prints a survey and spends nothing. `--apply` is a second, deliberate
 gesture. This is the same shape the unit already has — `summary()` shows what a
@@ -596,14 +639,17 @@ exec/tests/test_created_event.py
   test_created_records_the_identity_it_supersedes
   test_created_records_no_supersedes_for_a_first_record
   test_created_records_a_digest_for_every_identity_key
-  test_the_recorded_key_digests_recombine_into_the_input_digest
+  test_recording_the_key_digests_leaves_the_input_digest_unchanged
+  test_an_identity_computed_before_phase_zero_is_unchanged_after_it
   test_no_created_field_participates_in_the_input_digest
   test_a_record_missing_the_phase_zero_fields_still_scans
 ```
 
-`test_the_recorded_key_digests_recombine_into_the_input_digest` keeps the parts
-honest: if the nine component digests do not reproduce the whole, one of them is
-computed differently from the thing it claims to explain.
+`test_recording_the_key_digests_leaves_the_input_digest_unchanged` is the
+tripwire for the mistake the census caught. The nine digests are *additional*;
+the aggregate is one `blake2b` over one canonical mapping and must come out
+byte-identical. An implementation that recombines the parts into the whole would
+move every attempt identity in existence, and this test is what says so.
 
 The last one matters because these fields land before Phase 1 — a record written
 this morning carries four of them, and `scan_attempts` must not care.
@@ -612,11 +658,16 @@ this morning carries four of them, and `scan_attempts` must not care.
 
 ```python
 # hedloom_exec/alias.py
-def alias_path(latest_root: str | os.PathLike[str], *,
-               plan_id: str, authored_key: str, output: str) -> Path: ...
-    """latest/<plan>/<authored-key>/<output>. Pure; never creates."""
+ALIAS_DIR = "latest"
 
-def point_alias(latest_root: str | os.PathLike[str], *,
+def alias_root(root: str | os.PathLike[str]) -> Path: ...
+    """<root>/latest. Derived from the attempts root, never configured."""
+
+def alias_path(root: str | os.PathLike[str], *,
+               plan_id: str, authored_key: str, output: str) -> Path: ...
+    """<root>/latest/<plan>/<authored-key>/<output>. Pure; never creates."""
+
+def point_alias(root: str | os.PathLike[str], *,
                 plan_id: str, authored_key: str, output: str,
                 target: str | os.PathLike[str]) -> Path: ...
     """Create or repoint one alias, atomically.
@@ -628,7 +679,7 @@ def point_alias(latest_root: str | os.PathLike[str], *,
     yet; a dangling alias is the honest state during that window.
     """
 
-def aliases_into(latest_root, workspace: Path) -> tuple[Path, ...]: ...
+def aliases_into(root, workspace: Path) -> tuple[Path, ...]: ...
     """Every alias pointing into this workspace. The pruner's `aliased` check."""
 ```
 
@@ -641,12 +692,34 @@ class Iteration:
     outcome: str | None
     at: str
     supersedes: str | None
-    changed_keys: tuple[str, ...]      # which identity keys moved vs. the prior
-    changed_detail: str                # "edits.py", "simulate_ac body", ...
+    changed_keys: tuple[str, ...]      # which of the nine identity keys moved
+    is_current: bool                   # what the last run actually resolved to
+
+# `changed_keys` is the whole contract. It names `inputs` or `implementation`;
+# it CANNOT name `edits.py` or a helper, because a per-key digest of the inputs
+# mapping does not carry the declared input names, and the bundle is not stored
+# durably. An earlier draft promised `changed_detail: str` with exactly those
+# examples; the census showed it unpopulatable from the proposed fields, so it
+# is removed rather than left as a field that would have to lie. Naming the
+# input needs the declared names recorded too — a further field, not this one.
 
 def lineage(root: str | os.PathLike[str], *, plan_id: str,
             authored_key: str) -> tuple[Iteration, ...]: ...
-    """The iteration chain, newest first, walked by `supersedes`."""
+    """The iteration chain, ordered by `supersedes`.
+
+    Two facts, kept apart. `supersedes` gives the **order records were
+    created**. It cannot give *which record a run last resolved to*, because
+    returning to an earlier record writes no new `created` event — the guard at
+    `attempt.py:221` is `if not state.events:`, and a reused record already has
+    some. So after edit -> revert -> rerun, the chain reads B supersedes A while
+    the live result is A.
+
+    `is_current` therefore comes from the alias, not from the chain:
+    `<root>/latest/` is repointed by every run at bind time, so it already
+    records what the last run resolved to. It is derived from the same `root`
+    the records are read from, so there is nothing extra to pass and no
+    configuration in which it is unavailable.
+    """
 
 def why_reran(prior: Mapping[str, str],
               current: Mapping[str, str]) -> tuple[str, ...]: ...
@@ -669,15 +742,24 @@ exec/tests/test_alias.py
   test_an_alias_is_never_created_inside_a_workspace
   test_aliases_into_finds_every_alias_for_a_workspace
   test_the_alias_root_is_not_hidden
+  test_the_alias_root_is_derived_from_the_attempts_root
+  test_aliases_are_built_by_default_with_nothing_configured
+  test_scan_attempts_skips_the_alias_directory
+  test_live_attempts_skips_the_alias_directory
+  test_a_directory_without_a_journal_is_never_read_as_an_attempt
+  test_the_pruner_never_treats_the_alias_directory_as_a_record
 
 exec/tests/test_lineage.py
   test_lineage_walks_supersedes_newest_first
   test_lineage_of_a_first_record_is_one_iteration
   test_why_reran_names_the_single_changed_key
-  test_why_reran_names_an_edited_input_artifact
-  test_why_reran_names_an_edited_operation_body
-  test_why_reran_reports_upstream_when_only_inputs_moved
+  test_why_reran_names_implementation_when_a_body_was_edited
+  test_why_reran_names_inputs_when_a_source_was_edited
+  test_why_reran_does_not_claim_to_name_which_input_changed
   test_why_reran_is_empty_for_identical_bundles
+  test_lineage_marks_the_alias_target_as_current
+  test_lineage_marks_nothing_current_when_no_alias_exists_yet
+  test_a_reverted_edit_is_current_even_though_it_is_not_newest
   test_is_behind_returns_none_for_the_current_workspace
   test_is_behind_names_the_iteration_that_superseded_a_stale_path
   test_a_reverted_edit_returns_to_the_original_identity
@@ -697,9 +779,12 @@ tripwire: closing the dangling window that way is the obvious fix, and it would
 let a command that wrote nothing report success, because `capture_outputs`
 treats an existing declared output as evidence it was produced.
 
-`test_a_reverted_edit_returns_to_the_original_identity` is the one that proves
-content addressing survived all of this — edit, revert, rerun, and you land back
-on the record you started from rather than a fourth iteration.
+`test_a_reverted_edit_returns_to_the_original_identity` proves content
+addressing survived all of this — edit, revert, rerun, and you land back on the
+record you started from rather than a fourth iteration. Its companion,
+`test_a_reverted_edit_is_current_even_though_it_is_not_newest`, is the one the
+census forced: the returned-to record is *older* than the one it displaced, so
+anything that equates "newest" with "current" reports the wrong result.
 
 ### Phase 1 — identity and the record
 
@@ -1148,6 +1233,7 @@ is the failure mode with the worst consequences and the fewest symptoms.
 
 ```
 run/tests/test_retention_policy.py
+  test_a_command_given_one_root_where_it_needs_two_is_refused
   test_retention_rules_parse_from_a_site_profile
   test_cli_flags_override_site_rules
   test_a_watched_path_outside_the_roots_is_refused
@@ -1268,6 +1354,34 @@ changed:
 
 Not adopted: nothing. Every finding either changed a signature or became a
 test. Its self-assessed confidence was 0.91.
+
+## Part 4d — the implementation census (codex, 2026-08-27, high effort)
+
+The agent asked to implement Phase 0 ran the census first, found the plan
+inconsistent, and **stopped rather than improvising** — which is the outcome the
+brief asked for. It filed
+[hedloom#7](https://github.com/smldis/hedloom/pull/7) carrying the design record
+and `design/phase0-census-2026-08-27.md`, and wrote no source. All four findings
+were re-verified against the code before being applied here.
+
+| Finding | Verdict | Fix |
+| --- | --- | --- |
+| The nine identity keys are **not** individually digested; `input_digest` is one `blake2b` over one canonical mapping | **My error, twice.** Recombining parts into the whole would move every attempt identity | Nine *additional* digests; aggregate untouched. The impossible test is replaced by a tripwire asserting the aggregate is unchanged |
+| A once-only `created.supersedes` cannot express A → B → A | Correct. Returning to a record writes no new `created` (`attempt.py:221`) | `is_current` comes from the alias, which every run repoints; `supersedes` gives order only |
+| Per-key digests can say `inputs` moved but cannot name `edits.py` | Correct. The mapping's digest carries no declared names | `changed_detail` removed; `changed_keys` is the whole contract |
+| One positional `<root>` cannot name what these commands need | Correct. `root` and `workspace_root` are independent (`site.py:103`, `:105`) | Commands take `--site` or explicit roots. **The alias tree is not a third root** — it is `<root>/latest/`, derived and built by default (user, 2026-08-27) |
+
+The first is the one that mattered. Left in, an implementer following the plan
+literally would have made `input_digest` a hash-of-hashes and **silently
+invalidated every record in existence** — under a heading promising no
+behaviour change. It survived my own review, a design pass, and a prior census;
+it did not survive someone opening `reuse.py` with the intention of typing the
+code.
+
+Worth keeping as evidence for how this plan is written: the three earlier
+censuses audited *prose against prose*. This one audited prose against an
+implementation it was about to attempt, and that is the pass that found the
+identity-breaking one.
 
 ## Part 5 — decisions, all closed 2026-08-27
 
