@@ -1,14 +1,16 @@
-"""Outputs that are files, on a filesystem both sides can already see.
+"""Outputs on a filesystem both sides can already see.
 
-On a shared store, materializing an output does not mean moving bytes. The
-a tool writes where it writes; the next invocation opens the same path. What
-has to be durable is the *address* and enough about the file to tell whether it
-is still the one that was produced.
+On a shared store, materializing an output does not mean moving bytes. A tool
+writes where it writes; the next invocation opens the same path. What has to be
+durable is the *address* and enough about the artifact to tell whether it is
+still the one that was produced.
 
-Three kinds of output are supported, because real commands produce all three:
+Four kinds of output are supported, because real commands produce all four:
 
-* ``{"path": "sim.raw"}`` — a file the command wrote itself, relative to its
-  working directory. This is the ordinary case for a batch tool.
+* ``{"path": "result.dat"}`` — a file the command wrote itself, relative to
+  its working directory. This is the ordinary case for a batch tool.
+* ``{"path": "results", "filesystem_kind": "directory"}`` — a directory
+  tree the command wrote inside its working directory.
 * ``{"stream": "stdout"}`` — the captured stream, for tools whose result really
   is what they printed.
 * ``{"value": True}`` — the return value of an in-process implementation.
@@ -46,7 +48,7 @@ class MissingOutput(RuntimeError):
 
 
 class OutputDeclarationError(ValueError):
-    """An output declaration is not one of the three supported kinds."""
+    """An output declaration is not one of the supported kinds."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +93,27 @@ def workspace_for(root: str | os.PathLike[str], identity: str) -> Path:
     return directory
 
 
-def _file_reference(name: str, workdir: Path, relative: str) -> ArtifactRef:
+def _directory_metadata(candidate: Path) -> tuple[int, int]:
+    """Return contained entry bytes and the latest tree modification time."""
+
+    root_stat = candidate.stat()
+    size = 0
+    modified_ns = root_stat.st_mtime_ns
+    for entry in candidate.rglob("*"):
+        stat = entry.stat()
+        modified_ns = max(modified_ns, stat.st_mtime_ns)
+        if not entry.is_dir():
+            size += stat.st_size
+    return size, modified_ns
+
+
+def _file_reference(
+    name: str,
+    workdir: Path,
+    relative: str,
+    *,
+    filesystem_kind: str = "file",
+) -> ArtifactRef:
     candidate = (workdir / relative).resolve()
     try:
         candidate.relative_to(workdir.resolve())
@@ -103,13 +125,32 @@ def _file_reference(name: str, workdir: Path, relative: str) -> ArtifactRef:
         raise MissingOutput(
             f"declared output {name!r} was not produced at {candidate}"
         )
-    stat = candidate.stat()
+    if filesystem_kind == "file":
+        if not candidate.is_file():
+            raise MissingOutput(
+                f"declared file output {name!r} was not produced as a file at "
+                f"{candidate}"
+            )
+        stat = candidate.stat()
+        size = stat.st_size
+        modified_ns = stat.st_mtime_ns
+    elif filesystem_kind == "directory":
+        if not candidate.is_dir():
+            raise MissingOutput(
+                f"declared directory output {name!r} was not produced as a "
+                f"directory at {candidate}"
+            )
+        size, modified_ns = _directory_metadata(candidate)
+    else:
+        raise OutputDeclarationError(
+            f"output {name!r} names unknown filesystem kind {filesystem_kind!r}"
+        )
     return ArtifactRef(
         name=name,
-        kind="file",
+        kind=filesystem_kind,
         address=str(candidate),
-        size=stat.st_size,
-        modified_ns=stat.st_mtime_ns,
+        size=size,
+        modified_ns=modified_ns,
     )
 
 
@@ -140,9 +181,17 @@ def capture_outputs(
         if "path" in declaration:
             if workdir is None:
                 raise OutputDeclarationError(
-                    f"output {name!r} is a file but no workspace was provided"
+                    f"output {name!r} is on the filesystem but no workspace "
+                    "was provided"
                 )
-            captured.append(_file_reference(name, workdir, declaration["path"]))
+            captured.append(
+                _file_reference(
+                    name,
+                    workdir,
+                    declaration["path"],
+                    filesystem_kind=declaration.get("filesystem_kind", "file"),
+                )
+            )
         elif "stream" in declaration:
             stream = declaration["stream"]
             if stream not in ("stdout", "stderr"):

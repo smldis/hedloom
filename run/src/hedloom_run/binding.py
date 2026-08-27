@@ -94,8 +94,8 @@ def resolve(reference: Any, produced: Mapping[str, Any]) -> Any:
 def produced_by(item: PlannedInvocation, result: Any) -> dict[str, Any]:
     """What this invocation contributes under the keys that reference it.
 
-    A file output contributes its address, because that is what a downstream
-    command opens. Anything else contributes its value.
+    A filesystem output contributes its address, because that is what a
+    downstream command opens. Anything else contributes its value.
     """
 
     contributed: dict[str, Any] = {}

@@ -36,6 +36,11 @@ planning and runtime authority.
 - Python API: `hedloom_flow` exposes immutable planning model values and the
   `@operation`, `@flow`, `plan(...)`, `input_artifact(...)`, policy, and
   contract-authoring surfaces.
+- `hedloom_flow.authoring.file(...)` and `directory(...)` declare filesystem
+  output shape separately from their `kind=` artifact-contract label. The
+  shape is preserved in the Plan output binding, so an executor can require
+  what was authored without giving filesystem meaning to a semantic artifact
+  kind.
 - Authored operation calls are legal only in an explicit planning scope, and
   operation bodies do not execute during planning.
 - Flow bodies are ordinary authored Python that constructs a static graph;

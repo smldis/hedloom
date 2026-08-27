@@ -138,7 +138,7 @@ deterministic topological order, a bundle is hashed:
 | operation name + version | **placement** (`local` / `lsf` / `pooled`) |
 | config arguments | `max_jobs`, queue, cores, memory |
 | resolved input identities (`output:<producer-digest>:<name>`, `source:<digest>`) | which kernel ran it |
-| declared output bindings (paths) | wall-clock, process, transport handle |
+| declared output bindings (paths and filesystem shapes) | wall-clock, process, transport handle |
 | **implementation fingerprint** — blake2b of the body's source | attempt sequence (that's separate) |
 | the `shell` command, `identity_env` | |
 

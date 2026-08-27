@@ -54,10 +54,18 @@ def integrate(grid, out):
 
 ### `out.<name>` — writing where the executor will look
 
-A body that declares a file output receives an `out` argument **if and only if
-its signature names `out`**. `out.grid` is a path inside that attempt's own
-workspace, at exactly the location the executor checks afterwards. The two
-cannot drift apart because they are the same declaration, read once.
+A body that declares a file or directory output receives an `out` argument **if
+and only if its signature names `out`**. `out.grid` is a path inside that
+attempt's own workspace, at exactly the location the executor checks
+afterwards. The two cannot drift apart because they are the same declaration,
+read once.
+
+Use `file("result.txt", kind="report")` for one file and
+`directory("results", kind="report-bundle")` for a directory tree. In both,
+`kind=` is the artifact-contract label that connects operations; `file` versus
+`directory` is the filesystem shape. A successful run must leave that declared
+shape behind. Directory metadata records the recursive payload size, and an
+empty directory is valid just as an empty file is.
 
 Asking `out.<name>` for a name the operation never declared raises
 `AttributeError` rather than resolving to something unexpected. A body that

@@ -172,14 +172,18 @@ its siblings are reused and the superseded results stay nameable.
   decision to keep one. `AttemptSpent` reports a terminal result that may not
   be reused.
 - Outputs are declared per invocation as `{"path": ...}` for a file the command
-  wrote itself, `{"stream": "stdout"}` for a tool whose result is what it
+  wrote itself, `{"path": ..., "filesystem_kind": "directory"}` for a
+  directory tree, `{"stream": "stdout"}` for a tool whose result is what it
   printed, or `{"value": True}` for an in-process return. Standard output is
   always captured to `stdout.log` as diagnostics and is never the result unless
   declared as one: a command that prints progress while writing its answer to
   disk is the ordinary case.
-- Materializing an output records its address, size, and modification time; it
-  never moves bytes. On a shared filesystem the next invocation opens the same
-  path, so the durable fact is the address rather than a copy.
+- Materializing a filesystem output records whether it is a file or directory,
+  its address, size, and modification time; it never moves bytes. A directory's
+  size is the sum of its recursively contained non-directory entries, and its
+  modification time is the latest observed in the tree. On a shared filesystem
+  the next invocation opens the same path, so the durable fact is the address
+  rather than a copy.
 - Each attempt runs in its own workspace, so a rerun after a failure cannot
   overwrite the evidence of what the previous attempt produced. Only declared
   outputs are recorded; anything else the command left behind stays as unnamed
@@ -194,9 +198,10 @@ its siblings are reused and the superseded results stay nameable.
 - Because `latest/` is inside the attempt root, every attempt-root reader admits
   a directory only when it contains `events.jsonl`. The alias tree and any
   other ordinary directory are not attempt records.
-- A declared output that does not exist after the work reports success fails
-  the invocation. Publishing a manifest without it would let downstream work
-  resolve an address to nothing.
+- A declared filesystem output that does not exist with its declared file or
+  directory shape after the work reports success fails the invocation.
+  Publishing a manifest without it would let downstream work resolve an
+  address to nothing. Empty files and empty directories are valid outputs.
 - A bundle may carry `placement`, recorded as its own journal event before the
   substrate is touched and published in the manifest alongside what was
   observed. Requested, resolved, and observed are kept apart deliberately: a

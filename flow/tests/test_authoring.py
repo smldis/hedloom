@@ -22,10 +22,11 @@ from hedloom_flow import (
     operation,
     parameter,
     plan,
+    plain_data,
     planned,
     submit,
 )
-from hedloom_flow.authoring import file
+from hedloom_flow.authoring import directory, file
 
 
 MODEL = artifact("model-input")
@@ -124,6 +125,23 @@ def test_a_refused_source_declaration_does_not_consume_an_id():
 def test_output_only_declarations_are_rejected_for_operation_inputs():
     with pytest.raises(AuthoringError, match=r"artifact\(\.\.\.\) or artifacts"):
         operation(inputs={"model": file("model.in")})
+
+
+def test_directory_declares_filesystem_shape_separately_from_artifact_kind():
+    @operation(outputs={"bundle": directory("bundle", kind="report-bundle")})
+    def collect():
+        raise AssertionError("must not run")
+
+    @planned
+    def build():
+        return collect.named("collect")()
+
+    (output,) = build().operations[0].outputs
+    assert output.artifact.kind == "report-bundle"
+    assert plain_data(output.binding) == {
+        "path": "bundle",
+        "filesystem_kind": "directory",
+    }
 
 
 def test_options_are_immutable_and_policy_precedence_is_explicit():
