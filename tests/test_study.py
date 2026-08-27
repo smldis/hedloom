@@ -17,6 +17,7 @@ from hedloom import (
     Study,
     address,
     artifact,
+    directory,
     file,
     flow,
     input_artifact,
@@ -209,6 +210,28 @@ def test_a_body_may_ask_for_a_command_to_be_run(site):
     assert run.succeeded, run.summary()
     address = run["copy"].artifacts["copy"]["address"]
     assert Path(address).read_text() == "hello"
+
+
+def test_a_study_captures_a_declared_directory_output(site):
+    @operation(outputs={"bundle": directory("bundle", kind="text-bundle")})
+    def write_bundle(out):
+        out.bundle.mkdir()
+        (out.bundle / "first.txt").write_text("abc")
+        nested = out.bundle / "nested"
+        nested.mkdir()
+        (nested / "second.txt").write_text("de")
+
+    @study(default_policy=local())
+    def bundles():
+        return write_bundle.named("bundle")()
+
+    run = bundles().submit(site=site, sequential=True)
+
+    assert run.succeeded, run.summary()
+    captured = run["bundle"].artifacts["bundle"]
+    assert captured["kind"] == "directory"
+    assert captured["size"] == 5
+    assert Path(captured["address"]).is_dir()
 
 
 def test_an_operation_with_no_bound_body_refuses(tmp_path):

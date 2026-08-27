@@ -360,6 +360,20 @@ def file(path: str, *, kind: str = "file") -> _DeclaredOutput:
     return _DeclaredOutput(artifact(kind), {"path": path})
 
 
+def directory(path: str, *, kind: str = "directory") -> _DeclaredOutput:
+    """A directory tree the work writes inside its own workspace.
+
+    ``kind`` is the artifact-contract label used to connect operations. The
+    filesystem shape is recorded separately, so a semantic kind such as
+    ``"report-bundle"`` does not stop this declaration from requiring a
+    directory at capture time.
+    """
+
+    return _DeclaredOutput(
+        artifact(kind), {"path": path, "filesystem_kind": "directory"}
+    )
+
+
 def stdout(*, kind: str = "text") -> _DeclaredOutput:
     """An output that is what the work printed.
 
@@ -1207,7 +1221,7 @@ def _output_declaration_mapping(
         if not isinstance(declaration, ArtifactContract | _DeclaredOutput):
             raise AuthoringError(
                 f"operation outputs {name!r} must use artifact(...), "
-                "file(...), stdout(...) or returned(...)"
+                "file(...), directory(...), stdout(...) or returned(...)"
             )
     return tuple(sorted(items, key=lambda item: item[0]))
 

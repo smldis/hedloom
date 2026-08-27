@@ -74,9 +74,14 @@ that would place each point on its own job as a comment rather than a claim.
 - An operation body **runs**. It receives the inputs the Plan resolved, its
   declared config, and — if it names the reserved parameter `out` — a
   `Workspace` addressing that attempt's own directory. Attribute access on the
-  workspace resolves declared outputs only; the workspace itself is the attempt
-  directory as an `os.PathLike`. A body that computes a value returns it; a body
-  that writes files writes to `out.<name>`.
+  workspace resolves declared file and directory outputs only; the workspace
+  itself is the attempt directory as an `os.PathLike`. A body that computes a
+  value returns it; a body that writes a filesystem artifact writes to
+  `out.<name>`.
+- `file(...)` and `directory(...)` state filesystem output shape independently
+  of the artifact-contract `kind=` used to connect operations. Successful
+  capture requires that shape; directory manifests record recursive payload
+  size rather than the filesystem's directory-entry size.
 - Returning a `Shell` makes the body a launcher: the command is executed at the
   placement the invocation resolved to. Locally that is a subprocess bound to
   this process's lifetime, and on `lsf` it is the delegate's `bsub -I` job with

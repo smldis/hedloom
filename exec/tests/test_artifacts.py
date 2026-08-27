@@ -197,6 +197,19 @@ def test_capturing_a_different_file_is_a_different_result():
     assert input_digest(base) != input_digest(other)
 
 
+def test_file_and_directory_declarations_have_different_identities():
+    from hedloom_exec.reuse import input_digest
+
+    file_output = {"outputs": {"result": {"path": "result"}}}
+    directory_output = {
+        "outputs": {
+            "result": {"path": "result", "filesystem_kind": "directory"}
+        }
+    }
+
+    assert input_digest(file_output) != input_digest(directory_output)
+
+
 def test_an_output_escaping_its_workspace_is_refused(tmp_path):
     with pytest.raises(OutputDeclarationError, match="outside its working directory"):
         capture_outputs(
@@ -212,3 +225,48 @@ def test_an_unknown_declaration_kind_is_refused(tmp_path):
 def test_a_missing_file_is_reported_as_missing(tmp_path):
     with pytest.raises(MissingOutput):
         capture_outputs({"raw": {"path": "nope.raw"}}, workdir=tmp_path)
+
+
+def test_a_directory_records_its_shape_and_recursive_payload_size(tmp_path):
+    tree = tmp_path / "bundle"
+    (tree / "nested").mkdir(parents=True)
+    (tree / "first.dat").write_bytes(b"abc")
+    (tree / "nested" / "second.dat").write_bytes(b"12345")
+
+    (captured,) = capture_outputs(
+        {"bundle": {"path": "bundle", "filesystem_kind": "directory"}},
+        workdir=tmp_path,
+    )
+
+    assert captured.kind == "directory"
+    assert captured.size == 8
+    assert captured.modified_ns is not None
+
+
+def test_a_directory_declared_as_a_file_is_rejected(tmp_path):
+    (tmp_path / "result.dat").mkdir()
+
+    with pytest.raises(MissingOutput, match="was not produced as a file"):
+        capture_outputs({"result": {"path": "result.dat"}}, workdir=tmp_path)
+
+
+def test_a_file_declared_as_a_directory_is_rejected(tmp_path):
+    (tmp_path / "bundle").write_text("not a tree")
+
+    with pytest.raises(MissingOutput, match="was not produced as a directory"):
+        capture_outputs(
+            {"bundle": {"path": "bundle", "filesystem_kind": "directory"}},
+            workdir=tmp_path,
+        )
+
+
+def test_an_empty_declared_directory_is_a_valid_output(tmp_path):
+    (tmp_path / "bundle").mkdir()
+
+    (captured,) = capture_outputs(
+        {"bundle": {"path": "bundle", "filesystem_kind": "directory"}},
+        workdir=tmp_path,
+    )
+
+    assert captured.kind == "directory"
+    assert captured.size == 0
