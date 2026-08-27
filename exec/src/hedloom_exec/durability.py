@@ -21,15 +21,11 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from hedloom_exec.attempt import (
-    AttemptError,
     LaunchResult,
-    is_reusable,
     launch_or_attach,
     reconcile,
 )
-from hedloom_exec.artifacts import workspace_for
-from hedloom_exec.alias import point_alias
-from hedloom_exec.identity import AttemptIdentity, attempt_identity
+from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.lineage import why_reran
 from hedloom_exec.reuse import attempts_for, input_digest, input_digests
@@ -52,41 +48,6 @@ class Durability(Enum):
 
 def _artifacts_of(result: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     return {item["name"]: item for item in result.get("artifacts", [])}
-
-
-def _select_sequence(
-    *,
-    root: str,
-    plan_id: str,
-    invocation_id: str,
-    digest: str,
-    max_attempts: int,
-) -> AttemptIdentity:
-    """Find the attempt this run should use for one set of inputs.
-
-    Sequences let the same inputs be attempted more than once without ever
-    overwriting an earlier record. The first sequence that is unfinished, or
-    finished with a reusable result, is the one to use; sequences whose results
-    were kept but not reused are stepped over and left intact.
-    """
-
-    for sequence in range(max_attempts):
-        identity = attempt_identity(
-            plan_id=plan_id,
-            invocation_id=invocation_id,
-            sequence=sequence,
-            input_digest=digest,
-        )
-        journal = AttemptJournal(root, identity.rendered)
-        published = journal.read_manifest()
-        if published is None or is_reusable(journal.fold(), published):
-            return identity
-
-    raise AttemptError(
-        f"{invocation_id} has {max_attempts} attempts at these inputs, none "
-        f"reusable. Inspect them and either fix the cause or call "
-        f"accept_for_reuse(...) on the one that should stand."
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +80,6 @@ def execute(
     invocation_id: str | None = None,
     authored_key: str | None = None,
     unchecked_identity: bool = False,
-    max_attempts: int = 20,
     workspace_root: str | None = None,
 ) -> ExecutionResult:
     """Run one invocation at the declared durability level.
@@ -157,6 +117,9 @@ def execute(
             durability=durability,
         )
 
+    if root is None:
+        raise ValueError("recorded execution requires a root")
+
     changed_keys: tuple[str, ...] = ()
     if plan_id and invocation_id:
         # Attribution only. Neither key participates in the input digest, so
@@ -164,24 +127,20 @@ def execute(
         bundle = {**bundle, "plan": plan_id, "invocation": invocation_id}
         if authored_key is not None:
             bundle["authored_key"] = authored_key
-        selected: AttemptIdentity | None = None
         if identity is None:
-            selected = _select_sequence(
-                root=root,
+            selected = attempt_identity(
                 plan_id=plan_id,
                 invocation_id=invocation_id,
-                digest=input_digest(bundle),
-                max_attempts=max_attempts,
+                input_digest=input_digest(bundle),
             )
             identity = selected.rendered
-            bundle["try"] = selected.sequence
 
-            # A changed digest starts a new lineage record. Same-digest retries
-            # are tries of the same iteration and do not supersede one another.
+            # A changed digest starts a new record. Same-digest retries are
+            # tries inside that one record and never supersede one another.
             known = attempts_for(
                 root, plan_id=plan_id, invocation_id=invocation_id
             )
-            if selected.sequence == 0 and not any(
+            if not any(
                 record.identity == selected.rendered for record in known
             ):
                 prior = [
@@ -202,8 +161,6 @@ def execute(
                             input_digests(bundle),
                         )
 
-    if root is None:
-        raise ValueError("recorded execution requires a root")
     if identity is None:
         raise ValueError(
             "recorded execution requires both plan_id and invocation_id so the "
@@ -216,28 +173,18 @@ def execute(
             "invocation_id, or unchecked_identity=True to construct a state "
             "deliberately."
         )
+    # Refuse a caller-supplied record name before creating any durable state.
+    try_name(identity, 0)
 
     journal = AttemptJournal(root, identity)
 
-    # Where the work runs and leaves its files. On a shared filesystem this is
-    # the whole of "materialization": the next invocation opens the same path.
     declared_outputs = bundle.get("outputs")
-    if declared_outputs or workspace_root:
-        workdir = workspace_for(workspace_root or root, identity)
-        bundle = {**bundle, "workdir": str(workdir)}
-        if declared_outputs and plan_id and invocation_id:
-            alias_key = authored_key or invocation_id
-            for name, declaration in sorted(declared_outputs.items()):
-                if isinstance(declaration, Mapping) and "path" in declaration:
-                    point_alias(
-                        root,
-                        plan_id=plan_id,
-                        authored_key=alias_key,
-                        output=name,
-                        target=workdir / declaration["path"],
-                    )
-
-    launched: LaunchResult = launch_or_attach(journal, transport, bundle)
+    launched: LaunchResult = launch_or_attach(
+        journal,
+        transport,
+        bundle,
+        workspace_root=workspace_root,
+    )
     if launched.disposition == "completed":
         manifest = launched.manifest or {}
         result = dict(manifest.get("result", {}))
@@ -253,7 +200,11 @@ def execute(
         )
 
     state = reconcile(journal, transport, bundle_outputs=declared_outputs)
-    published = journal.read_manifest() or {}
+    published = (
+        journal.read_manifest(state.current_try)
+        if state.current_try is not None
+        else None
+    ) or {}
     result = dict(published.get("result", {}))
     return ExecutionResult(
         outcome=state.outcome or state.phase,

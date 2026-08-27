@@ -15,6 +15,7 @@ from hedloom_exec.attempt import (
     reconcile,
 )
 from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.identity import attempt_identity, try_name
 
 from fakes import FakeBatchStore, FakeBatchTransport
 
@@ -25,7 +26,8 @@ BUNDLE = {
     "arguments": {},
 }
 
-IDENTITY = "hedloom-injection"
+IDENTITY = attempt_identity(plan_id="injection", invocation_id="test").rendered
+JOB = try_name(IDENTITY, 0)
 
 
 def test_acceptance_to_receipt_loss_attaches_and_never_duplicates(tmp_path):
@@ -43,7 +45,7 @@ def test_acceptance_to_receipt_loss_attaches_and_never_duplicates(tmp_path):
         launch_or_attach(log, first_controller, BUNDLE)
 
     assert len(store.jobs) == 1
-    accepted_job_id = store.jobs[IDENTITY]["job_id"]
+    accepted_job_id = store.jobs[JOB]["job_id"]
 
     # A new process, sharing nothing but the durable record and the substrate.
     restarted = AttemptJournal(tmp_path, IDENTITY)
@@ -53,7 +55,7 @@ def test_acceptance_to_receipt_loss_attaches_and_never_duplicates(tmp_path):
     assert result.disposition == "attached"
     assert result.state.handle["job_id"] == accepted_job_id
     assert len(store.jobs) == 1
-    assert store.jobs[IDENTITY]["runs"] == 1
+    assert store.jobs[JOB]["runs"] == 1
     assert store.accepted == 1, "a second submission reached the substrate"
 
 
@@ -84,7 +86,7 @@ def test_acceptance_to_receipt_loss_fails_loudly_without_discovery(tmp_path):
         launch_or_attach(restarted, blind, BUNDLE)
 
     assert len(store.jobs) == 1
-    assert store.jobs[IDENTITY]["runs"] == 1
+    assert store.jobs[JOB]["runs"] == 1
     assert store.accepted == 1, "a second submission reached the substrate"
 
 
@@ -126,7 +128,7 @@ def test_terminal_to_manifest_loss_completes_by_attachment(tmp_path):
     transport = FakeBatchTransport(store)
     log = AttemptJournal(tmp_path, IDENTITY)
     launch_or_attach(log, transport, BUNDLE)
-    store.jobs[IDENTITY]["state"] = "succeeded"
+    store.jobs[JOB]["state"] = "succeeded"
     reconcile(log, transport)
 
     # Simulate the crash window inside publication: the manifest is visible,
@@ -146,7 +148,7 @@ def test_terminal_to_manifest_loss_completes_by_attachment(tmp_path):
     assert result.disposition == "completed"
     assert result.manifest["outcome"] == "succeeded"
     assert result.state.phase == "terminal"
-    assert store.jobs[IDENTITY]["runs"] == 1
+    assert store.jobs[JOB]["runs"] == 1
     assert store.accepted == 1, "the payload was resubmitted"
 
 
@@ -175,8 +177,8 @@ def test_the_fake_substrate_can_actually_observe_a_duplicate():
 
     store = FakeBatchStore()
     transport = FakeBatchTransport(store)
-    transport.submit(IDENTITY, BUNDLE)
-    transport.submit(IDENTITY, BUNDLE)
+    transport.submit(JOB, BUNDLE)
+    transport.submit(JOB, BUNDLE)
 
     assert store.accepted == 2
-    assert store.jobs[IDENTITY]["runs"] == 2
+    assert store.jobs[JOB]["runs"] == 2

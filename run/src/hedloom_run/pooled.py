@@ -232,7 +232,7 @@ class LSFPooledTransport:
     discovery_is_authoritative = False
     """A pooled attempt cannot be found again, and this says so.
 
-    A direct `bsub -I` job carries the attempt identity as its job name, so
+    A direct `bsub -I` job carries the record's try name as its job name, so
     `bjobs -J` gives a trustworthy negative: LSF is a durable third party that
     outlives the submitter. A pooled invocation is a Dask future on a scheduler
     this process owns. If the submitter dies, the future dies with it and

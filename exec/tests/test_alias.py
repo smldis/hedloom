@@ -11,6 +11,7 @@ from hedloom_exec.alias import (
     point_alias,
 )
 from hedloom_exec.durability import Durability, execute
+from hedloom_exec.identity import try_name
 from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.reuse import scan_attempts
 from hedloom_exec.transport import Observation
@@ -85,7 +86,9 @@ def test_an_alias_resolves_to_the_current_trys_workspace(tmp_path):
         root, plan_id="study", authored_key="point:write", output="result"
     )
 
-    assert published.resolve() == tmp_path / "work" / result.journal.identity / "result.txt"
+    assert published.resolve() == (
+        tmp_path / "work" / try_name(result.journal.identity, 0) / "result.txt"
+    )
 
 
 def test_repointing_an_alias_is_atomic(tmp_path, monkeypatch):
@@ -142,11 +145,11 @@ def test_a_new_try_repoints_the_alias(tmp_path):
     ).resolve(strict=False)
     second = run(root, work, transport=FileTransport(outcome="failed", write=False))
 
-    assert first.journal.identity != second.journal.identity
-    assert first_target.parent.name == first.journal.identity
+    assert first.journal.identity == second.journal.identity
+    assert first_target.parent.name == try_name(first.journal.identity, 0)
     assert alias_path(
         root, plan_id="study", authored_key="point:write", output="result"
-    ).resolve(strict=False).parent.name == second.journal.identity
+    ).resolve(strict=False).parent.name == try_name(second.journal.identity, 1)
 
 
 def test_a_new_record_repoints_the_alias(tmp_path):
@@ -158,7 +161,7 @@ def test_a_new_record_repoints_the_alias(tmp_path):
     assert first.journal.identity != second.journal.identity
     assert alias_path(
         root, plan_id="study", authored_key="point:write", output="result"
-    ).resolve().parent.name == second.journal.identity
+    ).resolve().parent.name == try_name(second.journal.identity, 0)
 
 
 def test_an_alias_to_an_unwritten_output_dangles_rather_than_lying(tmp_path):

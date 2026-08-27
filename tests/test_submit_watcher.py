@@ -14,6 +14,7 @@ import pytest
 
 from hedloom import Site, local, operation, returned, study
 from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.transport import TransportError
 from hedloom_exec.watch import status_of
 from hedloom.study import _WATCH_THREAD_NAME, _watch
@@ -45,21 +46,34 @@ class StopAfter:
         return self._remaining == 0
 
 
-def submitted_attempt(root: Path, identity: str = "hedloom-point") -> None:
+def submitted_attempt(root: Path, label: str = "point") -> AttemptJournal:
+    identity = attempt_identity(plan_id="watch-submit", invocation_id=label).rendered
     journal = AttemptJournal(root, identity)
-    journal.append(
-        "created",
-        plan="study",
-        invocation="point",
-        operation="simulate",
-        input_digest="d" * 32,
-    )
-    journal.append(
-        "submit_intent",
-        transport="bound:lsf-interactive",
-        substrate="lsf-interactive",
-    )
-    journal.append("submit_receipt", handle={"identity": identity})
+    with journal.claim():
+        number = journal.begin_try()
+        job = try_name(identity, number)
+        journal.append(
+            "created",
+            **{
+                "try": number,
+                "plan": "study",
+                "invocation": "point",
+                "operation": "simulate",
+                "input_digest": "d" * 32,
+            },
+        )
+        journal.append(
+            "submit_intent",
+            **{
+                "try": number,
+                "transport": "bound:lsf-interactive",
+                "substrate": "lsf-interactive",
+            },
+        )
+        journal.append(
+            "submit_receipt", **{"try": number, "handle": {"identity": job}}
+        )
+    return journal
 
 
 def test_the_poller_prints_each_transition_once_and_queue_time_on_running(
@@ -67,11 +81,12 @@ def test_the_poller_prints_each_transition_once_and_queue_time_on_running(
 ):
     """Repeated refreshes are silence; state changes are the useful evidence."""
 
-    submitted_attempt(tmp_path)
+    journal = submitted_attempt(tmp_path)
+    job = try_name(journal.identity, 0)
     reader = ReplayReader(
-        {"hedloom-point": "pending"},
-        {"hedloom-point": "pending"},
-        {"hedloom-point": "running"},
+        {job: "pending"},
+        {job: "pending"},
+        {job: "running"},
     )
 
     _watch(tmp_path, reader, StopAfter(3))
@@ -81,24 +96,25 @@ def test_the_poller_prints_each_transition_once_and_queue_time_on_running(
     assert lines[1].startswith("[watch] point pending → running (")
     assert lines[1].endswith("s queued)")
     assert len(lines) == 2
-    assert status_of(tmp_path, "hedloom-point").queue_seconds is not None
+    assert status_of(tmp_path, journal.identity).queue_seconds is not None
 
 
 def test_a_job_first_seen_running_still_prints_a_queue_measurement(tmp_path, capsys):
     """Missing one PEND sample must not discard submission-to-RUN latency."""
 
-    submitted_attempt(tmp_path)
+    journal = submitted_attempt(tmp_path)
+    job = try_name(journal.identity, 0)
 
     _watch(
         tmp_path,
-        ReplayReader({"hedloom-point": "running"}),
+        ReplayReader({job: "running"}),
         StopAfter(1),
     )
 
     line = capsys.readouterr().out.strip()
     assert line.startswith("[watch] point → running (")
     assert line.endswith("s queued)")
-    assert status_of(tmp_path, "hedloom-point").queue_seconds is not None
+    assert status_of(tmp_path, journal.identity).queue_seconds is not None
 
 
 @operation(outputs={"value": returned()})
@@ -134,22 +150,23 @@ def test_a_local_study_never_calls_the_status_reader_and_keeps_completion_output
 
 
 class WedgedReader:
-    def __init__(self):
+    def __init__(self, job):
+        self.job = job
         self.entered = Event()
         self.release = Event()
 
     def states(self):
         self.entered.set()
         self.release.wait()
-        return {"hedloom-existing-farm-job": "pending"}
+        return {self.job: "pending"}
 
 
 def test_a_wedged_reader_leaves_only_a_daemon_and_cannot_hold_submit(tmp_path):
     """A scheduler command that never returns must not own process lifetime."""
 
     root = tmp_path / "attempts"
-    submitted_attempt(root, "hedloom-existing-farm-job")
-    reader = WedgedReader()
+    journal = submitted_attempt(root, "existing-farm-job")
+    reader = WedgedReader(try_name(journal.identity, 0))
     started = time.monotonic()
 
     run = local_study().submit(
@@ -213,7 +230,7 @@ def test_a_status_reader_failure_prints_once_and_cannot_fail_the_run(
 
     _WATCHER_REACHED_READER = False
     root = tmp_path / "attempts"
-    submitted_attempt(root, "hedloom-existing-farm-job")
+    submitted_attempt(root, "existing-farm-job")
     reader = RefusingReader()
 
     run = waiting_study().submit(

@@ -31,17 +31,22 @@ from hedloom_exec.errors import AttemptError
 __all__ = [
     "AttemptJournal",
     "AttemptState",
+    "ClaimNotHeld",
     "ConcurrentClaim",
     "JournalError",
     "JournalEvent",
+    "LAYOUT_VERSION",
     "TERMINAL_OUTCOMES",
+    "TryState",
 ]
 
+LAYOUT_VERSION = 1
 TERMINAL_OUTCOMES = frozenset({"succeeded", "failed", "cancelled", "unreconciled"})
 
 _EVENTS = frozenset(
     {
         "created",
+        "try_started",
         "submit_intent",
         "submit_receipt",
         "submit_refused",
@@ -68,6 +73,10 @@ class ConcurrentClaim(JournalError, AttemptError):
     """
 
 
+class ClaimNotHeld(JournalError):
+    """A try allocation was attempted outside the record's exclusive claim."""
+
+
 @dataclass(frozen=True, slots=True)
 class JournalEvent:
     seq: int
@@ -77,22 +86,14 @@ class JournalEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class AttemptState:
-    """The folded view of one attempt's durable history.
+class TryState:
+    """The folded view of one execution try within a content record."""
 
-    ``phase`` is one of ``unsubmitted``, ``intended``, ``submitted``, or
-    ``terminal``. ``intended`` is the crash window: durable intent exists but no
-    receipt does, so whether the external system accepted the work is unknown
-    from the record alone and must be settled by discovery.
-    """
-
-    identity: str
-    phase: str
+    number: int
+    phase: str = "unsubmitted"
     handle: Mapping[str, Any] | None = None
     transport: str | None = None
     substrate: str | None = None
-    """Where the work actually landed, which may not be what submitted it."""
-
     outcome: str | None = None
     manifest_path: str | None = None
     cancel_requested: bool = False
@@ -101,7 +102,82 @@ class AttemptState:
     reuse_reason: str | None = None
     placement: Mapping[str, Any] = field(default_factory=dict)
     observations: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    started_at: str | None = None
+    ended_at: str | None = None
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.phase == "terminal"
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptState:
+    """The folded view of one content record and all of its tries.
+
+    ``phase`` is one of ``unsubmitted``, ``intended``, ``submitted``, or
+    ``terminal``. ``intended`` is the crash window: durable intent exists but no
+    receipt does, so whether the external system accepted the work is unknown
+    from the record alone and must be settled by discovery.
+    """
+
+    identity: str
+    tries: tuple[TryState, ...] = field(default_factory=tuple)
+    current_try: int | None = None
     events: tuple[JournalEvent, ...] = field(default_factory=tuple)
+
+    @property
+    def current(self) -> TryState | None:
+        if self.current_try is None:
+            return None
+        return next((item for item in self.tries if item.number == self.current_try), None)
+
+    @property
+    def phase(self) -> str:
+        return self.current.phase if self.current is not None else "unsubmitted"
+
+    @property
+    def handle(self) -> Mapping[str, Any] | None:
+        return self.current.handle if self.current is not None else None
+
+    @property
+    def transport(self) -> str | None:
+        return self.current.transport if self.current is not None else None
+
+    @property
+    def substrate(self) -> str | None:
+        return self.current.substrate if self.current is not None else None
+
+    @property
+    def outcome(self) -> str | None:
+        return self.current.outcome if self.current is not None else None
+
+    @property
+    def manifest_path(self) -> str | None:
+        return self.current.manifest_path if self.current is not None else None
+
+    @property
+    def cancel_requested(self) -> bool:
+        return self.current.cancel_requested if self.current is not None else False
+
+    @property
+    def cancel_reason(self) -> str | None:
+        return self.current.cancel_reason if self.current is not None else None
+
+    @property
+    def reuse_accepted(self) -> bool:
+        return self.current.reuse_accepted if self.current is not None else False
+
+    @property
+    def reuse_reason(self) -> str | None:
+        return self.current.reuse_reason if self.current is not None else None
+
+    @property
+    def placement(self) -> Mapping[str, Any]:
+        return self.current.placement if self.current is not None else {}
+
+    @property
+    def observations(self) -> tuple[Mapping[str, Any], ...]:
+        return self.current.observations if self.current is not None else ()
 
     @property
     def is_terminal(self) -> bool:
@@ -133,7 +209,7 @@ def _fsync_directory(path: Path) -> None:
 
 
 class AttemptJournal:
-    """One attempt's durable directory: an event log plus a published manifest.
+    """One record's durable directory: events, per-try manifests, and standing.
 
     The directory layout is deliberately plain so that an operator, a script, a
     CI job, or an agent can read the same facts without this package.
@@ -143,21 +219,68 @@ class AttemptJournal:
         self.identity = identity
         self.directory = Path(root) / identity
         self.log_path = self.directory / "events.jsonl"
-        self.manifest_path = self.directory / "manifest.json"
+        self.layout_path = self.directory / "layout"
+        self.manifest_directory = self.directory / "manifest"
+        self.standing_path = self.directory / "standing.json"
         self.lock_path = self.directory / "claim.lock"
         self._next_seq: int | None = None
+        self._claim_held = False
 
     def exists(self) -> bool:
         return self.log_path.exists()
 
+    def manifest_path(self, try_number: int) -> Path:
+        """Return the immutable manifest address for one try."""
+
+        if (
+            not isinstance(try_number, int)
+            or isinstance(try_number, bool)
+            or try_number < 0
+        ):
+            raise JournalError("try number must be a non-negative integer")
+        return self.manifest_directory / f"{try_number}.json"
+
+    def _write_layout(self) -> None:
+        temporary = self.directory / "layout.partial"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            handle.write(f"{LAYOUT_VERSION}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, self.layout_path)
+        _fsync_directory(self.directory)
+
+    def _require_layout(self, *, initialise_empty: bool = False) -> None:
+        if not self.directory.exists():
+            return
+        if not self.layout_path.exists():
+            if initialise_empty and not self.log_path.exists():
+                self._write_layout()
+                return
+            raise JournalError(
+                f"attempt {self.identity} has no recognised layout; roots "
+                "written before record/workspace layout 1 are unreadable"
+            )
+        try:
+            raw = self.layout_path.read_text(encoding="utf-8").strip()
+            version = int(raw)
+        except (OSError, ValueError) as error:
+            raise JournalError(
+                f"attempt {self.identity} has an unreadable layout declaration"
+            ) from error
+        if version != LAYOUT_VERSION:
+            raise JournalError(
+                f"attempt {self.identity} declares unsupported layout {version}; "
+                f"this version reads layout {LAYOUT_VERSION} only"
+            )
+
     @contextmanager
     def claim(self) -> Iterator[None]:
-        """Hold this attempt exclusively while deciding what to do with it.
+        """Hold this record exclusively while deciding what to do with it.
 
         Reading the record, recording intent, and submitting must be one
         indivisible step. Without it two controllers -- or two threads of one
         plan runner -- can both fold an unsubmitted state and both submit,
-        producing two real jobs for one attempt. An advisory lock on a file in
+        producing two real jobs for one try. An advisory lock on a file in
         the attempt directory is enough: every writer goes through here.
 
         ==== DEVNOTE =============================================
@@ -190,11 +313,10 @@ class AttemptJournal:
         overwrite records in the journal that every recovery, reuse and
         identity decision is read back from. The durable record starts lying.
 
-        Not at risk from *this*: manifest publication is an atomic `rename()`
-        within one directory, which NFS does guarantee. But see the second
-        DEVNOTE on `publish_terminal` -- publication turns out to have a
-        separate problem, on any filesystem, and it is the one a TLA+ model of
-        this protocol found first.
+        Not at risk from *this*: per-try manifest and standing publication use
+        atomic `rename()`, and publication now remains under this record claim.
+        The historical TLA+ counterexample that found unlocked publication is
+        documented in `docs/internals/attempt-claim-protocol.md`.
 
         Not reachable today, which is why this is a flag and not a fix: one
         process runs the plan, the Dask cluster is in-process, and two separate
@@ -216,7 +338,7 @@ class AttemptJournal:
            `link()`-then-check-`st_nlink == 2` dance, which holds on both.
         3. **Do not share a root across controllers** -- partition by run. Safe,
            but cross-run reuse is the entire point, so this costs the feature.
-        4. **Ask the substrate instead** -- `bjobs -J <identity>` before
+        4. **Ask the substrate instead** -- `bjobs -J <try-name>` before
            submitting. Racy on its own, and `discovery_is_authoritative`
            already encodes a better version of this idea.
 
@@ -225,6 +347,7 @@ class AttemptJournal:
         ==== END DEVNOTE =========================================
         """
 
+        new_record = not self.directory.exists()
         self.directory.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o644)
         try:
@@ -237,12 +360,38 @@ class AttemptJournal:
                     f"attempt {self.identity} is already being launched by "
                     f"another caller"
                 ) from error
+            self._require_layout(initialise_empty=new_record)
+            self._claim_held = True
             yield
         finally:
+            self._claim_held = False
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
             finally:
                 os.close(descriptor)
+
+    def begin_try(self, *, actor: str | None = None) -> int:
+        """Reserve and durably record the next try while the claim is held.
+
+        An allocated but never submitted try is resumed.  Terminal tries move
+        to the next unbounded number.  The marker is fsynced before this method
+        returns, so every later transport call has a recoverable job name.
+        """
+
+        if not self._claim_held:
+            raise ClaimNotHeld(
+                f"attempt {self.identity} cannot allocate a try without its claim"
+            )
+        state = self.fold()
+        current = state.current
+        if current is not None and current.phase == "unsubmitted":
+            return current.number
+        number = 0 if current is None else current.number + 1
+        data: dict[str, Any] = {"try": number}
+        if actor is not None:
+            data["actor"] = actor
+        self.append("try_started", **data)
+        return number
 
     def append(self, event: str, /, **data: Any) -> JournalEvent:
         """Durably append one event, flushing before returning.
@@ -253,7 +402,15 @@ class AttemptJournal:
 
         if event not in _EVENTS:
             raise JournalError(f"unknown journal event {event!r}")
+        try_number = data.get("try")
+        if (
+            not isinstance(try_number, int)
+            or isinstance(try_number, bool)
+            or try_number < 0
+        ):
+            raise JournalError(f"journal event {event!r} requires a non-negative try")
         self.directory.mkdir(parents=True, exist_ok=True)
+        self._require_layout()
         if self._next_seq is None:
             # Counted once per journal instance rather than on every append,
             # which made writing n events cost O(n^2) reads of the whole log.
@@ -285,6 +442,7 @@ class AttemptJournal:
         )
 
     def events(self) -> tuple[JournalEvent, ...]:
+        self._require_layout()
         parsed: list[JournalEvent] = []
         for index, line in enumerate(self._raw_lines()):
             try:
@@ -312,148 +470,175 @@ class AttemptJournal:
 
     def fold(self) -> AttemptState:
         """Derive current state from the durable record alone."""
-
-        phase = "unsubmitted"
-        handle: Mapping[str, Any] | None = None
-        transport: str | None = None
-        substrate: str | None = None
-        outcome: str | None = None
-        manifest_path: str | None = None
-        cancel_requested = False
-        cancel_reason: str | None = None
-        reuse_accepted = False
-        reuse_reason: str | None = None
-        placement: dict[str, Any] = {}
-        observations: list[Mapping[str, Any]] = []
         events = self.events()
-
+        tries: dict[int, dict[str, Any]] = {}
         for item in events:
+            number = item.data.get("try")
+            if (
+                not isinstance(number, int)
+                or isinstance(number, bool)
+                or number < 0
+            ):
+                raise JournalError(
+                    f"attempt {self.identity} has event {item.event!r} without "
+                    "a valid try number"
+                )
+            if item.event == "try_started":
+                if number in tries:
+                    raise JournalError(
+                        f"attempt {self.identity} starts try {number} more than once"
+                    )
+                tries[number] = {
+                    "number": number,
+                    "phase": "unsubmitted",
+                    "handle": None,
+                    "transport": None,
+                    "substrate": None,
+                    "outcome": None,
+                    "manifest_path": None,
+                    "cancel_requested": False,
+                    "cancel_reason": None,
+                    "reuse_accepted": False,
+                    "reuse_reason": None,
+                    "placement": {},
+                    "observations": [],
+                    "started_at": item.at,
+                    "ended_at": None,
+                }
+                continue
+            if number not in tries:
+                raise JournalError(
+                    f"attempt {self.identity} records {item.event!r} for try "
+                    f"{number} before try_started"
+                )
+            current = tries[number]
             if item.event == "submit_intent":
-                phase = "intended"
-                transport = item.data.get("transport")
-                # Records written before the two were told apart carry only
-                # `transport`, and for those it is the substrate.
-                substrate = item.data.get("substrate") or transport
+                current["phase"] = "intended"
+                current["transport"] = item.data.get("transport")
+                current["substrate"] = (
+                    item.data.get("substrate") or current["transport"]
+                )
             elif item.event == "submit_receipt":
-                phase = "submitted"
-                handle = item.data.get("handle")
+                current["phase"] = "submitted"
+                current["handle"] = item.data.get("handle")
             elif item.event in ("submit_refused", "submit_lost"):
-                phase = "unsubmitted"
-                handle = None
+                current["phase"] = "unsubmitted"
+                current["handle"] = None
             elif item.event == "submit_indeterminate":
-                # The substrate may hold accepted work. Staying in the crash
-                # window is the safe reading; only discovery may leave it.
-                phase = "intended"
+                current["phase"] = "intended"
             elif item.event == "cancel_requested":
-                cancel_requested = True
-                cancel_reason = item.data.get("reason")
+                current["cancel_requested"] = True
+                current["cancel_reason"] = item.data.get("reason")
             elif item.event == "placement":
-                placement = dict(item.data)
+                current["placement"] = {
+                    key: value for key, value in item.data.items() if key != "try"
+                }
             elif item.event == "reuse_accepted":
-                reuse_accepted = True
-                reuse_reason = item.data.get("reason")
+                current["reuse_accepted"] = True
+                current["reuse_reason"] = item.data.get("reason")
             elif item.event == "observed":
-                observations.append(item.data)
+                current["observations"].append(
+                    {key: value for key, value in item.data.items() if key != "try"}
+                )
             elif item.event == "terminal":
-                phase = "terminal"
-                outcome = item.data.get("outcome")
-                manifest_path = item.data.get("manifest")
+                current["phase"] = "terminal"
+                current["outcome"] = item.data.get("outcome")
+                current["manifest_path"] = item.data.get("manifest")
+                current["ended_at"] = item.at
 
-        if outcome is not None and outcome not in TERMINAL_OUTCOMES:
-            raise JournalError(
-                f"attempt {self.identity} records unknown outcome {outcome!r}"
-            )
-
+        folded: list[TryState] = []
+        for number in sorted(tries):
+            values = tries[number]
+            outcome = values["outcome"]
+            if outcome is not None and outcome not in TERMINAL_OUTCOMES:
+                raise JournalError(
+                    f"attempt {self.identity} records unknown outcome {outcome!r}"
+                )
+            values["observations"] = tuple(values["observations"])
+            folded.append(TryState(**values))
         return AttemptState(
             identity=self.identity,
-            phase=phase,
-            handle=handle,
-            transport=transport,
-            substrate=substrate,
-            outcome=outcome,
-            manifest_path=manifest_path,
-            cancel_requested=cancel_requested,
-            cancel_reason=cancel_reason,
-            reuse_accepted=reuse_accepted,
-            reuse_reason=reuse_reason,
-            placement=placement,
-            observations=tuple(observations),
+            tries=tuple(folded),
+            current_try=folded[-1].number if folded else None,
             events=events,
         )
 
-    def publish_terminal(
-        self, *, outcome: str, manifest: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
-        """Make the manifest atomically visible, then record the outcome.
-
-        The write-replace order matters: a crash between the two leaves a
-        readable manifest and a non-terminal journal, which reconciliation can
-        resolve. The reverse order would leave a terminal claim with no
-        evidence behind it -- and not only on a crash, since the window between
-        the two writes is itself such a state for any concurrent reader.
-
-        ==== DEVNOTE =============================================
-        DEVNOTE/TODO -- NO WRITER EXCLUSION HERE. Raised 2026-08-17 by the
-        TLA+ model in `docs/attempt-claim/`; see `docs/attempt-claim-protocol.md`.
-
-        This method runs *outside* `claim()`. `launch_or_attach` releases the
-        lock when it returns, and `execute` then calls `reconcile` for both the
-        `claimed` and the `attached` disposition -- so two callers holding one
-        identity can both be in here at once. `reconcile` guards on "is a
-        manifest already visible", but reads that guard unlocked, so both can
-        pass it before either publishes.
-
-        Two consequences, neither of which needs a crash:
-
-        * The journal and the manifest can end up naming different outcomes.
-          `execute` reports the outcome from the journal and the artifacts from
-          the manifest, so a result is returned under a verdict that is not its
-          own. TLC reaches this in 18 states with two callers.
-        * `manifest.json.partial` is a fixed name in the shared attempt
-          directory. Two publishers open it with `"w"`. The rename stays atomic
-          and the published file is never torn, but *whose* bytes it carries is
-          whoever wrote last, not whoever renamed.
-
-        The fix is to hold the claim until the terminal record is written, which
-        the model checks clean. It costs nothing in lock hold time: the claim is
-        already held across the whole blocking `bsub -I`.
-
-        Same exposure gate as the claim DEVNOTE above -- it needs two live
-        callers for one identity, which one controller with one task per
-        invocation never produces. Fix it before pooled placement lands.
-        ==== END DEVNOTE =========================================
-        """
-
-        if outcome not in TERMINAL_OUTCOMES:
-            raise JournalError(f"unknown terminal outcome {outcome!r}")
-        self.directory.mkdir(parents=True, exist_ok=True)
-        document = {
-            "attempt": self.identity,
-            "outcome": outcome,
-            "published_at": _now(),
-            "result": dict(manifest),
-        }
-        temporary = self.directory / "manifest.json.partial"
+    def _publish_json(self, path: Path, document: Mapping[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f"{path.name}.partial")
         payload = json.dumps(document, sort_keys=True, indent=2) + "\n"
         with open(temporary, "w", encoding="utf-8") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, self.manifest_path)
-        # The rename is only durable once the directory entry is persisted;
-        # otherwise a crash can leave a terminal record with no manifest.
-        _fsync_directory(self.directory)
-        self.append("terminal", outcome=outcome, manifest=str(self.manifest_path))
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+
+    def make_standing(self, try_number: int) -> Mapping[str, Any]:
+        """Atomically make one published try the record's reusable result."""
+
+        if not self._claim_held:
+            raise ClaimNotHeld(
+                f"attempt {self.identity} cannot change standing without its claim"
+            )
+        document = self.read_manifest(try_number)
+        if document is None:
+            raise JournalError(
+                f"attempt {self.identity} try {try_number} has no manifest to stand"
+            )
+        self._publish_json(self.standing_path, document)
         return document
 
-    def read_manifest(self) -> Mapping[str, Any] | None:
-        """Return the published manifest, or ``None`` if none is visible."""
+    def publish_terminal(
+        self, *, try_number: int, outcome: str, manifest: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Publish one try's immutable manifest, then its terminal event.
 
-        if not self.manifest_path.exists():
+        Successful evidence also becomes ``standing.json`` before the terminal
+        event.  A crash after either rename leaves readable evidence from which
+        reconciliation can repair the append-only record.
+        """
+
+        if not self._claim_held:
+            raise ClaimNotHeld(
+                f"attempt {self.identity} cannot publish without its claim"
+            )
+        if outcome not in TERMINAL_OUTCOMES:
+            raise JournalError(f"unknown terminal outcome {outcome!r}")
+        path = self.manifest_path(try_number)
+        if path.exists():
+            raise JournalError(
+                f"attempt {self.identity} try {try_number} already has a manifest"
+            )
+        document = {
+            "attempt": self.identity,
+            "try": try_number,
+            "outcome": outcome,
+            "published_at": _now(),
+            "result": dict(manifest),
+        }
+        self._publish_json(path, document)
+        if outcome == "succeeded":
+            self._publish_json(self.standing_path, document)
+        self.append(
+            "terminal",
+            **{"try": try_number, "outcome": outcome, "manifest": str(path)},
+        )
+        return document
+
+    def read_manifest(
+        self, try_number: int | None = None
+    ) -> Mapping[str, Any] | None:
+        """Read one try manifest, or the record's standing result by default."""
+
+        self._require_layout()
+        path = self.standing_path if try_number is None else self.manifest_path(try_number)
+        if not path.exists():
             return None
         try:
-            return json.loads(self.manifest_path.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as error:
+            label = "standing result" if try_number is None else f"try {try_number}"
             raise JournalError(
-                f"attempt {self.identity} has an unreadable published manifest"
+                f"attempt {self.identity} has an unreadable {label} manifest"
             ) from error

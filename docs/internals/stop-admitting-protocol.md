@@ -1,7 +1,8 @@
 # Stopping a sweep, model-checked
 
 The companion to [`attempt-claim-protocol.md`](attempt-claim-protocol.md), one
-layer up. That page models what `hedloom_exec` does with one attempt; this one
+layer up. That page models the historical one-attempt form of what
+`hedloom_exec` now does per try; this one
 models what `hedloom_run.graph` does with the *rest* of a sweep when the first
 invocation comes back failed. The model is in
 `stop-admitting/`, starting from
@@ -114,10 +115,11 @@ Both have to come from the record, because the cancel destroyed the only other
 source of either. `MCRecordTruth` — record decides both — is clean across the
 whole state space.
 
-**Why it cannot do that today.** `graph.py` does not know an invocation's
-attempt identity. It is chosen inside `execute` by `_select_sequence`, from the
-input digest, after `_run_one` is already on a worker — so the controller
-submits work it cannot name, and has nothing to fold a journal with.
+**Why it cannot do that today.** The record identity is now a pure function of
+the plan, invocation and input digest, but `graph.py` still does not bind it.
+`execute` derives the record and allocates its try after `_run_one` is already
+on a worker — so the controller submits work it has not materialized a record
+for, and has nothing to fold a journal with.
 
 That is the actual defect, and it is not confined to this protocol:
 `watch.live_attempts` scans the attempt root for the same reason, and a Plan

@@ -24,7 +24,8 @@ argument, and what an adversarial review found — is in the unpublished
 | What happens to an option a transport cannot express? | It refuses before submission. Dropping a stated resource need would run the work under conditions nobody asked for, which is the silent-wrongness rule applied to placement. | `test_an_option_this_transport_cannot_express_is_refused`, `test_a_misspelled_option_does_not_silently_run_anywhere`. |
 | Who arbitrates a licence for a scarce tool? | LSF. A declared `licences={"name": n}` becomes a `rusage` term on that job; nothing here counts tokens or waits for one, because the scheduler owns the count. | `test_a_declared_licence_becomes_a_request_on_that_job`. The site's resource *names* are a fact to ask for, not derive. |
 | Can reuse return a result from different inputs? | No, once identity is content-addressed: changed inputs land on a different attempt. | `test_changed_inputs_do_not_reuse_the_old_result`. |
-| May a failed result be reused? | Not automatically. It is retained, the rerun takes a new sequence, and a human may accept it after inspection. | `test_a_failure_is_not_reused_and_the_work_runs_again`, `test_an_accepted_failure_is_reused_afterwards`. |
+| May a failed result be reused? | Not automatically. It is retained as one try, the rerun takes the next try in the same record, and a human may accept the current try after inspection. | `test_a_failure_is_not_reused_and_the_work_runs_again`, `test_an_accepted_failure_is_reused_afterwards`. |
+| Where does retry identity live? | A content-addressed record owns unbounded numbered tries. Allocation and its durable `try_started` event happen under the record claim before transport; job discovery, cancellation and watching use the try name. | `test_try_allocation.py`, `test_recovery_names.py`, `test_watch_keys.py`. |
 | What happens to superseded results? | They are retained and nameable as stale, not overwritten. | `test_prior_results_are_named_as_superseded_not_discarded`. |
 | How should the two units couple? | Through the Plan document, not the package. Neither imports the other. | `planned.py` reads plain data; `test_the_real_hedloom_flow_example_plan_derives` runs against a Plan Hedloom Flow actually produced. |
 | Does staleness propagate transitively? | Yes. Editing one point reruns it and its reduction while siblings are reused. | `test_a_changed_config_invalidates_only_its_own_branch_and_downstream`, and the end-to-end example. |
@@ -181,7 +182,9 @@ mode's design premise is wrong and needs revisiting.
   That neutrality is what made the adoption a driver change rather than a
   redesign, and it is what would make reversing it one too. Preserve it: a
   Dask import here would be the first thing to make the choice irreversible.
-- **Retry lineage.** `sequence` exists in the identity and is otherwise unused.
+- **Retry policy.** The record mechanism allocates tries but does not decide how
+  many are desirable, retain them selectively, or pin them. Those policies stay
+  outside Phase 1.
 
 ## Would change our minds
 

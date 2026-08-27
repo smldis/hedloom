@@ -13,10 +13,14 @@ and `examples/lsf_preflight.py` is where that question is answered.
 import pytest
 
 from hedloom_exec.durability import Durability, execute
+from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.lsf import CommandResult, LSFInteractiveTransport
 from hedloom_exec.transport import SubmissionRefused
 
 COMMAND = ["simulate", "--point", "tt"]
+IDENTITY = attempt_identity(plan_id="placement", invocation_id="job").rendered
+JOB = try_name(IDENTITY, 0)
+JOB_TWO = try_name(IDENTITY, 1)
 
 
 class FakeRunner:
@@ -62,8 +66,8 @@ def test_one_transport_serves_invocations_with_different_needs():
     """The whole point: the request belongs to the invocation, not the run."""
 
     lsf, runner = transport(queue="normal")
-    lsf.submit("hedloom-cheap", bundle())
-    lsf.submit("hedloom-heavy", bundle(queue="bigmem", cores=16))
+    lsf.submit(JOB, bundle())
+    lsf.submit(JOB_TWO, bundle(queue="bigmem", cores=16))
 
     cheap, heavy = runner.calls
     assert flag(cheap, "-q") == "normal" and "-n" not in cheap
@@ -75,14 +79,14 @@ def test_a_declared_licence_becomes_a_request_on_that_job():
     """LSF knows how many licences exist; we only state that this job needs one."""
 
     lsf, runner = transport()
-    lsf.submit("hedloom-abc", bundle(licences={"spectre": 1}))
+    lsf.submit(JOB, bundle(licences={"spectre": 1}))
 
     assert flag(runner.calls[0], "-R") == "rusage[spectre=1]"
 
 
 def test_memory_and_licences_compose_into_one_request():
     lsf, runner = transport()
-    lsf.submit("hedloom-abc", bundle(memory_mb=8000, licences={"spectre": 2, "ams": 1}))
+    lsf.submit(JOB, bundle(memory_mb=8000, licences={"spectre": 2, "ams": 1}))
 
     assert flag(runner.calls[0], "-R") == "rusage[mem=8000,ams=1,spectre=2]"
 
@@ -91,8 +95,8 @@ def test_an_invocation_memory_request_overrides_the_site_default():
     """The authored request wins without mutating the transport's baseline."""
 
     lsf, runner = transport(memory_mb=4096)
-    lsf.submit("hedloom-default", bundle())
-    lsf.submit("hedloom-override", bundle(memory_mb=8192))
+    lsf.submit(JOB, bundle())
+    lsf.submit(JOB_TWO, bundle(memory_mb=8192))
 
     assert flag(runner.calls[0], "-R") == "rusage[mem=4096]"
     assert flag(runner.calls[1], "-R") == "rusage[mem=8192]"
@@ -100,7 +104,7 @@ def test_an_invocation_memory_request_overrides_the_site_default():
 
 def test_an_application_profile_is_a_single_dash_bsub_option():
     lsf, runner = transport(app="spectre")
-    handle = lsf.submit("hedloom-abc", bundle())
+    handle = lsf.submit(JOB, bundle())
 
     assert flag(runner.calls[0], "-app") == "spectre"
     assert "--app" not in runner.calls[0]
@@ -111,7 +115,7 @@ def test_a_site_requirement_keeps_its_own_sections():
     """A requirement string is space-separated sections, so both survive."""
 
     lsf, runner = transport(resources="span[hosts=1]")
-    lsf.submit("hedloom-abc", bundle(licences={"spectre": 1}))
+    lsf.submit(JOB, bundle(licences={"spectre": 1}))
 
     assert flag(runner.calls[0], "-R") == "span[hosts=1] rusage[spectre=1]"
 
@@ -122,7 +126,7 @@ def test_an_rh80_requirement_and_memory_default_share_one_argument():
     lsf, runner = transport(
         resources="select[rh80] span[hosts=1]", memory_mb=4096
     )
-    lsf.submit("hedloom-abc", bundle())
+    lsf.submit(JOB, bundle())
 
     argv = runner.calls[0]
     assert argv.count("-R") == 1
@@ -134,14 +138,14 @@ def test_two_rusage_sections_refuse_rather_than_guess():
 
     lsf, runner = transport(resources="rusage[mem=100]")
     with pytest.raises(SubmissionRefused):
-        lsf.submit("hedloom-abc", bundle(licences={"spectre": 1}))
+        lsf.submit(JOB, bundle(licences={"spectre": 1}))
     assert runner.calls == []
 
 
 def test_an_option_this_transport_cannot_express_is_refused():
     lsf, runner = transport()
     with pytest.raises(SubmissionRefused) as raised:
-        lsf.submit("hedloom-abc", bundle(gpus=2))
+        lsf.submit(JOB, bundle(gpus=2))
 
     assert "gpus" in str(raised.value)
     assert runner.calls == [], "nothing may be submitted after a refusal"
@@ -159,13 +163,13 @@ def test_a_misspelled_option_does_not_silently_run_anywhere():
 
     lsf, _ = transport()
     with pytest.raises(SubmissionRefused):
-        lsf.submit("hedloom-abc", bundle(queeu="bigmem"))
+        lsf.submit(JOB, bundle(queeu="bigmem"))
 
 
 def test_a_licence_name_that_would_corrupt_the_request_is_refused():
     lsf, runner = transport()
     with pytest.raises(SubmissionRefused):
-        lsf.submit("hedloom-abc", bundle(licences={"spectre] rusage[mem": 1}))
+        lsf.submit(JOB, bundle(licences={"spectre] rusage[mem": 1}))
     assert runner.calls == []
 
 
@@ -184,20 +188,20 @@ def test_a_licence_name_that_would_corrupt_the_request_is_refused():
 def test_an_unusable_request_is_refused_before_anything_is_submitted(options):
     lsf, runner = transport()
     with pytest.raises(SubmissionRefused):
-        lsf.submit("hedloom-abc", bundle(**options))
+        lsf.submit(JOB, bundle(**options))
     assert runner.calls == []
 
 
 def test_walltime_may_be_retuned_per_invocation_but_never_removed():
     lsf, runner = transport(walltime="30")
-    lsf.submit("hedloom-abc", bundle(walltime=240))
+    lsf.submit(JOB, bundle(walltime=240))
 
     assert flag(runner.calls[0], "-W") == "240"
 
 
 def test_an_invocation_that_declares_nothing_still_gets_the_site_defaults():
     lsf, runner = transport(queue="normal", cores=4, resources="span[hosts=1]")
-    lsf.submit("hedloom-abc", {"command": COMMAND})
+    lsf.submit(JOB, {"command": COMMAND})
 
     argv = runner.calls[0]
     assert flag(argv, "-q") == "normal"

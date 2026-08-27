@@ -3,12 +3,14 @@ import json
 import pytest
 
 from hedloom_exec.attempt import (
+    AttemptError,
     ReconciliationError,
     UnrecoverableAttempt,
     launch_or_attach,
     reconcile,
     request_cancel,
 )
+from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.transport import InProcessTransport, SubmissionRefused
 
@@ -22,7 +24,10 @@ BUNDLE = {
 }
 
 
-def journal(tmp_path, identity="hedloom-attempt"):
+IDENTITY = attempt_identity(plan_id="attempt", invocation_id="test").rendered
+
+
+def journal(tmp_path, identity=IDENTITY):
     return AttemptJournal(tmp_path, identity)
 
 
@@ -94,7 +99,7 @@ def test_failure_is_a_recorded_outcome_not_an_exception(tmp_path):
     state = reconcile(log, transport)
 
     assert state.outcome == "failed"
-    assert "device did not converge" in json.dumps(log.read_manifest())
+    assert "device did not converge" in json.dumps(log.read_manifest(state.current_try))
 
 
 def test_established_refusal_permits_a_later_submission(tmp_path):
@@ -133,7 +138,7 @@ def test_cancellation_records_intent_before_asking_the_substrate(tmp_path):
 
     state = request_cancel(log, transport, reason="operator stopped the sweep")
     assert state.cancel_requested is True
-    assert store.jobs[log.identity]["state"] == "cancelled"
+    assert store.jobs[try_name(log.identity, 0)]["state"] == "cancelled"
 
     order = [event.event for event in log.events()]
     assert order.index("cancel_requested") < len(order)
@@ -142,8 +147,8 @@ def test_cancellation_records_intent_before_asking_the_substrate(tmp_path):
 def test_cancellation_intent_is_recorded_even_before_submission(tmp_path):
     store = FakeBatchStore()
     log = journal(tmp_path)
-    state = request_cancel(log, FakeBatchTransport(store), reason="changed mind")
-    assert state.cancel_requested is True
+    with pytest.raises(AttemptError, match="no try"):
+        request_cancel(log, FakeBatchTransport(store), reason="changed mind")
     assert store.jobs == {}
 
 
@@ -153,7 +158,7 @@ def test_success_after_requested_cancellation_is_not_normalized(tmp_path):
     log = journal(tmp_path)
     launch_or_attach(log, transport, BUNDLE)
     request_cancel(log, transport, reason="operator stopped the sweep")
-    store.jobs[log.identity]["state"] = "succeeded"
+    store.jobs[try_name(log.identity, 0)]["state"] = "succeeded"
 
     state = reconcile(log, transport)
     assert state.outcome == "unreconciled"
@@ -172,9 +177,18 @@ def test_vanished_work_is_published_as_unreconciled(tmp_path):
 
 def test_terminal_claim_without_evidence_is_a_reconciliation_failure(tmp_path):
     log = journal(tmp_path)
-    log.append("submit_intent", transport="fake")
-    log.append("submit_receipt", handle={"job_id": "1"})
-    log.append("terminal", outcome="succeeded", manifest=str(log.manifest_path))
+    with log.claim():
+        number = log.begin_try()
+        log.append("submit_intent", **{"try": number, "transport": "fake"})
+        log.append("submit_receipt", **{"try": number, "handle": {"job_id": "1"}})
+        log.append(
+            "terminal",
+            **{
+                "try": number,
+                "outcome": "succeeded",
+                "manifest": str(log.manifest_path(number)),
+            },
+        )
 
     with pytest.raises(ReconciliationError):
         launch_or_attach(log, in_process(), BUNDLE)

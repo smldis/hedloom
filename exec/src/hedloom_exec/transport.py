@@ -1,6 +1,6 @@
-"""The transport boundary: how one attempt reaches an execution substrate.
+"""The transport boundary: how one try reaches an execution substrate.
 
-A transport moves one attempt to wherever it runs and reports what it observes
+A transport moves one try to wherever it runs and reports what it observes
 there. It is deliberately not allowed to decide which invocation is ready, to
 release successors, or to own identity: those stay with the caller and with the
 durable journal respectively.
@@ -108,7 +108,7 @@ class Observation:
 
 @runtime_checkable
 class Transport(Protocol):
-    """Submit, discover, observe, and cancel one attempt on some substrate."""
+    """Submit, discover, observe, and cancel one try on some substrate."""
 
     name: str
     discovery_is_authoritative: bool

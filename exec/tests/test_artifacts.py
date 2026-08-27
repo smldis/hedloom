@@ -17,6 +17,7 @@ from hedloom_exec.artifacts import (
     workspace_path,
 )
 from hedloom_exec.durability import Durability, execute
+from hedloom_exec.identity import try_name
 from hedloom_exec.lsf import LSFInteractiveTransport, SubprocessRunner
 from hedloom_exec.transport import InProcessTransport
 
@@ -97,7 +98,7 @@ def test_stdout_is_diagnostics_not_the_result(tmp_path, monkeypatch):
     )
 
     assert set(result.artifacts) == {"raw"}
-    workdir = tmp_path / "work" / result.journal.identity
+    workdir = tmp_path / "work" / try_name(result.journal.identity, 0)
     assert "progress: done" in (workdir / "stdout.log").read_text()
 
 
@@ -159,7 +160,7 @@ def test_each_attempt_gets_its_own_workspace(tmp_path, monkeypatch):
     second = execute(transport, missing, **common)
 
     assert first.outcome == "failed" and second.outcome == "failed"
-    assert first.journal.identity != second.journal.identity
+    assert first.journal.identity == second.journal.identity
     assert len(list((tmp_path / "work").iterdir())) == 2
 
 
@@ -185,7 +186,7 @@ def test_an_unrelated_file_in_the_workspace_is_not_promoted(tmp_path, monkeypatc
     )
 
     assert set(result.artifacts) == {"raw"}
-    workdir = tmp_path / "work" / result.journal.identity
+    workdir = tmp_path / "work" / try_name(result.journal.identity, 0)
     assert (workdir / "scratch.tmp").exists()
 
 

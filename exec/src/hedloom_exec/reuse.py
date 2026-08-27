@@ -115,7 +115,7 @@ def input_digests(bundle: Mapping[str, Any]) -> dict[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class AttemptRecord:
-    """What one attempt directory says about itself, without opening the payload."""
+    """What one record says about itself, without opening try payloads."""
 
     identity: str
     plan_id: str | None
@@ -151,6 +151,13 @@ def scan_attempts(root: str | Path) -> tuple[AttemptRecord, ...]:
             continue
         journal = AttemptJournal(base, directory.name)
         state = journal.fold()
+        standing = journal.read_manifest()
+        selected_try = (
+            standing.get("try") if standing is not None else state.current_try
+        )
+        selected_outcome = (
+            standing.get("outcome") if standing is not None else state.outcome
+        )
         created = next(
             (event for event in state.events if event.event == "created"), None
         )
@@ -161,10 +168,10 @@ def scan_attempts(root: str | Path) -> tuple[AttemptRecord, ...]:
                 plan_id=data.get("plan"),
                 invocation_id=data.get("invocation"),
                 input_digest=data.get("input_digest"),
-                outcome=state.outcome,
+                outcome=selected_outcome,
                 directory=directory,
                 authored_key=data.get("authored_key"),
-                try_number=data.get("try"),
+                try_number=selected_try,
                 supersedes=data.get("supersedes"),
                 input_digests=dict(data.get("input_digests") or {}),
                 created_at=created.at if created else None,

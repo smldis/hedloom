@@ -1,7 +1,7 @@
 # Hedloom Exec
 
-Hedloom Exec owns one attempt at one planned invocation, from an identity chosen
-before submission through terminal reconciliation. It is the durable half of
+Hedloom Exec owns one record for one planned invocation and its declared inputs,
+with one or more tries beneath it. It is the durable half of
 execution: the part that must survive the process, worker, and scheduler that
 happened to start the work.
 
@@ -29,8 +29,10 @@ state = reconcile(journal, transport)                   # 'succeeded'
 launch_or_attach(AttemptJournal("attempts", identity.rendered), transport, bundle)
 ```
 
-Each attempt is a plain directory holding `events.jsonl` and, once terminal,
-`manifest.json`. Both are readable without this package.
+Each record declares layout version 1 and holds `events.jsonl`, immutable
+per-try manifests under `manifest/<n>.json`, and `standing.json` when evidence
+has been selected for reuse. Try workspaces and batch jobs are named
+`<record>-<n>`. All of these are readable without this package.
 
 ## Rerunning without repeating work
 

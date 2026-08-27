@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from hedloom_exec.identity import attempt_identity, try_name
+
 from hedloom_exec.transport import InProcessTransport
 from hedloom_run.driver import run_plan
 from hedloom_run.site import Site, SiteError, fingerprint_file
@@ -189,7 +191,8 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
     assert site.address_spaces["repository-relative"] == str(tmp_path)
     assert site.threads == 32
     lsf = site.transports["lsf"]
-    argv = lsf.build_argv("hedloom-default", {"command": ["simulate"]})
+    job = try_name(attempt_identity(plan_id="site", invocation_id="default").rendered, 0)
+    argv = lsf.build_argv(job, {"command": ["simulate"]})
     assert argv[argv.index("-W") + 1] == "240"
     assert argv[argv.index("-app") + 1] == "spectre"
     assert argv.count("-R") == 1
@@ -267,7 +270,8 @@ def test_an_invocation_overrides_a_profile_memory_default(tmp_path):
         },
     }
 
-    argv = lsf.build_argv("hedloom-override", bundle)
+    job = try_name(attempt_identity(plan_id="site", invocation_id="override").rendered, 0)
+    argv = lsf.build_argv(job, bundle)
     assert argv[argv.index("-R") + 1] == "rusage[mem=8192]"
 
 

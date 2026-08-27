@@ -17,7 +17,6 @@ something specific, and none of them is a bug report.
 | `SiteError: a run may override ... nowhere` | An [override](running.md#running-less-or-running-elsewhere-override) tried to reach something that changes what a run *means*. |
 | `SiteError: this session needs a scheduler` | The site declares real capacity and `distributed` is missing. Install the extra, or ask for `sequential=True`. |
 | `ConcurrentClaim` | Another caller holds this attempt — usually the same study still running. Reported as one refused invocation; the rest of the sweep continues. |
-| `AttemptSpent` | A terminal result exists at this identity that may not be reused. |
 | `UnrecoverableAttempt` | A substrate that cannot say whether it accepted work. **A supported outcome, not a bug** — guessing here is what produces duplicate farm jobs. |
 | `RefusedComputation` | Something tried to compute a visualization stand-in. `submit()` is the only way a study runs. |
 | a transport refusing an option before submission | Dropping a stated resource need would run the work under conditions nobody asked for. |

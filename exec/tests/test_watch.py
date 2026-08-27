@@ -11,6 +11,7 @@ import pytest
 
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.lsf import CommandResult
 from hedloom_exec.transport import InProcessTransport, TransportError
 from hedloom_exec.watch import (
@@ -41,34 +42,58 @@ class FakeBjobs:
         )
 
 
-def submitted_attempt(root, identity="hedloom-abc", transport="lsf-interactive"):
+def record_identity(label):
+    return attempt_identity(plan_id="watch", invocation_id=label).rendered
+
+
+def submitted_attempt(root, label="abc", transport="lsf-interactive"):
     """An attempt that has been submitted and has not concluded."""
 
+    identity = record_identity(label)
     journal = AttemptJournal(root, identity)
-    journal.append("created", plan="study", invocation="invoke:point-tt",
-                   operation="simulate", input_digest="d" * 32)
-    journal.append("submit_intent", transport=transport)
-    journal.append("submit_receipt", handle={"identity": identity})
+    with journal.claim():
+        number = journal.begin_try()
+        job = try_name(identity, number)
+        journal.append(
+            "created",
+            **{
+                "try": number,
+                "plan": "study",
+                "invocation": "invoke:point-tt",
+                "operation": "simulate",
+                "input_digest": "d" * 32,
+            },
+        )
+        journal.append(
+            "submit_intent",
+            **{"try": number, "transport": transport, "substrate": transport},
+        )
+        journal.append(
+            "submit_receipt", **{"try": number, "handle": {"identity": job}}
+        )
     return journal
 
 
 def test_a_submitted_attempt_is_live_and_a_finished_one_is_not(tmp_path):
-    submitted_attempt(tmp_path, "hedloom-live")
-    done = submitted_attempt(tmp_path, "hedloom-done")
-    done.publish_terminal(outcome="succeeded", manifest={"value": 1})
+    live_record = submitted_attempt(tmp_path, "live")
+    done = submitted_attempt(tmp_path, "done")
+    with done.claim():
+        done.publish_terminal(try_number=0, outcome="succeeded", manifest={"value": 1})
 
     live = live_attempts(tmp_path)
 
-    assert [item.identity for item in live] == ["hedloom-live"]
-    assert status_of(tmp_path, "hedloom-done").outcome == "succeeded"
+    assert [item.identity for item in live] == [live_record.identity]
+    assert status_of(tmp_path, done.identity).outcome == "succeeded"
 
 
 def test_one_call_answers_for_every_job(tmp_path):
     """A process per point per refresh would cost more than the work."""
 
     for index in range(5):
-        submitted_attempt(tmp_path, f"hedloom-{index}")
-    runner = FakeBjobs([(f"hedloom-{index}", "RUN") for index in range(5)])
+        submitted_attempt(tmp_path, str(index))
+    runner = FakeBjobs(
+        [(try_name(record_identity(str(index)), 0), "RUN") for index in range(5)]
+    )
 
     observe(tmp_path, LSFStatusReader(runner))
 
@@ -77,8 +102,10 @@ def test_one_call_answers_for_every_job(tmp_path):
 
 
 def test_the_farm_state_reaches_the_row(tmp_path):
-    submitted_attempt(tmp_path, "hedloom-abc")
-    rows = observe(tmp_path, LSFStatusReader(FakeBjobs([("hedloom-abc", "PEND")])))
+    journal = submitted_attempt(tmp_path)
+    rows = observe(
+        tmp_path, LSFStatusReader(FakeBjobs([(try_name(journal.identity, 0), "PEND")]))
+    )
 
     assert rows[0].observed == "pending"
 
@@ -86,16 +113,17 @@ def test_the_farm_state_reaches_the_row(tmp_path):
 def test_only_transitions_are_recorded(tmp_path):
     """Watching every ten seconds must not write six lines a minute per job."""
 
-    submitted_attempt(tmp_path, "hedloom-abc")
-    pending = LSFStatusReader(FakeBjobs([("hedloom-abc", "PEND")]))
-    running = LSFStatusReader(FakeBjobs([("hedloom-abc", "RUN")]))
+    journal = submitted_attempt(tmp_path)
+    job = try_name(journal.identity, 0)
+    pending = LSFStatusReader(FakeBjobs([(job, "PEND")]))
+    running = LSFStatusReader(FakeBjobs([(job, "RUN")]))
 
     observe(tmp_path, pending)
     observe(tmp_path, pending)
     observe(tmp_path, pending)
     observe(tmp_path, running)
 
-    log = ObservationLog(tmp_path, "hedloom-abc")
+    log = ObservationLog(tmp_path, journal.identity)
     states = [entry["state"] for entry in log.entries()]
     assert states == ["pending", "running"]
 
@@ -103,9 +131,10 @@ def test_only_transitions_are_recorded(tmp_path):
 def test_queue_latency_is_what_the_transition_measures(tmp_path):
     """The number the pooled-versus-direct question has always lacked."""
 
-    submitted_attempt(tmp_path, "hedloom-abc")
-    observe(tmp_path, LSFStatusReader(FakeBjobs([("hedloom-abc", "PEND")])))
-    rows = observe(tmp_path, LSFStatusReader(FakeBjobs([("hedloom-abc", "RUN")])))
+    journal = submitted_attempt(tmp_path)
+    job = try_name(journal.identity, 0)
+    observe(tmp_path, LSFStatusReader(FakeBjobs([(job, "PEND")])))
+    rows = observe(tmp_path, LSFStatusReader(FakeBjobs([(job, "RUN")])))
 
     assert rows[0].queue_seconds is not None
     assert rows[0].queue_seconds >= 0
@@ -114,14 +143,17 @@ def test_queue_latency_is_what_the_transition_measures(tmp_path):
 def test_an_observer_writes_beside_the_record_and_never_into_it(tmp_path):
     """The invariant: evidence about an attempt, not a transition of it."""
 
-    journal = submitted_attempt(tmp_path, "hedloom-abc")
+    journal = submitted_attempt(tmp_path)
     before = [event.event for event in journal.events()]
 
-    observe(tmp_path, LSFStatusReader(FakeBjobs([("hedloom-abc", "RUN")])))
+    observe(
+        tmp_path,
+        LSFStatusReader(FakeBjobs([(try_name(journal.identity, 0), "RUN")])),
+    )
 
-    after = [event.event for event in AttemptJournal(tmp_path, "hedloom-abc").events()]
+    after = [event.event for event in AttemptJournal(tmp_path, journal.identity).events()]
     assert after == before, "the owner's log must be untouched"
-    assert (tmp_path / "hedloom-abc" / "observations.jsonl").exists()
+    assert (tmp_path / journal.identity / "observations.jsonl").exists()
 
 
 def test_observing_cannot_change_what_an_attempt_concludes(tmp_path):
@@ -136,7 +168,8 @@ def test_observing_cannot_change_what_an_attempt_concludes(tmp_path):
     }
     first = execute(transport, {"operation": "work"}, **common)
     for identity in (path.name for path in tmp_path.iterdir()):
-        ObservationLog(tmp_path, identity).record("failed", note="a lie")
+        if (tmp_path / identity / "events.jsonl").exists():
+            ObservationLog(tmp_path, identity).record(0, "failed", note="a lie")
 
     second = execute(transport, {"operation": "work"}, **common)
 
@@ -154,16 +187,22 @@ def test_a_record_written_before_substrates_were_told_apart_is_still_watched(
     asked about rather than quietly dropped from every sweep.
     """
 
-    journal = AttemptJournal(tmp_path, "hedloom-old")
-    journal.claim()
-    journal.append("created", invocation="invoke:old", operation="simulate")
-    journal.append("submit_intent", transport="lsf-interactive")
+    identity = record_identity("old")
+    journal = AttemptJournal(tmp_path, identity)
+    with journal.claim():
+        number = journal.begin_try()
+        journal.append(
+            "created", **{"try": number, "invocation": "invoke:old", "operation": "simulate"}
+        )
+        journal.append(
+            "submit_intent", **{"try": number, "transport": "lsf-interactive"}
+        )
 
-    status = status_of(tmp_path, "hedloom-old")
+    status = status_of(tmp_path, identity)
 
     assert status.substrate == "lsf-interactive"
     assert observe(
-        tmp_path, LSFStatusReader(FakeBjobs([("hedloom-old", "PEND")]))
+        tmp_path, LSFStatusReader(FakeBjobs([(try_name(identity, 0), "PEND")]))
     )[0].observed == "pending"
 
 
@@ -176,17 +215,25 @@ def test_a_wrapped_transport_is_watched_by_what_holds_the_job(tmp_path):
     returned an empty sweep, which is indistinguishable from a finished one.
     """
 
-    journal = AttemptJournal(tmp_path, "hedloom-wrapped")
-    journal.claim()
-    journal.append("created", invocation="invoke:wrapped", operation="simulate")
-    journal.append(
-        "submit_intent",
-        transport="bound:lsf-interactive",
-        substrate="lsf-interactive",
-    )
+    identity = record_identity("wrapped")
+    journal = AttemptJournal(tmp_path, identity)
+    with journal.claim():
+        number = journal.begin_try()
+        journal.append(
+            "created",
+            **{"try": number, "invocation": "invoke:wrapped", "operation": "simulate"},
+        )
+        journal.append(
+            "submit_intent",
+            **{
+                "try": number,
+                "transport": "bound:lsf-interactive",
+                "substrate": "lsf-interactive",
+            },
+        )
 
     rows = observe(
-        tmp_path, LSFStatusReader(FakeBjobs([("hedloom-wrapped", "RUN")]))
+        tmp_path, LSFStatusReader(FakeBjobs([(try_name(identity, 0), "RUN")]))
     )
 
     assert [row.observed for row in rows] == ["running"]
@@ -195,7 +242,7 @@ def test_a_wrapped_transport_is_watched_by_what_holds_the_job(tmp_path):
 def test_an_attempt_on_another_substrate_is_not_invented(tmp_path):
     """An in-process invocation has no job to ask about."""
 
-    submitted_attempt(tmp_path, "hedloom-local", transport="in-process")
+    submitted_attempt(tmp_path, "local", transport="in-process")
     runner = FakeBjobs()
 
     rows = observe(tmp_path, LSFStatusReader(runner))
@@ -207,17 +254,17 @@ def test_an_attempt_on_another_substrate_is_not_invented(tmp_path):
 def test_a_job_absent_from_lsf_is_left_to_reconciliation(tmp_path):
     """It may have just finished. Deciding that is the owner's job, not ours."""
 
-    submitted_attempt(tmp_path, "hedloom-abc")
+    journal = submitted_attempt(tmp_path)
     rows = observe(tmp_path, LSFStatusReader(FakeBjobs([])))
 
     assert rows[0].observed is None
-    assert not (tmp_path / "hedloom-abc" / "observations.jsonl").exists()
+    assert not (tmp_path / journal.identity / "observations.jsonl").exists()
 
 
 def test_an_lsf_too_old_for_the_stable_format_refuses(tmp_path):
     """Parsing default bjobs columns would read PEND as RUN on some rows."""
 
-    submitted_attempt(tmp_path, "hedloom-abc")
+    submitted_attempt(tmp_path)
     reader = LSFStatusReader(
         FakeBjobs(returncode=255, stderr="bjobs: Illegal option -- o")
     )
@@ -229,15 +276,17 @@ def test_an_lsf_too_old_for_the_stable_format_refuses(tmp_path):
 
 
 def test_a_corrupt_observation_file_cannot_hide_a_result(tmp_path):
-    submitted_attempt(tmp_path, "hedloom-abc")
-    (tmp_path / "hedloom-abc" / "observations.jsonl").write_text("{not json\n")
+    journal = submitted_attempt(tmp_path)
+    (tmp_path / journal.identity / "observations.jsonl").write_text("{not json\n")
 
-    assert status_of(tmp_path, "hedloom-abc").observed is None
+    assert status_of(tmp_path, journal.identity).observed is None
 
 
 def test_the_view_names_the_invocation_rather_than_the_digest(tmp_path):
-    submitted_attempt(tmp_path, "hedloom-abc")
-    rows = observe(tmp_path, LSFStatusReader(FakeBjobs([("hedloom-abc", "RUN")])))
+    journal = submitted_attempt(tmp_path)
+    rows = observe(
+        tmp_path, LSFStatusReader(FakeBjobs([(try_name(journal.identity, 0), "RUN")]))
+    )
 
     text = render(rows)
     assert "invoke:point-tt" in text

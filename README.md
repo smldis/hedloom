@@ -68,9 +68,9 @@ transports and roots; for this project's reference study that file is six
 hundred lines whose only job is to agree with the first one.
 
 Declared file outputs also get a stable current-result name under
-`<Site.root>/latest/`. The identity-named workspace remains immutable evidence;
-editing an input still moves identity, while the alias is repointed before the
-next launch. Use `hedloom where`, `hedloom check`, and `hedloom log` to resolve
+`<Site.root>/latest/`. Each try-named workspace remains immutable evidence;
+editing an input still moves the record identity, while the alias is repointed
+to the selected try before the next launch. Use `hedloom where`, `hedloom check`, and `hedloom log` to resolve
 the current output, detect a cached stale path, and inspect why records reran.
 
 - **The body is the implementation.** `@operation` here is `hedloom_flow`'s,
@@ -94,7 +94,7 @@ the current output, detect a cached stale path, and inspect why records reran.
 
 ## What it does not change
 
-`hedloom-exec` still owns one attempt's durable record and imports neither this
+`hedloom-exec` still owns one durable record and its tries, and imports neither this
 package nor Dask. `hedloom-run` still owns binding and readiness and both of its
 kernels, so a session is the same run with a scheduler deciding readiness rather
 than a loop. Reuse, identity, placement, licences, the watcher — untouched. This

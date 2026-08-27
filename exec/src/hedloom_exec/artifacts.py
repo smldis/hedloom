@@ -82,7 +82,7 @@ def workspace_path(root: str | os.PathLike[str], name: str) -> Path:
 
 
 def workspace_for(root: str | os.PathLike[str], identity: str) -> Path:
-    """The directory one attempt runs in.
+    """The directory one try runs in.
 
     Per attempt rather than per invocation: a rerun after a failure must not
     write over the evidence of what the previous attempt produced.

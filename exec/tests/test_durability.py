@@ -44,7 +44,8 @@ def test_recorded_execution_leaves_a_readable_attempt(tmp_path):
     assert result.outcome == "succeeded"
     assert result.value == 42
     assert (tmp_path / identity / "events.jsonl").exists()
-    assert (tmp_path / identity / "manifest.json").exists()
+    assert (tmp_path / identity / "manifest" / "0.json").exists()
+    assert (tmp_path / identity / "standing.json").exists()
 
 
 def test_recorded_execution_reuses_a_published_result(tmp_path):

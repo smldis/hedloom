@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from examples import farm_multi_client
+from hedloom_exec.identity import parse_try_name
 
 from tests.test_farm_smoke_example import maximum_overlap
 
@@ -74,4 +75,5 @@ def test_two_studies_share_one_budget_one_keyspace_and_one_record(
 
     # The identities are the record's, not the report's: one manifest per job.
     for record in jobs(state):
-        assert (Path(site.root) / record["name"] / "manifest.json").is_file()
+        identity, number = parse_try_name(record["name"])
+        assert (Path(site.root) / identity / "manifest" / f"{number}.json").is_file()

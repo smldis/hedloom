@@ -7,6 +7,7 @@ from pathlib import Path
 from distributed import Client, get_task_stream
 
 from hedloom import Site
+from hedloom_exec.identity import parse_try_name
 from hedloom_exec.planned import plan_bundles
 from hedloom_run.cluster import cluster_for
 
@@ -111,7 +112,8 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
     for path, record in zip(submitted, records):
         assert record["name"] == path.stem
         assert record["options"]["-J"] == record["name"]
-        assert (Path(site.root) / record["name"] / "manifest.json").is_file()
+        identity, number = parse_try_name(record["name"])
+        assert (Path(site.root) / identity / "manifest" / f"{number}.json").is_file()
 
     assert maximum_overlap(records) == 2
     assert task_workers == {"lsf"}

@@ -52,23 +52,26 @@ invocation of that operation, and editing only a comment does not. That is
 coarser than "the behaviour changed", deliberately: **a needless rerun costs
 time, a missed one costs correctness.**
 
-Only a `succeeded` attempt is reused automatically. A failure may be the work's
+Only a `succeeded` try is reused automatically. A failure may be the work's
 own verdict, or something incidental to it — an OOM kill, a preempted node —
-that the record cannot tell apart. Failed attempts are retained rather than
-silently retried, and accepting one is a separate, durable, human action
-(`hedloom_exec.reuse.accept_for_reuse`).
+that the record cannot tell apart. Failed tries are retained. A later
+submission allocates the next try in the same content-addressed record, and
+accepting the current one is a separate, durable human action
+(`hedloom_exec.reuse.accept_for_reuse`). Acceptance selects standing evidence;
+it does not pin it.
 
 ## Following the current file output
 
-An attempt workspace is evidence and therefore keeps its content-addressed
-name. Editing an identity-bearing input must move that name. For each declared
-file output, Hedloom also maintains a stable view:
+A record keeps the content-addressed name, while each execution has an immutable
+`<record>-<try>` workspace. Editing an identity-bearing input moves the record;
+retrying unchanged inputs increments only the try. For each declared file
+output, Hedloom also maintains a stable view:
 
 ```text
 <Site.root>/latest/<plan>/<authored-key>/<output>
 ```
 
-The entry is a symlink to the selected attempt's workspace file. It is created
+The entry is a symlink to the selected try's workspace file. It is created
 or atomically repointed before the work launches, so reopening it follows the
 current try and can observe a file while it grows. A program that already has
 the old file open keeps that file descriptor until it reopens. Before the work
@@ -90,6 +93,11 @@ one, and two for a path that is not a recorded attempt. `log` lists distinct
 record creations newest first, marking the alias target as current and naming
 which identity keys changed. Returning to an earlier result moves the current
 marker back to it without weakening or replacing its original identity.
+
+On disk, a layout-1 record keeps `events.jsonl`, one immutable
+`manifest/<try>.json` per terminal try, and an atomic `standing.json` pointer to
+the evidence currently reusable. Roots written before the Phase 1 identity and
+layout change are unreadable; this prototype has no migration.
 
 ```{warning}
 **Reuse trusts your declaration.** An operation whose result depends on an

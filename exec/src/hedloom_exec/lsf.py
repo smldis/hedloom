@@ -48,12 +48,22 @@ import signal
 import subprocess
 import sys
 
+from hedloom_exec.identity import IdentityError, parse_try_name
 from hedloom_exec.transport import (
     Observation,
     SubmissionRefused,
     TransportError,
     placement_options,
 )
+
+
+def _require_try_name(name: str) -> None:
+    try:
+        parse_try_name(name)
+    except IdentityError as error:
+        raise TransportError(
+            f"LSF job names must identify one record-local try: {error}"
+        ) from error
 
 
 class CommandUnavailable(TransportError):
@@ -451,6 +461,7 @@ class LSFInteractiveTransport:
         bundle: Mapping[str, Any],
         settings: JobSettings | None = None,
     ) -> list[str]:
+        _require_try_name(identity)
         command = bundle.get("command")
         if not command or not isinstance(command, (list, tuple)):
             raise SubmissionRefused(
@@ -519,6 +530,7 @@ class LSFInteractiveTransport:
         `poll` cannot confuse the two.
         """
 
+        _require_try_name(identity)
         try:
             result = self._run(["bjobs", "-J", identity, "-noheader"])
         except CommandUnavailable:
@@ -576,6 +588,7 @@ class LSFInteractiveTransport:
         identity = handle.get("identity")
         if not identity:
             raise TransportError("cannot cancel an attempt with no identity")
+        _require_try_name(identity)
         # A missing bkill is indeterminate, never a refusal: cancel intent has
         # already been recorded and the job may well be running.
         self._run(["bkill", "-J", identity])

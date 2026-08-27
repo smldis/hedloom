@@ -2,11 +2,11 @@
 
 ## Purpose and scope
 
-Hedloom Exec owns the durable lifecycle of one attempt at one planned invocation:
-an identity chosen before submission, an append-only record of what was
-intended and observed, atomic publication of a terminal result manifest, and
-the reconciliation that decides whether an attempt may be claimed, attached to,
-or completed from existing evidence.
+Hedloom Exec owns the durable lifecycle of one record at one planned invocation
+and the tries made beneath it: a content-addressed record identity, an
+append-only account of what each try intended and observed, immutable terminal
+evidence, and reconciliation that decides whether a try may be claimed,
+attached to, retried, or completed from existing evidence.
 
 Launched work is **owner-bound**: it is not meant to outlive the caller that
 started it, and a caller crash should take it down. The durable record
@@ -51,21 +51,29 @@ its siblings are reused and the superseded results stay nameable.
 
 - Distribution: `hedloom-exec`, independently installable on Python 3.10 or newer,
   with no dependencies. It does not import `hedloom_flow`.
-- `attempt_identity(...)` derives a stable identity from planning facts alone.
-  It is a pure function, chosen before submission, and rendered in a form
-  usable as a batch job name and a directory component.
-- `AttemptJournal` is an append-only JSONL event log plus a published manifest
-  in a plain directory. State is derived by folding the record; nothing is
-  inferred from a live object.
-- `submit_intent` is durably flushed before any transport call. `terminal` is
-  recorded only after the manifest is atomically visible. Both the log's first
-  write and the manifest rename fsync the containing directory, so the entry
-  survives a crash and not only the bytes.
-- `journal.claim()` holds an attempt exclusively (advisory lock) across read,
-  intent, and submission. Without it two callers can both fold an unsubmitted
-  state and both submit. A second caller gets `ConcurrentClaim` rather than a
-  wait, because a duplicate submission is the defect being prevented.
-- A recorded cancellation blocks a later launch (`AttemptCancelled`), and a
+- `attempt_identity(plan_id, invocation_id, input_digest)` is a pure stable
+  record identity. Phase 1 deliberately removed the old sequence hash slot, so
+  every identity rendering changed. There is no migration: roots written by an
+  earlier phase are unreadable and must not be mixed with layout-1 roots.
+- A record is named by that identity. A try workspace and every external job
+  are named `<record>-<n>`; discovery, cancellation, and watcher matching use
+  that try name, never the bare record identity.
+- Every record declares layout version 1 and contains an append-only
+  `events.jsonl`, immutable `manifest/<n>.json` terminal evidence, and an
+  atomically replaced `standing.json` selecting reusable evidence. State is
+  derived by folding events separately into `TryState` values; cancellation,
+  reuse decisions and observations never leak between tries.
+- `journal.claim()` holds the record exclusively (advisory lock) across fold,
+  try allocation, submission and publication. `begin_try()` reserves and
+  records the next unbounded try while that claim is held, and flushes it before
+  any transport call. An allocated try with no submission intent is resumed,
+  not skipped. Calling it without the claim is refused.
+- `submit_intent` is durably flushed before any transport call. A per-try
+  `terminal` event is recorded only after its manifest is atomically visible.
+  The log's first write and manifest rename fsync their containing directories.
+  A second caller gets `ConcurrentClaim` rather than a wait, because a duplicate
+  submission is the defect being prevented.
+- A cancellation blocks only its try (`AttemptCancelled`), and a
   record created from different inputs is refused at the journal boundary
   (`StaleIdentity`) rather than only in `execute`.
 - `launch_or_attach(...)` resolves to exactly one of `claimed`, `attached`, or
@@ -90,8 +98,8 @@ its siblings are reused and the superseded results stay nameable.
   `bjobs` that cannot answer raises rather than reporting "never accepted".
 - `CommandUnavailable` is indeterminate. Only a missing `bsub` becomes a
   refusal, because only then is it certain nothing was accepted.
-- `hedloom_exec.lsf.LSFInteractiveTransport` submits one `bsub -I` job per attempt
-  with `-J <identity>` and a mandatory `-W` walltime, and waits for it. LSF
+- `hedloom_exec.lsf.LSFInteractiveTransport` submits one `bsub -I` job per try
+  with `-J <record>-<n>` and a mandatory `-W` walltime, and waits for it. LSF
   binds the job to the submitting client; the client stays in this process's
   group and requests `PR_SET_PDEATHSIG` on Linux, so the job does not survive
   its owner. External work is a command line, not an in-process callable.
@@ -124,18 +132,16 @@ its siblings are reused and the superseded results stay nameable.
   so changing where work runs never invalidates what it produced.
 - `input_digests(...)` records one explanatory digest for each of the nine
   identity-bearing keys. These are additional evidence only: the aggregate
-  `input_digest(...)` remains the same BLAKE2b over the same canonical mapping,
-  so adding the evidence moves no existing attempt identity.
+  `input_digest(...)` remains the same BLAKE2b over the same canonical mapping.
 - Attempt identity may be content-addressed by folding that digest in. Reuse is
   then sound by construction: a manifest at an identity was produced by exactly
   those inputs, and changed inputs land elsewhere rather than colliding.
 - `stale_attempts(...)` names prior results for an invocation whose inputs have
   since changed. Superseded work is retained and explainable, never silently
   overwritten.
-- A new record's `created` event also carries its derived try number, authored
-  key, component digests, and the prior different-digest identity it supersedes.
-  All are attribution: none participates in identity. Older records missing
-  these additive fields remain readable. `supersedes` orders first creation;
+- A new record's `created` event also carries its authored key, component
+  digests, and the prior different-digest identity it supersedes. All are
+  attribution: none participates in identity. `supersedes` orders first creation;
   it does not claim to record a later return to an already-existing identity.
 - `lineage(...)` reads creation order from `supersedes`, reports which identity
   keys changed, and reads currentness separately from the output aliases. That
@@ -167,10 +173,10 @@ its siblings are reused and the superseded results stay nameable.
   identity says nothing about what produced the result stored under it.
 - Only `succeeded` is reused automatically. A failure may be the work's own
   verdict or something incidental to it — an OOM kill, a preempted node — and
-  the record cannot tell those apart. Failed attempts are retained, a rerun
-  takes the next sequence, and `accept_for_reuse(...)` durably records a human
-  decision to keep one. `AttemptSpent` reports a terminal result that may not
-  be reused.
+  the record cannot tell those apart. A non-reusable terminal try is retained
+  and the next launch allocates the next try without a fixed attempt limit.
+  `accept_for_reuse(...)` durably selects the current try as standing evidence;
+  it does not imply a pin.
 - Outputs are declared per invocation as `{"path": ...}` for a file the command
   wrote itself, `{"path": ..., "filesystem_kind": "directory"}` for a
   directory tree, `{"stream": "stdout"}` for a tool whose result is what it
@@ -184,7 +190,7 @@ its siblings are reused and the superseded results stay nameable.
   modification time is the latest observed in the tree. On a shared filesystem
   the next invocation opens the same path, so the durable fact is the address
   rather than a copy.
-- Each attempt runs in its own workspace, so a rerun after a failure cannot
+- Each try runs in its own workspace, so a rerun after a failure cannot
   overwrite the evidence of what the previous attempt produced. Only declared
   outputs are recorded; anything else the command left behind stays as unnamed
   evidence.
@@ -196,7 +202,7 @@ its siblings are reused and the superseded results stay nameable.
   writes it, the honest state is a dangling alias. This view never participates
   in content-addressed identity.
 - Because `latest/` is inside the attempt root, every attempt-root reader admits
-  a directory only when it contains `events.jsonl`. The alias tree and any
+  a directory only when it is a valid record with layout 1. The alias tree and any
   other ordinary directory are not attempt records.
 - A declared filesystem output that does not exist with its declared file or
   directory shape after the work reports success fails the invocation.
@@ -209,10 +215,10 @@ its siblings are reused and the superseded results stay nameable.
   collapse into one fact. Placement never reaches the input digest, including
   its options: retuning a point's memory or moving it to another queue reuses
   the result it already produced rather than recomputing it.
-- `hedloom_exec.watch` observes attempts it does not own. It reads attempt
+- `hedloom_exec.watch` observes records it does not own. It reads record
   directories, asks LSF once per refresh about every live job rather than once
   per job, and appends transitions to an `observations.jsonl` beside each
-  record. The invariant is that an observation is evidence *about* an attempt,
+  record. Every observation is keyed by try. The invariant is that an observation is evidence *about* a try,
   never a transition *of* it: the observer writes its own file, so the log that
   carries the ordering rules keeps exactly one writer, and nothing an observer
   records can change what an attempt concludes or what reuse returns. A watcher
@@ -232,7 +238,7 @@ its siblings are reused and the superseded results stay nameable.
 - `Durability` is declared per invocation, never inferred from placement.
   `EPHEMERAL` touches no filesystem, requires no identity or root, and reruns
   on every call. `RECORDED` runs the full protocol and completes from an
-  existing manifest without rerunning the payload.
+  selected standing evidence without rerunning the payload.
 
 ## Contribution to the parent
 

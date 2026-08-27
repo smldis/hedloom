@@ -464,7 +464,7 @@ def _stop_admitting(
         # because `_collect_preserved` reads a future this call destroyed.
         #
         # Which this kernel cannot do yet, because it cannot name the attempt:
-        # `_select_sequence` picks the identity inside `execute`, on the worker.
+        # `execute` derives the record identity and allocates its try on the worker.
         # The proposed change is `design/binding-the-attempt-identity.md`; read it
         # and `docs/stop-admitting-protocol.md` before changing any of this.
         client.cancel(list(cancelled.values()), force=False)

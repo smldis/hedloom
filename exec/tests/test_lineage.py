@@ -4,6 +4,7 @@ from pathlib import Path
 
 from hedloom_exec.alias import alias_path
 from hedloom_exec.durability import Durability, execute
+from hedloom_exec.identity import try_name
 from hedloom_exec.lineage import is_behind, lineage, why_reran
 from hedloom_exec.reuse import input_digests
 from hedloom_exec.transport import Observation
@@ -153,7 +154,7 @@ def test_a_reverted_edit_is_current_even_though_it_is_not_newest(tmp_path):
 def test_is_behind_returns_none_for_the_current_workspace(tmp_path):
     root = tmp_path / "attempts"
     current = run(root, tmp_path / "work")
-    path = tmp_path / "work" / current.journal.identity / "result.txt"
+    path = tmp_path / "work" / try_name(current.journal.identity, 0) / "result.txt"
 
     assert is_behind(root, path) is None
 
@@ -162,7 +163,7 @@ def test_is_behind_names_the_iteration_that_superseded_a_stale_path(tmp_path):
     root = tmp_path / "attempts"
     stale = run(root, tmp_path / "work", "one")
     current = run(root, tmp_path / "work", "two")
-    path = tmp_path / "work" / stale.journal.identity / "result.txt"
+    path = tmp_path / "work" / try_name(stale.journal.identity, 0) / "result.txt"
 
     replacement = is_behind(root, path)
     assert replacement is not None
