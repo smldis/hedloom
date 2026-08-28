@@ -127,7 +127,7 @@ def refinement_sweep(points):
     return {"verdict": compare.named("compare")(measured).verdict}
 
 
-@study(default_policy=local())
+@study(name="grid-refinement", default_policy=local())
 def grid_refinement():
     """The study: every point swept, in this process."""
 

@@ -9,6 +9,7 @@ run.succeeded        # True iff every invocation succeeded
 run.summary()        # one line per invocation: disposition, key, outcome
 run.report.outcomes  # every InvocationOutcome, in plan order
 run.document         # the Plan this run executed
+run.study_name       # the durable namespace this run was recorded under
 ```
 
 `run["coarse:integrate"]` looks up an `InvocationOutcome` by the authored key,
@@ -68,7 +69,7 @@ retrying unchanged inputs increments only the try. For each declared file
 output, Hedloom also maintains a stable view:
 
 ```text
-<Site.root>/latest/<plan>/<authored-key>/<output>
+<Site.root>/latest/<study>/<authored-key>/<output>
 ```
 
 The entry is a symlink to the selected try's workspace file. It is created
@@ -82,10 +83,14 @@ produced it.
 The operator commands accept either `--site site.toml` or `--root ATTEMPTS`:
 
 ```console
-hedloom where --site site.toml study:point:write --output result
+hedloom where --site site.toml amplifier:point:write --output result
 hedloom check --site site.toml /path/cached/by/a/consumer
-hedloom log --site site.toml study:point:write
+hedloom log --site site.toml amplifier:point:write
 ```
+
+The selector is `<study-name>:<authored-key>`. The first colon separates the
+study namespace; further colons belong to the authored key, as in the keyed
+sweep point `point:write`.
 
 `where` prints the current workspace path for a script that resolves rather
 than remembers. `check` exits zero for a current recorded path, one for a stale

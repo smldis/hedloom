@@ -148,11 +148,11 @@ def pooled_sweep(points):
     return summaries
 
 
-@study
-def mixed_sweep():
-    """Eight chains: a pooled producer feeding a direct consumer, each time."""
+@study(name="pooled-placement")
+def placement_sweep(strategy):
+    """Eight chains under one identity while their placement strategy moves."""
 
-    return pooled_sweep.named("pooled-sweep")(POINTS)
+    return strategy.named("pooled-sweep")(POINTS)
 
 
 @flow
@@ -169,11 +169,6 @@ def direct_sweep(points):
         )
         summaries[point["key"]] = result.summary
     return summaries
-
-
-@study
-def moved_sweep():
-    return direct_sweep.named("pooled-sweep")(POINTS)
 
 
 def pool_jobs() -> set[str] | None:
@@ -275,8 +270,8 @@ def main() -> int:
         return 2
     print(f"pools declared: {', '.join(pools)}")
 
-    subject = mixed_sweep()
-    moved = moved_sweep()
+    subject = placement_sweep(pooled_sweep)
+    moved = placement_sweep(direct_sweep)
     print(subject.summary(), "\n")
 
     before = pool_jobs()

@@ -28,7 +28,7 @@ def refine(points):
     for point in sweep(points, key="key"):        # keyed scope per point
         yield integrate(write_grid(steps=point["steps"]))
 
-@study
+@study(name="grid-refinement")
 def refinement(points):
     return refine.named("refinement")(points)     # records; nothing runs
 

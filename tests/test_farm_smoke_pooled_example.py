@@ -63,7 +63,9 @@ def site_with_pool(tmp_path: Path) -> Site:
 def test_the_mixed_plan_reaches_both_substrates_in_one_run(tmp_path, farm) -> None:
     """A pooled producer feeding a direct consumer, for every point."""
 
-    run = farm_smoke_pooled.mixed_sweep().submit(site=site_with_pool(tmp_path))
+    run = farm_smoke_pooled.placement_sweep(
+        farm_smoke_pooled.pooled_sweep
+    ).submit(site=site_with_pool(tmp_path))
 
     assert run.succeeded, run.summary()
     placements = {item.placement for item in run.report.outcomes}
@@ -85,10 +87,14 @@ def test_moving_a_point_off_the_pool_reuses_rather_than_reruns(tmp_path, farm) -
 
     site = site_with_pool(tmp_path)
 
-    first = farm_smoke_pooled.mixed_sweep().submit(site=site)
+    first = farm_smoke_pooled.placement_sweep(
+        farm_smoke_pooled.pooled_sweep
+    ).submit(site=site)
     assert first.succeeded, first.summary()
 
-    moved = farm_smoke_pooled.moved_sweep().submit(site=site)
+    moved = farm_smoke_pooled.placement_sweep(
+        farm_smoke_pooled.direct_sweep
+    ).submit(site=site)
     assert moved.succeeded, moved.summary()
     assert len(moved.report.reused) == len(moved.report.outcomes), (
         "changing where work runs must change how long it takes and nothing else"

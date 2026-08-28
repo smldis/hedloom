@@ -61,7 +61,7 @@ def _storage_roots(arguments: argparse.Namespace) -> tuple[str, str]:
 def _selector(value: str) -> tuple[str, str]:
     plan_id, separator, authored_key = value.partition(":")
     if not separator or not plan_id or not authored_key:
-        raise ValueError("selector must be <plan>:<authored-key>")
+        raise ValueError("selector must be <study>:<authored-key>")
     return plan_id, authored_key
 
 
@@ -107,7 +107,7 @@ def _parser() -> argparse.ArgumentParser:
     prune.add_argument("--older-than")
     prune.add_argument("--larger-than")
     prune.add_argument("--keep-latest", type=int)
-    prune.add_argument("--plan")
+    prune.add_argument("--study")
     prune.add_argument("--invocation")
     prune.add_argument("--apply", action="store_true")
     prune.add_argument("--json", action="store_true")
@@ -351,7 +351,7 @@ def _prune_policy(arguments: argparse.Namespace) -> tuple[RetentionPolicy, tuple
     records = scan_attempts(site.root if site else arguments.root)
     records = tuple(
         item for item in records
-        if (arguments.plan is None or item.plan_id == arguments.plan)
+        if (arguments.study is None or item.plan_id == arguments.study)
         and (
             arguments.invocation is None
             or item.authored_key == arguments.invocation

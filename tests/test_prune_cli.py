@@ -72,9 +72,9 @@ def test_cli_selection_overrides_site_rules(tmp_path, capsys):
     assert "0 candidate" in capsys.readouterr().out
 
 
-def test_cli_can_restrict_by_plan_and_authored_invocation(tmp_path, capsys):
+def test_cli_can_restrict_by_study_and_authored_invocation(tmp_path, capsys):
     profile, _journal, workspace = _site_and_record(tmp_path)
-    assert main(["prune", "--site", str(profile), "--plan", "other"]) == 0
+    assert main(["prune", "--site", str(profile), "--study", "other"]) == 0
     assert "0 candidate" in capsys.readouterr().out
     assert main(["prune", "--site", str(profile), "--invocation", "point"]) == 0
     assert "1 candidate" in capsys.readouterr().out

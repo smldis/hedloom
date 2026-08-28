@@ -44,7 +44,7 @@ and freezes the result:
 grid_refinement()       # StudyBuilder.__call__   src/hedloom/__init__.py:175
   └─ planned(fn)        # opens PlanDraft, runs body, calls _finish
        └─ Plan(...).validate()      # immutable, normalized IR
-            └─ Study(plan, implementations)
+            └─ Study(name, plan, implementations)
 ```
 
 Inside that context, calling an operation does **not** call the body. It goes to
@@ -151,15 +151,20 @@ about *how* work runs, never *what it means*.
 Digests chain: a producer's digest is part of its consumer's inputs, so one
 changed point invalidates exactly its own downstream cone and nothing sideways.
 
-**4. Record identity and try name** — the durable names
+**4. Study name, record identity and try name** — the durable names
 (`exec/src/hedloom_exec/identity.py:60`):
 
 ```
-attempt_identity(plan_id, invocation_id, input_digest)
+@study(name="grid-refinement")
+    -> Study.name == "grid-refinement"
+    -> attempt_identity(plan_id=Study.name, invocation_id, input_digest)
     -> "hedloom-<blake2b-80bit>"
 ```
 
-The record identity is chosen from planning facts and names the record
+The execution-neutral kernel calls the first component `plan_id`; the facade
+supplies the study name. Unlike the former output-derived value, it remains the
+same when a study renames or adds an exported result. The record identity is
+chosen from planning facts and names the record
 directory. Under its claim, `begin_try()` durably allocates a non-negative
 number; `<record>-<try>` names both the workspace and the LSF `-J` job. That
 ordering is the whole point: a submission whose receipt is lost is discovered

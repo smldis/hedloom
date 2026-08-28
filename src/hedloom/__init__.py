@@ -86,6 +86,8 @@ __all__ = [
 ]
 
 _IMPLEMENTATIONS: dict[str, Callable[..., Any]] = {}
+_OPERATION_DEFINITIONS: dict[str, Any] = {}
+_STUDY_BUILDERS: dict[str, tuple[str | None, int | None]] = {}
 
 
 def operation(
@@ -104,6 +106,13 @@ def operation(
 
     def decorate(body: Callable[..., Any]) -> Any:
         declared = inner(body)
+        existing = _OPERATION_DEFINITIONS.get(declared.identity.name)
+        if existing is not None and existing != declared.definition:
+            raise ValueError(
+                f"operation identity {declared.identity.name!r} is already "
+                "bound to a different body"
+            )
+        _OPERATION_DEFINITIONS[declared.identity.name] = declared.definition
         _IMPLEMENTATIONS[declared.identity.name] = body
         return declared
 
@@ -162,15 +171,21 @@ class StudyBuilder:
     """What ``@study`` leaves behind: call it to build one study.
 
     A family rather than a study, because the decorated function takes the
-    arguments that distinguish one member from another. Calling it plans, which
-    costs nothing but Python; `submit` is still the only thing that spends.
+    arguments that distinguish one member from another. Every member carries
+    the family's stable ``name`` into its records. Calling it plans, which costs
+    nothing but Python; `submit` is still the only thing that spends.
     """
 
     build: Callable[..., Plan]
+    name: str
     declared: Mapping[str, Any] | None = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Study:
-        return Study(self.build(*args, **kwargs), self.declared or _IMPLEMENTATIONS)
+        return Study(
+            self.build(*args, **kwargs),
+            self.declared or _IMPLEMENTATIONS,
+            name=self.name,
+        )
 
     def __getattr__(self, name: str) -> Any:
         # The mistake this API invites: `sweep.submit(...)` for `sweep().submit(...)`.
@@ -186,6 +201,7 @@ class StudyBuilder:
 def study(
     subject: Plan | Callable[..., Any] | None = None,
     *,
+    name: str | None = None,
     default_policy: Policy | None = None,
     implementations: Mapping[str, Any] | None = None,
 ) -> Any:
@@ -204,6 +220,11 @@ def study(
     back a handle — so what comes back is a plan you can inspect before
     spending anything.
 
+    ``name`` is the durable, operator-facing namespace used by records and CLI
+    selectors. It defaults to the decorated function's ``module.qualname``, as
+    operation and flow definition names do. A finished Plan has no function
+    from which to infer it, so that form requires ``name=``.
+
     `default_policy` is where every call in the study runs unless a call says
     otherwise: `local()` for work that runs in this process, `lsf(...)` for work
     that wants its own job.
@@ -216,6 +237,7 @@ def study(
         def decorate(function: Callable[..., Any]) -> StudyBuilder:
             return study(
                 function,
+                name=name,
                 default_policy=default_policy,
                 implementations=implementations,
             )
@@ -227,12 +249,56 @@ def study(
                 "a finished Plan already carries its policies; pass "
                 "default_policy where the plan is authored"
             )
-        return Study(subject, implementations or _IMPLEMENTATIONS)
+        if name is None:
+            raise TypeError("study() needs name= when given a finished Plan")
+        return Study(
+            subject,
+            implementations or _IMPLEMENTATIONS,
+            name=_study_name(name),
+        )
     if callable(subject):
+        selected_name = _study_name(
+            (
+                f"{subject.__module__}.{subject.__qualname__}"
+                if name is None
+                else name
+            )
+        )
+        origin = _study_origin(subject)
+        existing = _STUDY_BUILDERS.get(selected_name)
+        if existing is not None and existing != origin:
+            raise ValueError(
+                f"study name {selected_name!r} is already used by a different "
+                "study definition"
+            )
+        _STUDY_BUILDERS[selected_name] = origin
         return StudyBuilder(
-            planned(subject, default_policy=default_policy), implementations
+            planned(subject, default_policy=default_policy),
+            selected_name,
+            implementations,
         )
     raise TypeError(
         "study() takes a strategy to plan or a finished Plan, "
         f"not {type(subject).__name__}"
     )
+
+
+def _study_name(value: object) -> str:
+    """Return one non-ambiguous operator-facing study namespace."""
+
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("study name must be a non-empty, trimmed string")
+    if ":" in value:
+        raise ValueError("study name must not contain ':'")
+    if any(character.isspace() and character != " " for character in value):
+        raise ValueError("study name must not contain control whitespace")
+    return value
+
+
+def _study_origin(function: Callable[..., Any]) -> tuple[str | None, int | None]:
+    """Identify one source declaration across ordinary module reloads."""
+
+    code = getattr(function, "__code__", None)
+    if code is None:
+        return None, id(function)
+    return code.co_filename, code.co_firstlineno

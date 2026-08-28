@@ -31,7 +31,9 @@ from hedloom import (
     sweep,
 )
 from hedloom.binding import BoundTransport, Shell, Workspace
+from hedloom.cli import main as hedloom_cli
 from hedloom_exec.transport import SubmissionRefused
+from hedloom_exec.reuse import scan_attempts
 from hedloom_run.driver import RunReport
 
 TEXT = artifact("text-file")
@@ -87,6 +89,7 @@ def test_the_plan_is_complete_before_anything_is_spent(tmp_path):
     subject = build()
     document = subject.document
 
+    assert subject.name == f"{__name__}.build"
     assert document["schema_version"] == 3
     assert len(document["invocations"]) == 4
     assert not (tmp_path / "attempts").exists(), "summary must spend nothing"
@@ -96,6 +99,7 @@ def test_the_plan_is_complete_before_anything_is_spent(tmp_path):
 def test_the_body_that_runs_is_the_one_the_plan_names(site):
     run = build().submit(site=site)
 
+    assert run.study_name == f"{__name__}.build"
     assert run.succeeded, run.summary()
     assert run["ab:measure"].value == 6
     assert run["cde:measure"].value == 9
@@ -476,9 +480,102 @@ def test_the_draft_form_and_the_decorated_form_are_one_plan():
 
     with plan(default_policy=local()) as draft:
         outputs = notes.named("notes")(("ab", "cde"))
-    explicit = study(draft.finish(outputs=outputs))
+    explicit = study(draft.finish(outputs=outputs), name="explicit-notes")
 
     assert explicit.document == build().document
+
+
+def test_a_finished_plan_requires_its_study_name():
+    with plan(default_policy=local()) as draft:
+        outputs = notes.named("notes")(("ab",))
+
+    with pytest.raises(TypeError, match="needs name="):
+        study(draft.finish(outputs=outputs))
+
+
+def test_an_explicit_study_name_is_the_record_and_cli_namespace(site, capsys):
+    @study(name="short-study", default_policy=local())
+    def explicitly_named():
+        return write_note.named("write")(word="named")
+
+    subject = explicitly_named()
+    run = subject.submit(site=site, sequential=True)
+    records = scan_attempts(site.root)
+
+    assert subject.name == "short-study"
+    assert run.study_name == "short-study"
+    assert {item.plan_id for item in records} == {"short-study"}
+    assert "study short-study" in subject.summary().splitlines()[0]
+    assert hedloom_cli(["log", "--root", site.root, "short-study:write"]) == 0
+    assert records[0].identity in capsys.readouterr().out
+
+
+def test_exported_output_names_do_not_rename_or_invalidate_a_study(site):
+    @study(name="stable-study", default_policy=local())
+    def renamed_output(output_name):
+        note = write_note.named("write")(word="same").note
+        return {output_name: note}
+
+    first = renamed_output("first").submit(site=site, sequential=True)
+    second = renamed_output("second").submit(site=site, sequential=True)
+
+    assert first.study_name == second.study_name == "stable-study"
+    assert second.report.outcomes[0].reused
+    assert {item.plan_id for item in scan_attempts(site.root)} == {"stable-study"}
+
+
+def test_study_names_separate_identical_outputs_and_authored_keys(site):
+    @study(name="first-study", default_policy=local())
+    def first():
+        return {"note": write_note.named("write")(word="one").note}
+
+    @study(name="second-study", default_policy=local())
+    def second():
+        return {"note": write_note.named("write")(word="two").note}
+
+    first().submit(site=site, sequential=True)
+    second().submit(site=site, sequential=True)
+
+    records = scan_attempts(site.root)
+    assert {(item.plan_id, item.authored_key) for item in records} == {
+        ("first-study", "write"),
+        ("second-study", "write"),
+    }
+
+
+def test_two_study_definitions_cannot_claim_one_name():
+    @study(name="conflicting-study-name")
+    def first():
+        return {}
+
+    assert first.name == "conflicting-study-name"
+    with pytest.raises(ValueError, match="already used by a different"):
+
+        @study(name="conflicting-study-name")
+        def second():
+            return {}
+
+
+@pytest.mark.parametrize("name", ["", " leading", "trailing ", "has:colon"])
+def test_invalid_study_names_are_refused(name):
+    with pytest.raises(ValueError, match="study name"):
+
+        @study(name=name)
+        def invalid():
+            return {}
+
+
+def test_two_operation_bodies_cannot_claim_one_facade_identity():
+    @operation(name="tests.conflicting-operation")
+    def first():
+        return None
+
+    assert first.identity.name == "tests.conflicting-operation"
+    with pytest.raises(ValueError, match="already bound to a different body"):
+
+        @operation(name="tests.conflicting-operation")
+        def second():
+            return None
 
 
 def test_calling_the_family_is_what_produces_a_study():

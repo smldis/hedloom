@@ -129,7 +129,7 @@ def spent_work(points):
     return {"rows": counted["steady"]}
 
 
-@study(default_policy=local())
+@study(name="retention", default_policy=local())
 def spending_study(points):
     """The study: four points swept, in this process."""
 
