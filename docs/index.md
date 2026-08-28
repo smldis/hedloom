@@ -75,6 +75,11 @@ printed output is real.
   submission. `farm_smoke_pooled.py` is the same shape through a pool.
 * `examples/farm_multi_client.py` — what happens when two studies, or two
   controllers, want the farm at once, measured from the attempt journals.
+* [`examples/retention.py`](../examples/retention.py) — what storage a study
+  spends and when it can be taken back: two points diverge, a second pass
+  supersedes them, and the survey's promised byte count is checked against
+  what the filesystem actually loses. One spent try is pinned first, so the
+  refusal to reclaim it is shown rather than asserted.
 
 The same study appears twice more, one layer down each time, which is the
 shortest way to see what each unit is responsible for:

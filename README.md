@@ -194,3 +194,18 @@ A fourth pass resubmits all of it from one session and must spend nothing.
 `tests/test_farm_multi_client_example.py` runs the whole thing against the fake
 `bsub`, checking the same numbers from the submission records rather than from
 the journals, so the two instruments have to agree.
+
+Storage is the one resource a study spends that nothing returns on its own.
+`examples/retention.py` spends some deliberately and then takes it back:
+
+```console
+python examples/retention.py
+```
+
+Four points, two of which write their whole trace and then diverge. Nothing is
+reclaimable yet — `latest/` still resolves to those failures, because an alias
+is bound before a body runs so a tool can watch an output while it is written.
+A second pass corrects the diverging points, the alias moves, and the spent
+tries become candidates. One is pinned first, so the refusal to reclaim it is
+shown rather than asserted. The survey states how many bytes it would free; the
+filesystem is measured before and after; the two have to agree.
