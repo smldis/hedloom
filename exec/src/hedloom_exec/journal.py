@@ -25,6 +25,8 @@ import errno
 import fcntl
 import json
 import os
+import shutil
+import tempfile
 
 from hedloom_exec.errors import AttemptError
 from hedloom_exec.pins import FrozenFile, Pin
@@ -245,22 +247,54 @@ class AttemptJournal:
             raise JournalError("try number must be a non-negative integer")
         return self.manifest_directory / f"{try_number}.json"
 
-    def _write_layout(self) -> None:
-        temporary = self.directory / "layout.partial"
+    def _write_layout(self, directory: Path) -> None:
+        temporary = directory / "layout.partial"
         with open(temporary, "w", encoding="utf-8") as handle:
             handle.write(f"{LAYOUT_VERSION}\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, self.layout_path)
-        _fsync_directory(self.directory)
+        os.replace(temporary, directory / "layout")
+        _fsync_directory(directory)
 
-    def _require_layout(self, *, initialise_empty: bool = False) -> None:
+    def _create_record(self) -> None:
+        """Publish a new record directory with its layout already inside it.
+
+        Creating the directory and then writing `layout` are two separately
+        visible steps, and between them the record exists while declaring
+        nothing -- indistinguishable from a directory Hedloom never made. A
+        second caller arriving there had to either refuse a record that was
+        merely half-built or adopt one that was genuinely foreign, and which
+        it did depended on a check made before the claim was held.
+
+        Building the record aside and renaming it into place removes the
+        window rather than narrowing it: the directory becomes visible with
+        its layout already in it, so an empty one without a layout is foreign
+        and nothing else. Losing the rename to another caller is not a
+        failure; their record is this one.
+        """
+
+        self.directory.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(
+            tempfile.mkdtemp(
+                dir=self.directory.parent, prefix=f".{self.identity}.partial-"
+            )
+        )
+        try:
+            self._write_layout(staging)
+            try:
+                os.rename(staging, self.directory)
+            except OSError as error:
+                if error.errno not in (errno.ENOTEMPTY, errno.EEXIST, errno.EXDEV):
+                    raise
+                return
+            _fsync_directory(self.directory.parent)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    def _require_layout(self) -> None:
         if not self.directory.exists():
             return
         if not self.layout_path.exists():
-            if initialise_empty and not self.log_path.exists():
-                self._write_layout()
-                return
             raise JournalError(
                 f"attempt {self.identity} has no recognised layout; roots "
                 "written before record/workspace layout 1 are unreadable"
@@ -352,7 +386,8 @@ class AttemptJournal:
         ==== END DEVNOTE =========================================
         """
 
-        new_record = not self.directory.exists()
+        if not self.directory.exists():
+            self._create_record()
         self.directory.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o644)
         try:
@@ -365,7 +400,7 @@ class AttemptJournal:
                     f"attempt {self.identity} is already being launched by "
                     f"another caller"
                 ) from error
-            self._require_layout(initialise_empty=new_record)
+            self._require_layout()
             self._claim_held = True
             yield
         finally:

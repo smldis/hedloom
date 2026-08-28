@@ -236,7 +236,19 @@ def test_only_one_of_many_threads_submits(tmp_path):
     for thread in threads:
         thread.join()
 
-    assert len(calls) == 1, "the payload ran more than once for one attempt"
+    # Two directions, two messages. `len(calls) == 1` alone fails identically
+    # on nought and on two, and those are opposite defects: one is a duplicate
+    # submission, the other is every caller losing and no work being done.
+    assert len(calls) <= 1, f"the payload ran {len(calls)} times for one attempt"
+    assert len(calls) == 1, (
+        "no caller ran the payload; every one of them failed with "
+        f"{sorted({type(item).__name__ for item in errors})}"
+    )
+    # A loser is refused by name. Anything else means a caller met a record
+    # that was still being built rather than one already claimed.
+    assert all(isinstance(item, ConcurrentClaim) for item in errors), (
+        f"unexpected refusals: {sorted({type(item).__name__ for item in errors})}"
+    )
 
 
 # --- journal durability and validation --------------------------------------
