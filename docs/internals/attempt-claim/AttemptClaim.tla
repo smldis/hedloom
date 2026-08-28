@@ -27,9 +27,14 @@
 (*   * A crash kills that caller's farm job. That is owner-bound lifetime,  *)
 (*     and it is an assumption about the transport, not a theorem.         *)
 (*                                                                         *)
-(* Five constants make load-bearing assumptions switchable, so that denying *)
+(* Six constants make load-bearing assumptions switchable, so that denying  *)
 (* one and re-running TLC shows what it was holding up. See the MC*.cfg     *)
 (* files and `docs/attempt-claim-protocol.md`.                             *)
+(*                                                                         *)
+(* Four invariants are safety. `SomeoneCompletes` is the one temporal       *)
+(* property here, and it exists because the defect that motivated it --     *)
+(* every caller refusing and no work being done -- violates no invariant at *)
+(* all. An upper bound on how much runs cannot express a lower one.         *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -42,7 +47,8 @@ CONSTANTS
     OwnerBoundLifetime,  \* TRUE: a dead caller's farm job dies with it
     PublishUnderClaim,   \* FALSE: as shipped. TRUE: hold the claim through publication
     PublishOrder,        \* "manifest-first" (shipped) | "record-first" (mutation)
-    RefusesWhenBlind     \* TRUE: as shipped -- a blind transport raises rather than guessing
+    RefusesWhenBlind,    \* TRUE: as shipped -- a blind transport raises rather than guessing
+    CreateAtomically     \* TRUE: the record appears with its layout already in it
 
 NoOne     == "no-one"
 NoOutcome == "no-outcome"
@@ -59,9 +65,12 @@ VARIABLES
     recorded,   \* the outcome named by the last "terminal" event in the journal
     seen,       \* seen[c]: what caller c's poll observed
     live,       \* live[c]: caller c's farm job is running right now
-    crashes
+    crashes,
+    record,     \* the record directory: absent, bare (no layout), or declared
+    sawAbsent   \* sawAbsent[c]: what c observed before it took the lock
 
-vars == <<pc, holder, log, published, recorded, seen, live, crashes>>
+vars == <<pc, holder, log, published, recorded, seen, live, crashes,
+          record, sawAbsent>>
 
 Settled(c) == pc[c] \in {"done", "refused", "dead"}
 AllSettled == \A c \in Callers : Settled(c)
@@ -101,15 +110,18 @@ FirstPublicationStep == IF PublishOrder = "manifest-first" THEN "publish" ELSE "
 
 ----------------------------------------------------------------------------
 TypeOK ==
-    /\ pc \in [Callers -> {"select", "claim", "decide", "intent", "submit",
-                           "running", "receipt", "release", "poll", "publish",
-                           "record", "done", "refused", "dead"}]
+    /\ pc \in [Callers -> {"select", "create", "claim", "verify", "decide",
+                           "intent", "submit", "running", "receipt", "release",
+                           "poll", "publish", "record", "done", "refused",
+                           "dead"}]
     /\ holder \in Callers \cup {NoOne}
     /\ published \in Outcomes \cup {NoOutcome}
     /\ recorded \in Outcomes \cup {NoOutcome}
     /\ seen \in [Callers -> Outcomes \cup {NoOutcome}]
     /\ live \in [Callers -> BOOLEAN]
     /\ crashes \in 0..MaxCrashes
+    /\ record \in {"absent", "bare", "declared"}
+    /\ sawAbsent \in [Callers -> BOOLEAN]
 
 Init ==
     /\ pc        = [c \in Callers |-> "select"]
@@ -120,13 +132,32 @@ Init ==
     /\ seen      = [c \in Callers |-> NoOutcome]
     /\ live      = [c \in Callers |-> FALSE]
     /\ crashes   = 0
+    /\ record    = "absent"
+    /\ sawAbsent = [c \in Callers |-> FALSE]
 
 ----------------------------------------------------------------------------
 (* `_select_sequence`, which reads published manifests *outside* any claim.   *)
 (* One sequence is modelled, so a visible manifest means this run reuses it.  *)
 Select(c) ==
     /\ pc[c] = "select"
-    /\ pc' = [pc EXCEPT ![c] = IF published # NoOutcome THEN "done" ELSE "claim"]
+    /\ pc' = [pc EXCEPT ![c] = IF published # NoOutcome THEN "done" ELSE "create"]
+    /\ UNCHANGED <<holder, log, published, recorded, seen, live, crashes, record, sawAbsent>>
+
+(* `claim()`'s prologue, which runs before any lock exists to hold. The record *)
+(* directory is made if it is not there, and what this caller observed here is *)
+(* what it will act on once it does hold the lock.                             *)
+(*                                                                             *)
+(* Atomically, the record is renamed into place with its layout already in it, *)
+(* so it is never visible in a state that declares nothing. Split -- `mkdir`   *)
+(* and the layout write as two visible steps -- another caller can arrive      *)
+(* between them, and a directory that exists while declaring nothing is        *)
+(* indistinguishable from one Hedloom never made.                              *)
+Create(c) ==
+    /\ pc[c] = "create"
+    /\ sawAbsent' = [sawAbsent EXCEPT ![c] = record = "absent"]
+    /\ record' = IF record # "absent" THEN record
+                 ELSE IF CreateAtomically THEN "declared" ELSE "bare"
+    /\ pc' = [pc EXCEPT ![c] = "claim"]
     /\ UNCHANGED <<holder, log, published, recorded, seen, live, crashes>>
 
 (* `journal.claim()`. Non-blocking: a second holder is reported as            *)
@@ -137,10 +168,29 @@ Claim(c) ==
     /\ pc[c] = "claim"
     /\ IF holder = NoOne \/ ~LockHonoured
          THEN /\ holder' = c
-              /\ pc' = [pc EXCEPT ![c] = "decide"]
+              /\ pc' = [pc EXCEPT ![c] = "verify"]
          ELSE /\ pc' = [pc EXCEPT ![c] = "refused"]
               /\ UNCHANGED holder
-    /\ UNCHANGED <<log, published, recorded, seen, live, crashes>>
+    /\ UNCHANGED <<log, published, recorded, seen, live, crashes, record, sawAbsent>>
+
+(* `_require_layout`, which runs *under* the lock -- so a caller that is about *)
+(* to refuse is holding it while it decides to. A record that declares a       *)
+(* layout is read. One that does not is initialised by a caller that saw it    *)
+(* absent, and refused for anyone else, with JournalError rather than          *)
+(* ConcurrentClaim. That refusal is right on its own terms: a directory that   *)
+(* exists while declaring nothing is what a foreign one looks like.            *)
+Verify(c) ==
+    /\ pc[c] = "verify"
+    /\ \/ /\ record = "declared" \/ sawAbsent[c]
+          /\ record' = "declared"
+          /\ pc' = [pc EXCEPT ![c] = "decide"]
+          /\ UNCHANGED holder
+       \/ /\ record = "bare"
+          /\ ~sawAbsent[c]
+          /\ pc' = [pc EXCEPT ![c] = "refused"]
+          /\ holder' = ReleasedBy(c)
+          /\ UNCHANGED record
+    /\ UNCHANGED <<log, published, recorded, seen, live, crashes, sawAbsent>>
 
 (* `_launch_or_attach_locked`: read the manifest, fold the record, and resolve *)
 (* to completed / attached / claimed -- or refuse to guess.                    *)
@@ -161,7 +211,7 @@ Decide(c) ==
           /\ published = NoOutcome
           /\ Phase = "submitted"
           /\ pc' = [pc EXCEPT ![c] = AfterLaunch]
-          /\ UNCHANGED <<holder, log>>
+          /\ UNCHANGED <<holder, log, record, sawAbsent>>
        \/ \* the crash window: intent is durable, acceptance is unknown
           /\ published = NoOutcome
           /\ Phase = "intended"
@@ -187,7 +237,7 @@ Decide(c) ==
           /\ log' = Append(log, "created")
           /\ pc' = [pc EXCEPT ![c] = "intent"]
           /\ UNCHANGED holder
-    /\ UNCHANGED <<published, recorded, seen, live, crashes>>
+    /\ UNCHANGED <<published, recorded, seen, live, crashes, record, sawAbsent>>
 
 (* Intent is durable before the substrate is touched. Everything downstream   *)
 (* depends on this ordering.                                                  *)
@@ -195,7 +245,7 @@ Intent(c) ==
     /\ pc[c] = "intent"
     /\ log' = Append(log, "submit_intent")
     /\ pc' = [pc EXCEPT ![c] = "submit"]
-    /\ UNCHANGED <<holder, published, recorded, seen, live, crashes>>
+    /\ UNCHANGED <<holder, published, recorded, seen, live, crashes, record, sawAbsent>>
 
 (* `bsub -I` starts the job and blocks. The job is live from here until the   *)
 (* call returns -- or until this caller dies, which under owner-bound         *)
@@ -204,26 +254,26 @@ SubmitStart(c) ==
     /\ pc[c] = "submit"
     /\ live' = [live EXCEPT ![c] = TRUE]
     /\ pc' = [pc EXCEPT ![c] = "running"]
-    /\ UNCHANGED <<holder, log, published, recorded, seen, crashes>>
+    /\ UNCHANGED <<holder, log, published, recorded, seen, crashes, record, sawAbsent>>
 
 SubmitReturn(c) ==
     /\ pc[c] = "running"
     /\ live' = [live EXCEPT ![c] = FALSE]
     /\ pc' = [pc EXCEPT ![c] = "receipt"]
-    /\ UNCHANGED <<holder, log, published, recorded, seen, crashes>>
+    /\ UNCHANGED <<holder, log, published, recorded, seen, crashes, record, sawAbsent>>
 
 Receipt(c) ==
     /\ pc[c] = "receipt"
     /\ log' = Append(log, "submit_receipt")
     /\ pc' = [pc EXCEPT ![c] = AfterLaunch]
-    /\ UNCHANGED <<holder, published, recorded, seen, live, crashes>>
+    /\ UNCHANGED <<holder, published, recorded, seen, live, crashes, record, sawAbsent>>
 
 (* `launch_or_attach` returns and the claim goes with it. *)
 Release(c) ==
     /\ pc[c] = "release"
     /\ holder' = ReleasedBy(c)
     /\ pc' = [pc EXCEPT ![c] = "poll"]
-    /\ UNCHANGED <<log, published, recorded, seen, live, crashes>>
+    /\ UNCHANGED <<log, published, recorded, seen, live, crashes, record, sawAbsent>>
 
 (* `reconcile`. Its first act is to re-read the manifest and return if one is *)
 (* already visible -- a guard that is only as good as the window it is read   *)
@@ -233,7 +283,7 @@ ReconcileNoop(c) ==
     /\ published # NoOutcome
     /\ pc' = [pc EXCEPT ![c] = "done"]
     /\ holder' = ReleasedBy(c)
-    /\ UNCHANGED <<log, published, recorded, seen, live, crashes>>
+    /\ UNCHANGED <<log, published, recorded, seen, live, crashes, record, sawAbsent>>
 
 Poll(c) ==
     /\ pc[c] = "poll"
@@ -241,7 +291,7 @@ Poll(c) ==
     /\ \E o \in Outcomes :
         /\ seen' = [seen EXCEPT ![c] = o]
         /\ pc' = [pc EXCEPT ![c] = FirstPublicationStep]
-    /\ UNCHANGED <<holder, log, published, recorded, live, crashes>>
+    /\ UNCHANGED <<holder, log, published, recorded, live, crashes, record, sawAbsent>>
 
 (* `publish_terminal`, whose two durable writes are the whole recovery        *)
 (* argument: the manifest is made atomically visible by rename, and only then *)
@@ -255,7 +305,7 @@ Publish(c) ==
               /\ UNCHANGED holder
          ELSE /\ pc' = [pc EXCEPT ![c] = "done"]
               /\ holder' = ReleasedBy(c)
-    /\ UNCHANGED <<log, recorded, seen, live, crashes>>
+    /\ UNCHANGED <<log, recorded, seen, live, crashes, record, sawAbsent>>
 
 Record(c) ==
     /\ pc[c] = "record"
@@ -266,7 +316,7 @@ Record(c) ==
               /\ holder' = ReleasedBy(c)
          ELSE /\ pc' = [pc EXCEPT ![c] = "publish"]
               /\ UNCHANGED holder
-    /\ UNCHANGED <<published, seen, live, crashes>>
+    /\ UNCHANGED <<published, seen, live, crashes, record, sawAbsent>>
 
 (* The caller dies. Durable state survives; the advisory lock does not,       *)
 (* because the kernel drops it when the file descriptor closes; and the farm  *)
@@ -281,7 +331,7 @@ Crash(c) ==
     /\ pc' = [pc EXCEPT ![c] = "dead"]
     /\ holder' = ReleasedBy(c)
     /\ live' = IF OwnerBoundLifetime THEN [live EXCEPT ![c] = FALSE] ELSE live
-    /\ UNCHANGED <<log, published, recorded, seen>>
+    /\ UNCHANGED <<log, published, recorded, seen, record, sawAbsent>>
 
 (* An orphaned job -- one that outlived the caller that submitted it -- stops *)
 (* on its own, at some later point. Only reachable when lifetime is not       *)
@@ -299,11 +349,12 @@ OrphanFinishes(c) ==
     /\ pc[c] = "dead"
     /\ live[c]
     /\ live' = [live EXCEPT ![c] = FALSE]
-    /\ UNCHANGED <<pc, holder, log, published, recorded, seen, crashes>>
+    /\ UNCHANGED <<pc, holder, log, published, recorded, seen, crashes, record, sawAbsent>>
 
 Next ==
     \/ \E c \in Callers :
-        \/ Select(c) \/ Claim(c) \/ Decide(c) \/ Intent(c)
+        \/ Select(c) \/ Create(c) \/ Claim(c) \/ Verify(c) \/ Decide(c)
+        \/ Intent(c)
         \/ SubmitStart(c) \/ SubmitReturn(c) \/ Receipt(c) \/ Release(c)
         \/ ReconcileNoop(c) \/ Poll(c) \/ Publish(c) \/ Record(c)
         \/ Crash(c) \/ OrphanFinishes(c)
@@ -337,5 +388,16 @@ TerminalHasEvidence ==
 (* disagreeing is a result reported under the wrong verdict.                   *)
 RecordMatchesEvidence ==
     recorded # NoOutcome => published = recorded
+
+(* Progress, and the only temporal property here. The claim refuses rather     *)
+(* than waits, so one caller being refused is a legal ending -- but every      *)
+(* caller being refused, with the work undone, is not. No invariant can say    *)
+(* this: `AtMostOneLive` bounds how much runs from above, and nought satisfies *)
+(* an upper bound as comfortably as one does.                                  *)
+(*                                                                             *)
+(* Check it against MaxCrashes = 0. Progress cannot be promised when the only  *)
+(* caller that holds the record may die, and modelling that as a liveness      *)
+(* failure would say nothing about the protocol.                               *)
+SomeoneCompletes == <>(\E c \in Callers : pc[c] = "done")
 
 =============================================================================
