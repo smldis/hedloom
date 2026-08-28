@@ -80,7 +80,7 @@ def tabulation(points):
     }
 
 
-@study(default_policy=local())
+@study(name="cli-tour", default_policy=local())
 def squares(points):
     """The study: two tables, in this process."""
 

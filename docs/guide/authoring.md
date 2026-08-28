@@ -6,7 +6,7 @@ Three decorators, and only the third one can spend anything.
 | --- | --- | --- |
 | `@operation` | one unit of work, with declared inputs, config and outputs | at `submit`, on whatever substrate its placement names |
 | `@flow` | a reusable strategy that wires operations together | once, at *authoring* time, to build a static graph |
-| `@study` | the whole plan | once, at authoring time; calling it plans and spends nothing |
+| `@study` | the named top-level execution envelope | once, at authoring time; calling it plans and spends nothing |
 
 The consequence worth internalising early: **calling an operation does not run
 it.** It records an invocation and hands back a handle. So a flow body cannot
@@ -135,17 +135,24 @@ def refinement_sweep(points):
     return {"verdict": compare.named("compare")(measured).verdict}
 ```
 
-A study is the same shape one level up. The decorated function *is* the study,
-and its arguments make it a **family** of studies — a different point list is a
-different study, not a different file:
+A study is the same planning shape one level up, plus the stable name under
+which its attempts and current outputs are recorded. The decorated function is
+a **family** of study instances: its arguments change inputs, while every
+instance retains the family's name:
 
 ```python
-@study(default_policy=local())
+@study(name="grid-refinement", default_policy=local())
 def grid_refinement():
     return refinement_sweep.named("refinement")(POINTS)
 
 subject = grid_refinement()     # -> a Study. Nothing spent.
+assert subject.name == "grid-refinement"
 ```
+
+Omit `name=` and Hedloom infers `module.qualname`, using the same default as
+operation and flow definitions. An explicit name is useful for a short, stable
+CLI namespace. Output names do not name a study: returning `{"psf": psf}`
+still leaves this study named `grid-refinement`.
 
 `default_policy` is where work runs unless a call says otherwise.
 
@@ -203,6 +210,7 @@ print(subject.summary())
 ```
 
 ```
+study grid-refinement
 plan schema 3: 10 invocations, 0 sources
   coarse:estimate    grid_refinement.estimate    local
   coarse:integrate   grid_refinement.integrate   local
@@ -216,8 +224,8 @@ plan schema 3: 10 invocations, 0 sources
   medium:write_grid  grid_refinement.write_grid  local
 ```
 
-`study.plan` is the exact document `submit` will run — not a second,
-hand-written description of it.
+`study.name` is its durable operator namespace. `study.plan` is the exact
+document `submit` will run — not a second, hand-written description of it.
 
 `hedloom.visualize` draws the same thing two other ways; see
 [looking at a study before running it](results.md#looking-at-a-study-before-running-it).

@@ -117,7 +117,7 @@ def range_sweep(points):
     return summaries
 
 
-@study
+@study(name="farm-smoke")
 def farm_sweep():
     """The study: one flow over the four points, and nothing else.
 

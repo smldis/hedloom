@@ -22,7 +22,7 @@ def refine(points):
     for point in sweep(points, key="key"):        # keyed scope per point
         yield integrate(write_grid(steps=point["steps"]))
 
-@study
+@study(name="grid-refinement")
 def refinement(points):
     return refine.named("refinement")(points)     # records; nothing runs
 
@@ -68,7 +68,8 @@ transports and roots; for this project's reference study that file is six
 hundred lines whose only job is to agree with the first one.
 
 Declared file outputs also get a stable current-result name under
-`<Site.root>/latest/`. Each try-named workspace remains immutable evidence;
+`<Site.root>/latest/<study>/<authored-key>/<output>`. Each try-named workspace
+remains immutable evidence;
 editing an input still moves the record identity, while the alias is repointed
 to the selected try before the next launch. Use `hedloom where`, `hedloom check`, and `hedloom log` to resolve
 the current output, detect a cached stale path, and inspect why records reran.
@@ -82,10 +83,11 @@ the current output, detect a cached stale path, and inspect why records reran.
 - **`shell(...)` is a launcher.** Returning a command instead of running one is
   what lets it reach a placement: locally it is a subprocess, on `lsf` it is one
   `bsub -I` job with that invocation's queue, cores and licences.
-- **`@study` is the plan.** The decorated function *is* the study: calling it
-  records the work and hands back something inspectable, and `submit` is the
-  only thing that spends. A `@flow` is the same shape one level down, which is
-  why there is one thing to learn rather than two.
+- **`@study` is the named execution envelope.** Calling the decorated function
+  records its Plan and hands back something inspectable; `submit` is the only
+  thing that spends. Its name is the stable namespace used by records and CLI
+  selectors. A `@flow` is the same planning shape one level down, without an
+  execution namespace or submission authority.
 - **`sweep(points, key=...)`** names every call inside the loop, so reuse cannot
   be lost to renumbering — the trap that made unnamed invocations dangerous.
   `.named("...")` does it by hand for a single call.

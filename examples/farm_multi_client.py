@@ -76,7 +76,7 @@ def points(prefix: str, base: int) -> tuple[dict[str, Any], ...]:
     )
 
 
-@study
+@study(name="farm-multi-client")
 def sweep_for(name: str):
     """One study per name. A different base is different inputs, so new attempts.
 

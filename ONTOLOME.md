@@ -6,7 +6,8 @@ Hedloom is the operator-facing composition of the three units beneath it. It own
 one thing none of them could own alone: the join between an authored study and
 its execution. An author writes operations, a flow, and a plan; `submit` runs
 exactly those, because it holds both halves rather than requiring two files to
-agree about them.
+agree about them. The facade also owns the study's durable, operator-facing
+name: the namespace joining authored invocation keys to execution records.
 
 It exists because that agreement kept being written by hand. A Plan declared
 what work meant; a separate binding supplied implementations, command lines,
@@ -69,8 +70,15 @@ that would place each point on its own job as a comment rather than a claim.
   when a run is given a client.
 - `@operation` is `hedloom_flow`'s decorator, wrapped so the body it already kept is
   registered as callable under the operation identity the Plan records. The
-  registry resolves a name the document names; it introduces no second notion
-  of what an operation is.
+  registry resolves a name the document names and refuses a different body
+  claiming the same operation name (the executable bundle binds by name); it
+  introduces no second notion of what an operation is.
+- `@study(name=...)` gives every instance built by one decorated function the
+  same durable study name. Without `name=`, the definition's
+  `module.qualname` is inferred, following operation and flow identities. Two
+  definitions in one process cannot claim one name. A finished Plan requires
+  an explicit name because it has no defining function from which to infer
+  one. Exported Plan output names do not participate in study identity.
 - An operation body **runs**. It receives the inputs the Plan resolved, its
   declared config, and — if it names the reserved parameter `out` — a
   `Workspace` addressing that attempt's own directory. Attribute access on the
@@ -93,7 +101,7 @@ that would place each point on its own job as a comment rather than a claim.
   `<point>:<operation>` unless they name a key. This is what keeps reuse from
   depending on an author keying every call by hand, where a mistake is silent
   staleness rather than an error.
-- `study(plan).summary()` shows every invocation, its operation and its
+- `study(plan, name=...).summary()` shows the study name and every invocation, its operation and its
   placement, and spends nothing. `submit(site=...)` then runs it, opening the
   compute the site declares for as long as the run needs it and giving it back
   afterwards. There is no kernel to choose: concurrency is each placement's own
@@ -115,10 +123,11 @@ that would place each point on its own job as a comment rather than a claim.
   a plain one and the two reuse each other's work. Roots are refused, because
   moving the record changes what is reused, which is a different installation
   rather than a different way of running this one.
-- `StudyRun` is addressable the way the study was authored: `run["coarse:integrate"]`
-  is that invocation's outcome, and `run.value` is the plan's conclusion.
+- `StudyRun` retains `study_name` and is addressable the way the study was
+  authored: `run["coarse:integrate"]` is that invocation's outcome, and
+  `run.value` is the plan's conclusion.
 - A recorded file output has a stable live view under
-  `<Site.root>/latest/<plan>/<authored-key>/<output>`. Identity-bearing inputs
+  `<Site.root>/latest/<study>/<authored-key>/<output>`. Identity-bearing inputs
   choose a record, and each execution gets a distinct try workspace beneath
   that record; only this operator-facing view stays put. Every run repoints it
   to the selected try before launch, including a run that returns to an older

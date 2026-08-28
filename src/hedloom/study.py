@@ -44,10 +44,11 @@ _WATCH_THREAD_NAME = "hedloom-watch"
 
 @dataclass(frozen=True, slots=True)
 class StudyRun:
-    """What a run produced, addressable the way it was authored."""
+    """What a run produced, addressable under ``study_name`` as authored."""
 
     report: RunReport
     document: Mapping[str, Any]
+    study_name: str
 
     def __getitem__(self, authored_key: str) -> InvocationOutcome:
         for outcome in self.report.outcomes:
@@ -70,11 +71,18 @@ class StudyRun:
 
 
 class Study:
-    """An authored Plan together with the operations that implement it."""
+    """A named authored Plan together with the operations that implement it."""
 
-    def __init__(self, plan: Any, implementations: Mapping[str, Callable[..., Any]]):
+    def __init__(
+        self,
+        plan: Any,
+        implementations: Mapping[str, Callable[..., Any]],
+        *,
+        name: str,
+    ):
         self.plan = plan
         self.implementations = dict(implementations)
+        self.name = name
 
     @property
     def document(self) -> Mapping[str, Any]:
@@ -89,6 +97,7 @@ class Study:
             key=lambda item: item.get("authored_key") or item["id"],
         )
         lines = [
+            f"study {self.name}\n"
             f"plan schema {document.get('schema_version')}: "
             f"{len(invocations)} invocations, "
             f"{len(document.get('sources', []))} sources"
@@ -212,7 +221,10 @@ class Study:
         fingerprints = site.fingerprints(document)
         common = dict(
             transports=transports,
-            plan_id=_plan_id(document),
+            # The execution kernel consumes a generic Plan and therefore calls
+            # this its plan ID. At the facade the durable namespace belongs to
+            # the Study, not to whichever outputs its current Plan exports.
+            plan_id=self.name,
             root=site.root,
             workspace_root=site.workspace_root,
             source_fingerprints=fingerprints,
@@ -238,28 +250,11 @@ class Study:
                 # change an otherwise completed outcome.
                 thread.join(timeout=_WATCH_JOIN_SECONDS)
         _apply_automatic_retention(site)
-        return StudyRun(report=report, document=document)
-
-
-def _plan_id(document: Mapping[str, Any]) -> str:
-    """A stable name for this plan's records.
-
-    Taken from the plan's own declared outputs rather than invented per run:
-    two runs of the same study must land on the same attempts, or nothing is
-    ever reused.
-    """
-
-    # Declared outputs are a list of {"name", "reference"} records, not a
-    # mapping. Reading them as one stringified the whole record — reference and
-    # producing invocation id included — so a study whose output came from a
-    # differently keyed invocation landed on a different attempt root and
-    # reused nothing, however unchanged the work itself was.
-    names = sorted(
-        str(item["name"])
-        for item in document.get("outputs") or ()
-        if isinstance(item, Mapping) and "name" in item
-    )
-    return "-".join(names) if names else "study"
+        return StudyRun(
+            report=report,
+            document=document,
+            study_name=self.name,
+        )
 
 
 def _apply_automatic_retention(site: Site) -> None:
