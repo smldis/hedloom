@@ -11,3 +11,6 @@ docs/_build/
 
 # Project-local toolchains (JRE, tla2tools) -- never installed into $HOME
 .toolchain/
+
+# TLC writes model-checking run artifacts beside the spec it checked.
+docs/internals/*/states/

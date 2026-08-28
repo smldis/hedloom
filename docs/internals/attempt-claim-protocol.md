@@ -12,6 +12,10 @@ exclusion rules that the current implementation retains, but it does not model
 try allocation or standing evidence. Its old filenames and state vocabulary
 are historical, not the layout contract below.
 
+Record creation and `SomeoneCompletes` were added later, in 2026-08, and are
+current rather than historical: they model how a record becomes visible today
+and are the reason that question has a checkable answer instead of a note.
+
 ## Names and layout
 
 One invocation with one input digest has one record identity:
@@ -154,7 +158,11 @@ checked:
 - a silently ineffective lock can leave a live job without a truthful durable
   trace, then permit a duplicate;
 - a detached substrate with inaccurate negative discovery cannot be recovered
-  safely; refusing is better than guessing.
+  safely; refusing is better than guessing;
+- creating the record in two visible steps lets every caller refuse and the
+  work go undone, while violating no invariant at all. `MCSplitCreate` is that
+  mutation and `MCAtomicCreate` is the repair; the difference between them is
+  the whole reason a temporal property exists here.
 
 It does not establish layout-1 compatibility, allocation correctness, or
 per-try folding. Those are executable tests in `test_claim.py`,
@@ -169,4 +177,5 @@ per-try folding. Those are executable tests in `test_claim.py`,
   `hedloom_exec` imports neither `hedloom_flow` nor Dask.
 - Retry, retention or pin policy. Phase 1 supplies unbounded mechanical tries;
   later phases decide what to retain and protect.
-- Liveness. The argument and model concern safety, not whether a farm finishes.
+- Liveness beyond record creation. `SomeoneCompletes` is checked, and it is
+  the only temporal property here; nothing says whether a farm finishes.
