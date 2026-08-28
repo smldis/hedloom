@@ -242,8 +242,9 @@ its siblings are reused and the superseded results stay nameable.
 - `RetentionPolicy` is operator-owned storage policy. Conditions within one
   named rule are ANDed and rules are ORed; the global age floor overrides all
   of them, `keep_latest` defaults to one, and `unreconciled` is never
-  selectable. Unknown keys, empty rules, and malformed sizes or durations are
-  refused rather than interpreted generously.
+  selectable. Unknown keys, empty rules, malformed sizes or durations, and a
+  single outcome named as a bare string are refused rather than interpreted
+  generously.
 - `prune.survey(...)` is a read-only classification of every try. It creates
   no directory, measures actual workspace trees rather than manifest size
   claims, and explains every exclusion. Standing reusable evidence, current

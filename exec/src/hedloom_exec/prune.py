@@ -86,7 +86,21 @@ class RetentionRule:
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
             raise RetentionError("each retention rule needs a non-empty name")
-        outcomes = tuple(self.outcome)
+        # A bare string is iterable, so tuple() would silently split it into
+        # characters and refuse with a nonsense list of one-letter outcomes.
+        # `from_toml` and the CLI both guard this; the constructor is public
+        # too, and must say the same thing.
+        if isinstance(self.outcome, str):
+            raise RetentionError(
+                f"rule {self.name!r} outcome must be a sequence of outcome "
+                f"names, not the single string {self.outcome!r}"
+            )
+        try:
+            outcomes = tuple(self.outcome)
+        except TypeError as error:
+            raise RetentionError(
+                f"rule {self.name!r} outcome must be a sequence of outcome names"
+            ) from error
         object.__setattr__(self, "outcome", outcomes)
         if "unreconciled" in outcomes:
             raise RetentionError("unreconciled tries are never selectable")

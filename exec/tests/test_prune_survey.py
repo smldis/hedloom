@@ -141,6 +141,16 @@ def test_a_malformed_duration_is_refused_not_coerced():
         RetentionRule("bad", older_than="two weeks")
 
 
+def test_a_single_outcome_string_is_refused_rather_than_split_into_letters():
+    with pytest.raises(RetentionError, match="not the single string 'failed'"):
+        RetentionRule("careless", outcome="failed")
+
+
+def test_an_outcome_that_is_not_a_sequence_is_refused():
+    with pytest.raises(RetentionError, match="sequence of outcome names"):
+        RetentionRule("careless", outcome=7)
+
+
 def test_keep_latest_spares_the_newest_tries_of_each_record(tmp_path):
     journal = _journal(tmp_path)
     first = _terminal(journal)

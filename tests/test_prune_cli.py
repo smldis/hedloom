@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 
 from hedloom.cli import main
 from hedloom_exec.identity import attempt_identity, try_name
@@ -77,3 +79,15 @@ def test_cli_can_restrict_by_plan_and_authored_invocation(tmp_path, capsys):
     assert main(["prune", "--site", str(profile), "--invocation", "point"]) == 0
     assert "1 candidate" in capsys.readouterr().out
     assert workspace.exists()
+
+
+def test_the_module_entry_point_runs_the_cli_rather_than_exiting_silently():
+    """`python -m hedloom.cli` must do something, not import and exit zero."""
+
+    finished = subprocess.run(
+        [sys.executable, "-m", "hedloom.cli", "--help"],
+        capture_output=True, text=True, check=False,
+        env={"PYTHONPATH": ":".join(sys.path)},
+    )
+    assert finished.returncode == 0
+    assert "prune" in finished.stdout

@@ -431,3 +431,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.command == "prune":
         return _prune(arguments)
     raise AssertionError(f"unhandled command {arguments.command!r}")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    # Without this, `python -m hedloom.cli` imports the module, runs nothing,
+    # and exits zero — a check that cannot fail is worse than one that does.
+    raise SystemExit(main())
