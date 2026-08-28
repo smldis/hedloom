@@ -27,6 +27,7 @@ import json
 import os
 
 from hedloom_exec.errors import AttemptError
+from hedloom_exec.pins import FrozenFile, Pin
 
 __all__ = [
     "AttemptJournal",
@@ -57,6 +58,9 @@ _EVENTS = frozenset(
         "terminal",
         "reuse_accepted",
         "placement",
+        "workspace_removed",
+        "pinned",
+        "unpinned",
     }
 )
 
@@ -123,6 +127,7 @@ class AttemptState:
     identity: str
     tries: tuple[TryState, ...] = field(default_factory=tuple)
     current_try: int | None = None
+    pins: tuple[Pin, ...] = field(default_factory=tuple)
     events: tuple[JournalEvent, ...] = field(default_factory=tuple)
 
     @property
@@ -472,6 +477,7 @@ class AttemptJournal:
         """Derive current state from the durable record alone."""
         events = self.events()
         tries: dict[int, dict[str, Any]] = {}
+        pins: dict[str, Pin] = {}
         for item in events:
             number = item.data.get("try")
             if (
@@ -512,7 +518,38 @@ class AttemptJournal:
                     f"{number} before try_started"
                 )
             current = tries[number]
-            if item.event == "submit_intent":
+            if item.event == "pinned":
+                pin_id = item.data.get("pin_id")
+                if not isinstance(pin_id, str) or pin_id in pins:
+                    raise JournalError(
+                        f"attempt {self.identity} records invalid pin id {pin_id!r}"
+                    )
+                pins[pin_id] = Pin(
+                    pin_id=pin_id, identity=self.identity, try_number=number,
+                    workspace=item.data.get("workspace", ""),
+                    contents=tuple(
+                        FrozenFile(**entry)
+                        for entry in item.data.get("contents", ())
+                    ),
+                    reason=item.data.get("reason", ""),
+                    actor=item.data.get("actor", ""), at=item.at,
+                    layout=item.data.get("layout"),
+                    froze=bool(item.data.get("froze")),
+                )
+            elif item.event == "unpinned":
+                from dataclasses import replace
+
+                pin_id = item.data.get("pin_id")
+                if pin_id not in pins or not pins[pin_id].is_active:
+                    raise JournalError(
+                        f"attempt {self.identity} releases unknown pin {pin_id!r}"
+                    )
+                pins[pin_id] = replace(
+                    pins[pin_id], released_at=item.at,
+                    released_by=item.data.get("actor"),
+                    released_reason=item.data.get("reason"),
+                )
+            elif item.event == "submit_intent":
                 current["phase"] = "intended"
                 current["transport"] = item.data.get("transport")
                 current["substrate"] = (
@@ -560,6 +597,7 @@ class AttemptJournal:
             identity=self.identity,
             tries=tuple(folded),
             current_try=folded[-1].number if folded else None,
+            pins=tuple(pins.values()),
             events=events,
         )
 

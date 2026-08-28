@@ -25,7 +25,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any, Callable, Mapping
+import warnings
 
+from hedloom_exec.prune import RetentionPolicy, survey
 from hedloom_exec.transport import Transport, TransportError
 from hedloom_exec.watch import AttemptStatus, LSFStatusReader, live_attempts, observe
 from hedloom_run.driver import InvocationOutcome, RunReport, run_plan
@@ -235,6 +237,7 @@ class Study:
                 # scheduler query therefore cannot keep the caller here or
                 # change an otherwise completed outcome.
                 thread.join(timeout=_WATCH_JOIN_SECONDS)
+        _apply_automatic_retention(site)
         return StudyRun(report=report, document=document)
 
 
@@ -257,6 +260,39 @@ def _plan_id(document: Mapping[str, Any]) -> str:
         if isinstance(item, Mapping) and "name" in item
     )
     return "-".join(names) if names else "study"
+
+
+def _apply_automatic_retention(site: Site) -> None:
+    """Apply only the bounded rules the site names; never change a run result."""
+
+    automatic = site.retention.get("automatic") or {}
+    names = tuple(automatic.get("after_run") or ())
+    if not names:
+        return
+    try:
+        if site.workspace_root is None:
+            raise ValueError(
+                "automatic retention needs [study] workspace_root as well as root"
+            )
+        declared = RetentionPolicy.from_toml(site.retention)
+        selected = tuple(rule for rule in declared.rules if rule.name in names)
+        # Site construction validates names. Keep this check here because a
+        # Site built around a mutable mapping must still refuse lost authority.
+        missing = sorted(set(names) - {rule.name for rule in selected})
+        if missing:
+            raise ValueError(
+                "automatic retention names unknown rule(s): " + ", ".join(missing)
+            )
+        policy = RetentionPolicy(selected, floor=declared.floor)
+        survey(
+            site.root, policy, workspace_root=site.workspace_root
+        ).apply(actor="automatic-after-run")
+    except Exception as error:  # noqa: BLE001 - retention cannot own run outcome
+        warnings.warn(
+            f"automatic retention failed after the run: {type(error).__name__}: {error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def _reporter(

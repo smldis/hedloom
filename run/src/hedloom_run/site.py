@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from hashlib import blake2b
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from copy import deepcopy
 import os
 
 from hedloom_exec.planned import source_references
@@ -187,6 +188,9 @@ class Site:
     where a multi-process cluster is refused a silence it cannot have.
     """
 
+    retention: Mapping[str, Any] = field(default_factory=dict)
+    """Operator-owned workspace retention policy from ``[retention]``."""
+
     def __post_init__(self) -> None:
         """Anchor every root, because a relative one is silently wrong.
 
@@ -254,6 +258,17 @@ class Site:
                 f"this site declares dashboard = {self.dashboard!r}, which is "
                 f"not one of {', '.join(repr(item) for item in EXPOSURES)}"
             )
+        if not isinstance(self.retention, Mapping):
+            raise SiteError("retention policy must be a mapping")
+        retained = deepcopy(dict(self.retention))
+        if retained:
+            from hedloom_exec.prune import RetentionError, RetentionPolicy
+
+            try:
+                RetentionPolicy.from_toml(retained)
+            except RetentionError as error:
+                raise SiteError(f"invalid retention policy: {error}") from error
+        object.__setattr__(self, "retention", retained)
 
     def with_transports(self, **transports: Transport) -> "Site":
         """Add substrates a configuration file cannot describe.
@@ -270,6 +285,7 @@ class Site:
             placements=self.placements,
             threads=self.threads,
             dashboard=self.dashboard,
+            retention=self.retention,
         )
 
     @property
@@ -341,6 +357,7 @@ class Site:
             placements=placements,
             threads=kernel.get("threads", self.threads),
             dashboard=kernel.get("dashboard", self.dashboard),
+            retention=self.retention,
         )
 
     def served_in_process(self) -> "Site":
@@ -366,6 +383,7 @@ class Site:
             },
             threads=self.threads,
             dashboard=self.dashboard,
+            retention=self.retention,
         )
 
     def cluster_spec(self) -> dict[str, dict[str, Any]]:
@@ -477,6 +495,7 @@ class Site:
             placements=data.get("placement") or {},
             threads=(data.get("kernel") or {}).get("threads"),
             dashboard=(data.get("kernel") or {}).get("dashboard", "network"),
+            retention=data.get("retention") or {},
         )
 
 

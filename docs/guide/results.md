@@ -153,3 +153,18 @@ Every operation is bound to a stand-in that refuses to run — computing it rais
 drawing a graph is a diagnostic, not part of the authoring surface. `graphviz`
 and `bokeh` are diagnostics the units themselves do not depend on — install them
 into the project-local `.toolchain/venv` (`.toolchain/README.md`).
+
+## Retaining and pinning try workspaces
+
+Every try remains inspectable until the Site's operator-owned retention policy
+selects its workspace. `hedloom prune --site site.toml` is a dry-run survey;
+only `--apply` removes selected bytes, after a second check under the record
+claim. Records and immutable manifests remain even when a spent workspace is
+reclaimed.
+
+Use `hedloom pin --site site.toml <selector> --reason TEXT` when a report or
+external tool holds a try path. A pin is terminal-only and per-try, stored in
+the record with actor, reason, layout and content digests. Verification detects
+drift; a changed record layout reports the promise void. Write-bit removal is
+an accident-catching guardrail, not enforcement—the owner and open descriptors
+can still modify content, and a writable parent can still rename it.

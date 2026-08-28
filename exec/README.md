@@ -34,6 +34,30 @@ per-try manifests under `manifest/<n>.json`, and `standing.json` when evidence
 has been selected for reuse. Try workspaces and batch jobs are named
 `<record>-<n>`. All of these are readable without this package.
 
+Storage policy is inspectable before it is destructive. A
+`RetentionPolicy` contains named rules whose conditions narrow one another;
+`prune.survey(record_root, policy, workspace_root=...)` reports candidate
+tries, excluded tries, reasons, and measured reclaimable bytes without
+creating or deleting anything. It never selects the standing result, a live
+alias, a non-terminal try, or `unreconciled` evidence.
+
+Applying that returned survey is the deliberate destructive gesture. Every
+candidate is checked again under its record claim, then a
+`workspace_removed` event is flushed before bytes are removed. Records and
+manifests stay intact, contention skips instead of waiting, and
+`limit_bytes=` bounds one pass. A crash after the event but before deletion is
+safe to resume because the still-present workspace makes the unfinished side
+effect visible.
+
+A pin protects one terminal try when another tool or report holds its path.
+It lives in the record, not the workspace, and carries the operator, reason,
+record layout, and a digest inventory. Hedloom refuses to prune an active pin;
+`verify(pin, layout=...)` detects drift or reports that a layout change voided
+the promise. Removing write bits is only a guardrail: it does not revoke open
+descriptors, stop the owner restoring permissions, or prevent a rename from a
+writable parent. The enforceable contract is refuse, detect, and record—not
+prevent.
+
 ## Rerunning without repeating work
 
 Declare what an invocation depends on and let the identity be derived from it.

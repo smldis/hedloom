@@ -46,6 +46,19 @@ max_jobs = 20             # invocations in flight against it
 [kernel]
 threads = 2
 dashboard = "network"     # "network" | "loopback" | "none"
+
+[retention]
+floor = "7d"
+
+[[retention.rule]]
+name = "spent failures"
+outcome = ["failed", "cancelled"]
+older_than = "14d"
+keep_latest = 1
+keep_logs = true
+
+[retention.automatic]
+after_run = ["spent failures"]
 ```
 
 (`examples/farm-smoke.site.toml` declares the direct placement;
@@ -56,6 +69,21 @@ silently dropped, because a study that quietly lost a placement fails much later
 as an opaque `UnsupportedPlacement` that blames the Plan for what is a
 configuration mistake. The same applies one level down: a misspelled option is
 named by placement *and* key rather than raising a bare `TypeError`.
+
+## Retention belongs to the installation
+
+Retention says what one storage site can afford to keep, not what a study
+means. Conditions within one rule are ANDed; named rules are ORed. The global
+floor, standing reusable result, active aliases and pins, non-terminal tries,
+and `unreconciled` evidence remain protected regardless of a rule.
+
+`hedloom prune --site site.toml` prints the survey and changes nothing.
+`--apply` is the separate destructive gesture, and every candidate is checked
+again under its record claim before a durable removal event precedes deletion.
+The optional `automatic.after_run` list may name only declared rules. Those
+rules run after a completed run; failure warns and cannot change the run's
+outcome. There is deliberately no `submit(prune=...)`: a study decides what it
+produces, never what the installation keeps.
 
 ## Placement kinds
 

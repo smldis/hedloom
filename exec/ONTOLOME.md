@@ -239,6 +239,32 @@ its siblings are reused and the superseded results stay nameable.
   `EPHEMERAL` touches no filesystem, requires no identity or root, and reruns
   on every call. `RECORDED` runs the full protocol and completes from an
   selected standing evidence without rerunning the payload.
+- `RetentionPolicy` is operator-owned storage policy. Conditions within one
+  named rule are ANDed and rules are ORed; the global age floor overrides all
+  of them, `keep_latest` defaults to one, and `unreconciled` is never
+  selectable. Unknown keys, empty rules, malformed sizes or durations, and a
+  single outcome named as a bare string are refused rather than interpreted
+  generously.
+- `prune.survey(...)` is a read-only classification of every try. It creates
+  no directory, measures actual workspace trees rather than manifest size
+  claims, and explains every exclusion. Standing reusable evidence, current
+  aliases, non-terminal and unreconciled tries, and workspaces escaping the
+  declared root are never candidates.
+- `Survey.apply()` is the only destructive retention operation. Each proposed
+  try is reclassified while its non-blocking record claim is held; contention
+  skips rather than waits. A durable `workspace_removed` event precedes byte
+  removal, record directories and manifests remain, optional diagnostics
+  remain, and a byte limit bounds each pass.
+- A pin is one durable, attributable promise over one terminal try workspace:
+  Hedloom refuses to prune it, records a frozen inventory and content digests
+  in the record, and `verify()` detects additions, removals, or drift. Pins are
+  never stored in the workspace, never implied by reuse acceptance, and become
+  explicitly void as `layout-changed` when the record layout moves.
+- Pinning may remove write bits as an accident-catching guardrail, but this is
+  not operating-system enforcement: the owner can restore them, open file
+  descriptors survive, and a writable parent permits rename. The contract is
+  refuse, detect, and record—not prevent. Unpinning appends a release event and
+  can restore the modes captured privately when the pin was made.
 
 ## Contribution to the parent
 
@@ -256,8 +282,9 @@ is tested by reconciling an attempt from a record that carries no topology. It
 does not own Dask transports, worker pools, placement enforcement, policy
 resolution, evidence promotion, or the study lifecycle. It records where
 outputs are but owns no artifact store, performs no transfer between
-filesystems, verifies no content digest, and does not garbage-collect
-workspaces. It reads a Plan document but neither
+filesystems, and verifies no content digest. Retention removes only selected
+try-workspace bytes; it never removes record evidence or external artifact
+addresses. It reads a Plan document but neither
 produces nor validates one, and it resolves no declared address: derivation
 consumes only what the Plan already states.
 
