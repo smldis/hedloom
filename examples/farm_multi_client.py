@@ -333,9 +333,8 @@ def two_controllers(site: Site) -> bool:
 
     spans = farm_spans(site.root, since)
     print(f"    farm jobs: {len(spans)} (eight would mean the claim did not hold)")
-    if len(spans) != 4:
-        print(f"    FAILED: expected four farm jobs, the record shows {len(spans)}")
-        return False
+    # Both reports first, because the accounting below is only meaningful when
+    # every controller finished and can be asked what it saw.
     if len(runs) != 2:
         print(f"    FAILED: only {len(runs)} of two controllers produced a report")
         return False
@@ -354,9 +353,21 @@ def two_controllers(site: Site) -> bool:
         for run in runs.values()
         for outcome in run.report.outcomes
     }
+    # Conservation of work is the property the protocol actually promises, so
+    # it is checked before the job count. A refused caller is a legal ending --
+    # the claim refuses rather than waits -- and the defect it could hide is an
+    # invocation that no controller resolved at all. Checking the count first
+    # would return before this ran, leaving a short count unable to say whether
+    # work was lost or merely spent differently.
     missing = sorted(expected - succeeded)
     if missing:
         print(f"    FAILED: no controller produced a result for {', '.join(missing)}")
+        print(f"            {refused} claim(s) refused; {len(spans)} farm job(s)")
+        return False
+    if len(spans) != 4:
+        print(f"    FAILED: expected four farm jobs, the record shows {len(spans)}")
+        print(f"            every invocation has a result and {refused} claim(s) "
+              f"were refused, so no work was lost")
         return False
     print(f"    every invocation succeeded for exactly one controller; "
           f"{refused} claim(s) refused by name")
