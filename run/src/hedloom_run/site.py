@@ -175,14 +175,14 @@ class Site:
     different fact about a different machine.
     """
 
-    dashboard: str = "network"
+    dashboard: str = "none"
     """How much of the graph kernel's cluster this installation exposes.
 
     A Dask scheduler and every worker open an HTTP listener on all interfaces,
     whether or not anyone opens a browser, and a shared submit host has other
-    users on it. `"network"` is Dask's own behaviour and the default, so
-    nothing changes for an installation that declares nothing; `"loopback"`
-    keeps the dashboard off the network; `"none"` opens no socket at all.
+    users on it. `"none"` is the default and opens no socket at all;
+    `"loopback"` keeps the dashboard off the network while retaining it, and
+    `"network"` explicitly exposes Dask's dashboard behaviour.
 
     Read by `hedloom_run.cluster`, which is also where the values are defined and
     where a multi-process cluster is refused a silence it cannot have.
@@ -494,7 +494,7 @@ class Site:
             # by hand cannot diverge in what a placement means.
             placements=data.get("placement") or {},
             threads=(data.get("kernel") or {}).get("threads"),
-            dashboard=(data.get("kernel") or {}).get("dashboard", "network"),
+            dashboard=(data.get("kernel") or {}).get("dashboard", "none"),
             retention=data.get("retention") or {},
         )
 

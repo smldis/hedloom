@@ -190,6 +190,7 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
     assert site.workspace_root == "/nfs/studies/ota"
     assert site.address_spaces["repository-relative"] == str(tmp_path)
     assert site.threads == 32
+    assert site.dashboard == "none"
     lsf = site.transports["lsf"]
     job = try_name(attempt_identity(plan_id="site", invocation_id="default").rendered, 0)
     argv = lsf.build_argv(job, {"command": ["simulate"]})

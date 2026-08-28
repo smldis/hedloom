@@ -87,13 +87,12 @@ arrives — rather than a pin: a site does not always get to choose its
 `distributed`, and a hard pin turns "a version behind" into "cannot install".
 Verified against 2023.9.2, 2024.8.0 and 2026.7.1.
 
-If your `distributed` has no matching **bokeh**, its dashboard cannot be built,
-and Dask says so as `AttributeError: module 'distributed.dashboard' has no
-attribute 'scheduler'` — naming neither bokeh nor the dashboard, from a cluster
-you never asked to have one, since `"network"` is the default. Worse, the import
-is lazy, so under concurrency one cluster can fail while its neighbour succeeds.
-That is translated into a message that names bokeh and offers
-`dashboard = "none"`. What Dask still cannot tell you is whether a point is `PEND` or
+If your `distributed` has no matching **bokeh**, an explicitly enabled
+dashboard cannot be built, and Dask says so as `AttributeError: module
+'distributed.dashboard' has no attribute 'scheduler'` — naming neither bokeh
+nor the dashboard. The import is lazy, so under concurrency one enabled cluster
+can fail while its neighbour succeeds. That is translated into a message that
+names bokeh. What Dask still cannot tell you is whether a point is `PEND` or
 `RUN` — that needs a watcher over the attempt records, which is
 `hedloom_exec.watch` and which `hedloom.Study.submit(watch=True)` now runs for
 the duration of a run.
@@ -126,18 +125,18 @@ says how much of that it wants:
 ```toml
 [kernel]
 threads = 32
-dashboard = "network"     # "network" | "loopback" | "none"
+dashboard = "none"        # "none" | "loopback" | "network"
 ```
 
-* `"network"` — the default, and exactly Dask's own behaviour: `cluster_for`
-  passes no address, so declaring nothing changes nothing.
+* `"none"` — the default; no listening socket at all. Only possible for the
+  in-process cluster this kernel documents, since workers in their own
+  processes must dial a listener; asking for it with `processes=True` is
+  refused rather than quietly downgraded.
 * `"loopback"` — scheduler *and* worker on `127.0.0.1:0`. Off the network;
   still reachable by other users of the same host, because loopback is per host
   and not per user.
-* `"none"` — no listening socket at all. Only possible for the in-process
-  cluster this kernel documents, since workers in their own processes must dial
-  a listener; asking for it with `processes=True` is refused rather than
-  quietly downgraded.
+* `"network"` — explicit opt-in to Dask's own behaviour; `cluster_for` passes
+  no address, so the dashboard is reachable from the network.
 
 `"none"` costs the dashboard, `/health` and `/metrics`. It does not cost the
 post-mortem: `distributed.performance_report(...)` is computed on the scheduler

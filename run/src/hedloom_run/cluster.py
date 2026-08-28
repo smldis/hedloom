@@ -27,11 +27,11 @@ So the exposure is declared, in the profile, beside the concurrency:
 
     [kernel]
     threads = 32
-    dashboard = "network"     # "network" | "loopback" | "none"
+    dashboard = "none"        # "none" | "loopback" | "network"
 
-`"network"` is the default and is exactly what Dask does unaided: that branch
-passes no address at all, so an installation that adopts this module without
-declaring anything is indistinguishable from one that never used it.
+`"none"` is the default: a run does not publish an operational UI merely
+because Dask is its readiness kernel. `"network"` remains an explicit opt-in
+that passes no address at all and therefore preserves Dask's own behaviour.
 
 The invariant:
 
@@ -107,11 +107,10 @@ def _built(build: Callable[[], Any], dashboard: str) -> Any:
 
         AttributeError: module 'distributed.dashboard' has no attribute 'scheduler'
 
-    which names neither bokeh nor the dashboard, and arrives from a cluster the
-    caller never asked to have a dashboard at all, because `"network"` is the
-    default. Worse, it is *intermittent*: the import is lazy, so two clusters
-    built at once can have one succeed and one fail. A study that ran yesterday
-    fails today with a message about an attribute.
+    which names neither bokeh nor the dashboard. It can also be *intermittent*:
+    the import is lazy, so two dashboard-enabled clusters built at once can
+    have one succeed and one fail. A study that ran yesterday can fail today
+    with a message about an attribute.
 
     Newer `distributed` degrades to a reduced status page instead of raising,
     which is why this is not caught by pinning one version and is exactly the
@@ -162,7 +161,7 @@ def _silent(base: Any) -> Any:
 def local_cluster(
     *,
     threads: int | None = None,
-    dashboard: str = "network",
+    dashboard: str = "none",
     processes: bool = False,
     placements: Mapping[str, int] | None = None,
 ) -> Any:
@@ -250,7 +249,7 @@ def local_cluster(
 
 
 def spec_cluster(
-    workers: Mapping[str, Mapping[str, Any]], *, dashboard: str = "network"
+    workers: Mapping[str, Mapping[str, Any]], *, dashboard: str = "none"
 ) -> Any:
     """One worker per placement, each with its own threads and its own capacity.
 

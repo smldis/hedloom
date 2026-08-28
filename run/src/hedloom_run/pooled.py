@@ -487,7 +487,7 @@ def open_pools(site: Any) -> dict[str, Any]:
     # whole of §4's dashboard row — the comm channel must be reachable, the
     # diagnostic HTTP server need not be.
     clusters: dict[str, Any] = {}
-    scheduler_options = _scheduler_exposure(getattr(site, "dashboard", "network"))
+    scheduler_options = _scheduler_exposure(getattr(site, "dashboard", "none"))
     try:
         for name, options in pooled.items():
             cores = int(options.get("cores") or 1)

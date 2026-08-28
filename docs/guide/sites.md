@@ -45,7 +45,7 @@ max_jobs = 20             # invocations in flight against it
 
 [kernel]
 threads = 2
-dashboard = "network"     # "network" | "loopback" | "none"
+dashboard = "none"        # "none" | "loopback" | "network"
 
 [retention]
 floor = "7d"
@@ -181,11 +181,11 @@ and every worker starts one too, both on all interfaces. On a shared submit host
 that publishes your invocation names, workspace paths and profiler to everyone who
 can reach it.
 
-* `"network"` — the default, and exactly Dask's own behaviour.
+* `"none"` — the default; no listening socket at all. Refused for a
+  multi-process cluster, whose workers must dial a listener.
 * `"loopback"` — off the network; still reachable by other users of the same
   host, because loopback is per host and not per user.
-* `"none"` — no listening socket at all. Refused for a multi-process cluster,
-  whose workers must dial a listener.
+* `"network"` — explicit opt-in to Dask's own network-visible behaviour.
 
 Exposure changes how a run can be watched and **nothing** about what it
 computes.

@@ -1,13 +1,13 @@
-"""What a site exposes, and the promise that the default exposes what it did.
+"""What a site exposes, with silence as the default.
 
 Two tests carry this module. `test_a_silent_cluster_holds_no_http_server` is
 the one the feature exists for, and it asserts a behaviour rather than an
 internal: if a future `distributed` moves the seam this module suppresses, the
 failure names a cluster that opened a server, not a missing attribute.
 
-`test_the_network_exposure_asks_dask_for_nothing` is the one that protects
-every existing installation. `"network"` must pass no address at all, because
-the moment it names one it has taken over a default that belongs to Dask.
+`test_the_network_exposure_asks_dask_for_nothing` protects the explicit opt-in.
+`"network"` must pass no address at all, because the moment it names one it has
+taken over a default that belongs to Dask.
 """
 
 import threading
@@ -64,24 +64,33 @@ def test_the_network_exposure_asks_dask_for_nothing(recorded):
     }
 
 
-def test_network_is_what_a_site_gets_without_declaring_anything(
+def test_silence_is_what_a_site_gets_without_declaring_anything(
     tmp_path, spec_recorded
 ):
     site = Site(root=str(tmp_path))
 
-    assert site.dashboard == "network"
+    assert site.dashboard == "none"
 
     cluster_for(site)
     scheduler = spec_recorded.kwargs["scheduler"]["options"]
-    assert scheduler["dashboard_address"] == ":8787"
+    assert scheduler["dashboard"] is False
+    assert scheduler["dashboard_address"] is None
     # These workers are objects in this process. TCP would add a scheduler
     # listener and one worker listener per placement for no benefit.
     assert scheduler["protocol"] == "inproc"
     assert scheduler["port"] == 0
 
 
-def test_unset_threads_leave_the_sizing_to_dask(recorded):
+def test_low_level_cluster_construction_is_silent_by_default(spec_recorded):
     local_cluster()
+
+    scheduler = spec_recorded.kwargs["scheduler"]["options"]
+    assert scheduler["dashboard"] is False
+    assert scheduler["dashboard_address"] is None
+
+
+def test_unset_threads_leave_the_sizing_to_dask(recorded):
+    local_cluster(dashboard="network")
 
     assert "threads_per_worker" not in recorded.kwargs
 
@@ -292,8 +301,7 @@ def test_a_missing_bokeh_is_reported_as_a_missing_bokeh():
     A scheduler serving a dashboard imports `distributed.dashboard.scheduler`
     lazily, and that needs bokeh. Without it the failure arrives as an
     `AttributeError` about a missing attribute on a module the caller has never
-    heard of — from a cluster they never asked to have a dashboard, since
-    `"network"` is the default. It cost a farm run to recognise once.
+    heard of. It cost a farm run to recognise once.
 
     Both halves are covered because they do not report it the same way: the
     scheduler's message says `distributed.dashboard`, and a worker's says only
