@@ -328,8 +328,29 @@ class AttemptJournal:
         "An advisory lock on a file is enough" assumes a filesystem that
         honours the lock. **A study root on NFS may not be one, and it does
         not say so.** This is the weakest load-bearing assumption in the whole
-        durability argument and it has never been tested against a real
-        network filesystem.
+        durability argument.
+
+        Partly measured on 2026-08-28, on the study root this prototype's one
+        user actually runs against, and that measurement is now the **assumed
+        deployment**: NFSv3, mounted `local_lock=none`, with `nlockmgr`
+        registered. On that root, two open file descriptions in one process
+        contend correctly -- the second `flock` is refused -- so the claim
+        separates threads of one runner there as it does on ext4.
+
+        What that settles is the *precondition* and the single-process case.
+        It does not settle the case this note is actually about: **two hosts
+        contending has still never been tested.** A configuration that permits
+        cross-host locking is not evidence that cross-host locking happens.
+
+        Note also that the two properties trade against each other, which is
+        easy to miss when tuning a mount: `local_lock=flock` keeps `flock`
+        node-local, which preserves per-description semantics but breaks the
+        cross-host exclusion entirely; `local_lock=none` forwards to the
+        server. The claim needs both, and only the latter can give both.
+
+        A different farm is a different answer. `docs/guide/first-farm-run.md`
+        carries the checks to run before trusting a new study root, and they
+        are the user-facing form of this note.
 
         What can go wrong, all of it silently -- `flock()` returns success in
         every case below:
@@ -352,6 +373,15 @@ class AttemptJournal:
         overwrite records in the journal that every recovery, reuse and
         identity decision is read back from. The durable record starts lying.
 
+        A second NFS hazard, which the atomic record publication below does
+        *not* remove: attribute caching. `acdirmin`/`acdirmax` let a second
+        host see a record directory from a cached listing before `layout` is
+        visible in it, and `_require_layout` then raises rather than reporting
+        a claimed record. `_create_record` closes that window on one host by
+        publishing the record complete; it can do nothing about another host's
+        cache. Same symptom as the initialisation race fixed on 2026-08-28,
+        different cause, and only the local half is fixed.
+
         Not at risk from *this*: per-try manifest and standing publication use
         atomic `rename()`, and publication now remains under this record claim.
         The historical TLA+ counterexample that found unlocked publication is
@@ -359,7 +389,8 @@ class AttemptJournal:
 
         Not reachable today, which is why this is a flag and not a fix: one
         process runs the plan, the Dask cluster is in-process, and two separate
-        `open()` calls in one process do contend on `flock` correctly. The
+        `open()` calls in one process do contend on `flock` correctly -- on
+        ext4 by construction, and measured on the assumed NFS root above. The
         exposure opens with (a) two controllers against one root -- two people,
         or the same study started twice on two login hosts -- and (b) pooled
         placement, where journals would be written from farm nodes; see
@@ -382,7 +413,9 @@ class AttemptJournal:
            already encodes a better version of this idea.
 
         Do not treat the current single-host green test suite as evidence about
-        any of this. It is evidence that the lock works on a local filesystem.
+        any of this. It is evidence that the lock works on a local filesystem,
+        and the 2026-08-28 measurement extends that to one process on one
+        known NFS root. Neither is evidence about two hosts.
         ==== END DEVNOTE =========================================
         """
 
