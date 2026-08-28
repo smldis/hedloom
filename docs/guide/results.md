@@ -162,6 +162,15 @@ only `--apply` removes selected bytes, after a second check under the record
 claim. Records and immutable manifests remain even when a spent workspace is
 reclaimed.
 
+Spent storage is storage nothing resolves to, so a failure is not reclaimable
+while it is still the newest try at its authored key. A `latest/` alias is
+bound before a body runs, which is what lets a tool watch an output as it is
+written — and it means every current try has an alias, whether it succeeded or
+not. Such a try is skipped as `aliased`. A failed try becomes a candidate once
+a later run at the same key supersedes it and the alias moves, which is also
+the point at which nobody is still reading it.
+`examples/retention.py` runs exactly that lifecycle.
+
 Use `hedloom pin --site site.toml <selector> --reason TEXT` when a report or
 external tool holds a try path. A pin is terminal-only and per-try, stored in
 the record with actor, reason, layout and content digests. Verification detects

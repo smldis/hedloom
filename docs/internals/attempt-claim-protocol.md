@@ -49,6 +49,15 @@ Try workspaces are siblings of the record directory. This separation lets a
 failed try remain intact while a later try runs, without duplicating the
 record's identity and attribution.
 
+A new record is **published atomically**: it is built aside with its `layout`
+already in it and renamed into place, so the directory never exists while
+declaring nothing. That matters because a record that exists and declares no
+layout is exactly what a directory Hedloom never made looks like, and that
+refusal has to stay unambiguous. Losing the rename to a concurrent caller is
+not a failure — their record is the same record. A caller that meets a record
+already claimed is refused by name with `ConcurrentClaim`, never by a missing
+layout.
+
 ## The claimed transition
 
 `execute(..., Durability.RECORDED)` performs the stateful work under one record

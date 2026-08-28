@@ -1,9 +1,14 @@
+import os
+import threading
+from pathlib import Path
+
 import pytest
 
 import hedloom_exec.attempt as attempt_module
+import hedloom_exec.journal as journal_module
 from hedloom_exec.attempt import StaleIdentity, accept_for_reuse, launch_or_attach, reconcile
 from hedloom_exec.identity import attempt_identity
-from hedloom_exec.journal import AttemptJournal, ConcurrentClaim
+from hedloom_exec.journal import AttemptJournal, ConcurrentClaim, JournalError
 from hedloom_exec.transport import InProcessTransport
 
 
@@ -82,3 +87,76 @@ def test_an_unwritable_workspace_does_not_lose_terminal_publication(tmp_path, mo
     assert journal.read_manifest()["result"]["diagnostics_error"].startswith(
         "PermissionError:"
     )
+
+
+def test_a_new_record_becomes_visible_with_its_layout_already_in_it(
+    tmp_path, monkeypatch
+):
+    """The record is published in one step, so it is never half-built.
+
+    Creating the directory and then writing `layout` were two visible steps,
+    and a caller arriving between them saw a record that existed and declared
+    nothing -- which is exactly what a foreign directory looks like. It then
+    either refused a record that was merely being built or adopted one that
+    was not Hedloom's, decided by a check made before the claim was held. This
+    watches the moment the directory becomes visible and asserts the layout is
+    already inside it, so there is no such moment to arrive in.
+    """
+
+    published = {}
+    rename = os.rename
+
+    def watched(source, destination):
+        published["staged"] = sorted(item.name for item in Path(source).iterdir())
+        return rename(source, destination)
+
+    monkeypatch.setattr(journal_module.os, "rename", watched)
+    identity = attempt_identity(plan_id="p", invocation_id="atomic").rendered
+    journal = AttemptJournal(tmp_path, identity)
+
+    with journal.claim():
+        pass
+
+    assert published["staged"] == ["layout"]
+    assert journal.layout_path.read_text(encoding="utf-8").strip() == "1"
+    assert not list(tmp_path.glob(".*partial*")), "staging must not be left behind"
+
+
+def test_concurrent_callers_are_refused_by_name_not_by_a_missing_layout(tmp_path):
+    """Every loser meets a claimed record, never one still being built."""
+
+    identity = attempt_identity(plan_id="p", invocation_id="racing").rendered
+    entered = []
+    refusals = []
+
+    def contend():
+        try:
+            with AttemptJournal(tmp_path, identity).claim():
+                entered.append(1)
+        except Exception as error:
+            refusals.append(error)
+
+    threads = [threading.Thread(target=contend) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert entered, "at least one caller must reach the record"
+    assert all(isinstance(item, ConcurrentClaim) for item in refusals), (
+        f"unexpected refusals: {sorted({type(i).__name__ for i in refusals})}"
+    )
+    assert (tmp_path / identity / "layout").is_file()
+
+
+def test_a_record_with_a_journal_and_no_layout_is_still_refused(tmp_path):
+    """The refusal that matters is kept: a pre-layout-1 root stays unreadable."""
+
+    identity = attempt_identity(plan_id="p", invocation_id="ancient").rendered
+    journal = AttemptJournal(tmp_path, identity)
+    journal.directory.mkdir(parents=True)
+    journal.log_path.write_text('{"seq": 0, "event": "created", "data": {}}\n')
+
+    with pytest.raises(JournalError, match="no recognised layout"):
+        with journal.claim():
+            pass
