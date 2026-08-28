@@ -75,6 +75,11 @@ printed output is real.
   submission. `farm_smoke_pooled.py` is the same shape through a pool.
 * `examples/farm_multi_client.py` — what happens when two studies, or two
   controllers, want the farm at once, measured from the attempt journals.
+* [`examples/cli.py`](../examples/cli.py) — the operator's loop rather than the
+  author's, driven entirely through the `hedloom` command: `where` resolves a
+  path to hand a tool, one point's inputs are edited, and `check` answers
+  `behind` with a non-zero status so a script can branch on it. `log`, `prune`
+  and `pin` finish the tour. Every command is really executed.
 * [`examples/retention.py`](../examples/retention.py) — what storage a study
   spends and when it can be taken back: two points diverge, a second pass
   supersedes them, and the survey's promised byte count is checked against

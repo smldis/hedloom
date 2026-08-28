@@ -195,6 +195,20 @@ A fourth pass resubmits all of it from one session and must spend nothing.
 `bsub`, checking the same numbers from the submission records rather than from
 the journals, so the two instruments have to agree.
 
+Once a study has run, the questions stop being about authoring and start being
+about a path. `examples/cli.py` is that loop, through the command line:
+
+```console
+python examples/cli.py
+```
+
+`hedloom where` resolves the current output to hand a tool; one point's inputs
+are then edited, and `hedloom check` answers `behind: … was superseded by …
+(arguments changed)` and **exits 1**, so a script can branch on it. The point
+nobody touched still answers `current`. `hedloom log` shows both iterations,
+and `hedloom pin` refuses an authored key that now names two of them rather
+than guessing which one you meant.
+
 Storage is the one resource a study spends that nothing returns on its own.
 `examples/retention.py` spends some deliberately and then takes it back:
 
