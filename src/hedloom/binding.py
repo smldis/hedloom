@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 import shlex
+import sys
+import traceback
 
 from hedloom_exec.transport import (
     Observation,
@@ -37,6 +39,9 @@ from hedloom_exec.transport import (
 )
 
 __all__ = ["BoundTransport", "Shell", "Workspace", "shell"]
+
+_RECORDED_TEXT_LIMIT = 2000
+"""How much captured text one failure may keep, in characters."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,8 +155,25 @@ class BoundTransport:
         except SubmissionRefused:
             raise
         except Exception as error:  # deliberate: failure is a recordable outcome
+            # The one-line summary is what a report reads; the traceback is what
+            # an author needs to fix the body. Recording both keeps the record
+            # readable and stops a failing operation from being debuggable only
+            # by rewriting it. Printing as well, because a body that raised has
+            # already earned the developer's attention.
+            formatted = traceback.format_exc()
+            print(formatted, file=sys.stderr, end="")
             self._results[identity] = Observation(
-                "failed", {"error": f"{type(error).__name__}: {error}"}
+                "failed",
+                {
+                    "error": f"{type(error).__name__}: {error}",
+                    # Bounded like the stderr a local command contributes below.
+                    # A record is evidence, not a log: an exception carrying a
+                    # megabyte of chained context would otherwise be kept
+                    # forever, and the last frames are the ones that name the
+                    # fault. The stream above is unbounded, where it costs
+                    # nothing durable.
+                    "traceback": formatted[-_RECORDED_TEXT_LIMIT:],
+                },
             )
             return _local_handle(self.name, identity, bundle)
 
@@ -209,7 +231,10 @@ def _run_locally(command: Shell, bundle: Mapping[str, Any]) -> Observation:
         return Observation("succeeded", {"stdout": result.stdout})
     return Observation(
         "failed",
-        {"returncode": result.returncode, "stderr": result.stderr[-2000:]},
+        {
+            "returncode": result.returncode,
+            "stderr": result.stderr[-_RECORDED_TEXT_LIMIT:],
+        },
     )
 
 
