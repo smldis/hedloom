@@ -33,15 +33,13 @@ import traceback
 
 from hedloom_exec.transport import (
     Observation,
+    RECORDED_TEXT_LIMIT,
     SubmissionRefused,
     Transport,
     substrate_of,
 )
 
 __all__ = ["BoundTransport", "Shell", "Workspace", "shell"]
-
-_RECORDED_TEXT_LIMIT = 2000
-"""How much captured text one failure may keep, in characters."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +170,7 @@ class BoundTransport:
                     # forever, and the last frames are the ones that name the
                     # fault. The stream above is unbounded, where it costs
                     # nothing durable.
-                    "traceback": formatted[-_RECORDED_TEXT_LIMIT:],
+                    "traceback": formatted[-RECORDED_TEXT_LIMIT:],
                 },
             )
             return _local_handle(self.name, identity, bundle)
@@ -233,7 +231,7 @@ def _run_locally(command: Shell, bundle: Mapping[str, Any]) -> Observation:
         "failed",
         {
             "returncode": result.returncode,
-            "stderr": result.stderr[-_RECORDED_TEXT_LIMIT:],
+            "stderr": result.stderr[-RECORDED_TEXT_LIMIT:],
         },
     )
 

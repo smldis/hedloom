@@ -18,8 +18,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+import sys
+import traceback
 
 __all__ = [
+    "RECORDED_TEXT_LIMIT",
     "Observation",
     "substrate_of",
     "SubmissionRefused",
@@ -28,6 +31,9 @@ __all__ = [
     "InProcessTransport",
     "placement_options",
 ]
+
+RECORDED_TEXT_LIMIT = 2000
+"""How much captured text one failure may keep, in characters."""
 
 _OBSERVED_STATES = frozenset(
     {"absent", "pending", "running", "succeeded", "failed", "cancelled"}
@@ -186,8 +192,14 @@ class InProcessTransport:
         try:
             value = implementation(**arguments)
         except Exception as error:  # deliberate: failure is a recordable outcome
+            formatted = traceback.format_exc()
+            print(formatted, file=sys.stderr, end="")
             self._results[identity] = Observation(
-                "failed", {"error": f"{type(error).__name__}: {error}"}
+                "failed",
+                {
+                    "error": f"{type(error).__name__}: {error}",
+                    "traceback": formatted[-RECORDED_TEXT_LIMIT:],
+                },
             )
         else:
             self._results[identity] = Observation("succeeded", {"value": value})

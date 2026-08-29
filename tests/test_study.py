@@ -32,7 +32,7 @@ from hedloom import (
 )
 from hedloom.binding import BoundTransport, Shell, Workspace
 from hedloom.cli import main as hedloom_cli
-from hedloom_exec.transport import SubmissionRefused
+from hedloom_exec.transport import RECORDED_TEXT_LIMIT, SubmissionRefused
 from hedloom_exec.reuse import scan_attempts
 from hedloom_run.driver import RunReport
 
@@ -242,6 +242,23 @@ def test_an_operation_with_no_bound_body_refuses(tmp_path):
     transport = BoundTransport({})
     with pytest.raises(SubmissionRefused):
         transport.submit("hedloom-abc", {"operation": "nobody.implements.this"})
+
+
+def test_bound_body_failure_uses_the_exec_recording_limit(monkeypatch, capsys):
+    binding_module = importlib.import_module("hedloom.binding")
+    formatted = "traceback-prefix\n" + "x" * (RECORDED_TEXT_LIMIT + 1)
+    monkeypatch.setattr(binding_module.traceback, "format_exc", lambda: formatted)
+    transport = BoundTransport(
+        {"explode": lambda: (_ for _ in ()).throw(ValueError("failure"))}
+    )
+
+    observation = transport.poll(
+        transport.submit("attempt", {"operation": "explode"})
+    )
+
+    assert observation.detail["error"] == "ValueError: failure"
+    assert observation.detail["traceback"] == formatted[-RECORDED_TEXT_LIMIT:]
+    assert capsys.readouterr().err == formatted
 
 
 def test_a_workspace_offers_only_declared_file_outputs(tmp_path):

@@ -175,6 +175,9 @@ its siblings are reused and the superseded results stay nameable.
   verdict or something incidental to it — an OOM kill, a preempted node — and
   the record cannot tell those apart. A non-reusable terminal try is retained
   and the next launch allocates the next try without a fixed attempt limit.
+  An in-process body failure records its unchanged one-line `error` and a
+  bounded traceback, while printing the complete traceback immediately to the
+  caller's standard error.
   `accept_for_reuse(...)` durably selects the current try as standing evidence;
   it does not imply a pin.
 - Outputs are declared per invocation as `{"path": ...}` for a file the command

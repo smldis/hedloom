@@ -12,7 +12,11 @@ from hedloom_exec.attempt import (
 )
 from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.journal import AttemptJournal
-from hedloom_exec.transport import InProcessTransport, SubmissionRefused
+from hedloom_exec.transport import (
+    RECORDED_TEXT_LIMIT,
+    InProcessTransport,
+    SubmissionRefused,
+)
 
 from fakes import FakeBatchStore, FakeBatchTransport
 
@@ -100,6 +104,36 @@ def test_failure_is_a_recorded_outcome_not_an_exception(tmp_path):
 
     assert state.outcome == "failed"
     assert "device did not converge" in json.dumps(log.read_manifest(state.current_try))
+
+
+def test_in_process_failure_keeps_its_error_and_a_traceback(capsys):
+    def raising_frame():
+        raise ValueError("device did not converge")
+
+    transport = InProcessTransport({"explode": raising_frame})
+    handle = transport.submit("attempt", {"operation": "explode"})
+    observation = transport.poll(handle)
+
+    assert observation.detail["error"] == "ValueError: device did not converge"
+    assert "in raising_frame" in observation.detail["traceback"]
+    assert capsys.readouterr().err == observation.detail["traceback"]
+
+
+def test_in_process_failure_bounds_the_recorded_traceback(monkeypatch, capsys):
+    import hedloom_exec.transport as transport_module
+
+    formatted = "traceback-prefix\n" + "x" * (RECORDED_TEXT_LIMIT + 1)
+    monkeypatch.setattr(transport_module.traceback, "format_exc", lambda: formatted)
+    transport = InProcessTransport(
+        {"explode": lambda: (_ for _ in ()).throw(ValueError("failure"))}
+    )
+
+    observation = transport.poll(
+        transport.submit("attempt", {"operation": "explode"})
+    )
+
+    assert observation.detail["traceback"] == formatted[-RECORDED_TEXT_LIMIT:]
+    assert capsys.readouterr().err == formatted
 
 
 def test_established_refusal_permits_a_later_submission(tmp_path):
