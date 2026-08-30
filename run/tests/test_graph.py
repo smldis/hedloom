@@ -22,7 +22,14 @@ from hedloom_exec.planned import plan_bundles
 from hedloom_exec.transport import InProcessTransport
 from hedloom_run.driver import run_plan
 from hedloom_run.binding import UnsupportedPlacement
-from hedloom_run.graph import _task_key, run_plan_graph
+from hedloom_run.graph import (
+    NestedCapacityExhausted,
+    _occupying,
+    _require_nesting_headroom,
+    _task_key,
+    _waiting_on_nested_run,
+    run_plan_graph,
+)
 
 distributed = pytest.importorskip("distributed")
 
@@ -735,3 +742,63 @@ def test_a_task_is_named_after_the_point_it_runs():
     assert keys[0].startswith("double-")
     assert "seed" in keys[0], "the point must still be readable in a dashboard"
     assert len(set(keys)) == len(keys)
+
+
+class DeclaringClient:
+    """A client that answers only what capacity its workers declare."""
+
+    def __init__(self, **capacity):
+        self._capacity = capacity
+
+    def scheduler_info(self):
+        return {
+            "workers": {
+                "one": {
+                    "resources": {
+                        f"placement:{name}": amount
+                        for name, amount in self._capacity.items()
+                    }
+                }
+            }
+        }
+
+
+def test_a_nested_run_whose_waiters_hold_every_unit_is_refused():
+    """The failure this prevents is the same silence, one level down.
+
+    An invocation that authors and submits a further Plan holds one unit of its
+    own placement for the whole of that inner run. Every *running* task holds
+    such a unit, so once the waiters account for a placement's whole capacity,
+    nothing of that placement can ever be admitted again — not by this run, not
+    by any other. Left alone it is a hang against workers that all read busy.
+    """
+
+    items = plan_bundles(chain())
+    with _occupying("local"), _waiting_on_nested_run():
+        with pytest.raises(NestedCapacityExhausted) as raised:
+            _require_nesting_headroom(
+                DeclaringClient(local=1), items, transports()
+            )
+
+    assert "local" in str(raised.value)
+    assert "placement of its own" in str(raised.value), "name a way out"
+
+
+def test_a_nested_run_with_one_unit_to_spare_is_admitted():
+    """Refusing must mean *cannot*, not *might not*.
+
+    One unit held by the waiter and two declared leaves one for the inner plan,
+    which is enough to make progress: its tasks run one at a time, finish, and
+    release. A refusal here would be this kernel inventing a deadlock.
+    """
+
+    items = plan_bundles(chain())
+    with _occupying("local"), _waiting_on_nested_run():
+        _require_nesting_headroom(DeclaringClient(local=2), items, transports())
+
+
+def test_a_run_submitted_from_the_driver_is_never_refused_for_nesting():
+    """The ordinary case holds no unit at all, so capacity 1 is not a deadlock."""
+
+    items = plan_bundles(chain())
+    _require_nesting_headroom(DeclaringClient(local=1), items, transports())

@@ -63,6 +63,8 @@ driver could not offer.
 from __future__ import annotations
 
 import sys
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
@@ -81,7 +83,76 @@ from hedloom_run.binding import (
 from hedloom_run.driver import InvocationOutcome, RunReport
 from hedloom_run.site import PLACEMENT_RESOURCE
 
-__all__ = ["run_plan_graph"]
+__all__ = ["NestedCapacityExhausted", "run_plan_graph"]
+
+
+class NestedCapacityExhausted(RuntimeError):
+    """A nested run cannot be admitted, because its waiters hold every unit.
+
+    Raised before the inner plan spends anything. The alternative is the worst
+    outcome this kernel can produce: every unit of a placement held by an
+    invocation that is blocked waiting for work which needs that same unit, so
+    nothing is ever admitted, nothing fails, and the run hangs against a
+    cluster whose workers all read as busy.
+    """
+
+
+# An invocation body may author and submit a further Plan. When it does, it is
+# blocked for the whole of that inner run while still holding one unit of its
+# own placement — that is not a leak, it is what "this invocation is still
+# running" means. Two facts follow, and together they make the deadlock
+# decidable rather than merely likely:
+#
+#   * every running task holds a unit of its placement (`_admission`), so
+#   * if the number of *blocked* holders reaches a placement's capacity, every
+#     unit is held by something that cannot proceed, and no task of that
+#     placement will ever be admitted again.
+#
+# `_OCCUPANCY` is what lets a nested submission know which unit its caller is
+# holding; `_BLOCKED_UNITS` counts the holders that are waiting. Both are
+# process-global on purpose: this kernel's workers are threads in the
+# submitting process, so a sibling waiter is as much a claim on capacity as an
+# ancestor is.
+_OCCUPANCY = threading.local()
+_BLOCKED_UNITS: dict[str, int] = {}
+_BLOCKED_LOCK = threading.Lock()
+
+
+@contextmanager
+def _occupying(placement: str):
+    """Record which placement's unit the calling thread is holding."""
+
+    previous = getattr(_OCCUPANCY, "placement", None)
+    _OCCUPANCY.placement = placement
+    try:
+        yield
+    finally:
+        _OCCUPANCY.placement = previous
+
+
+@contextmanager
+def _waiting_on_nested_run():
+    """Count this thread's held unit as blocked, for as long as it is.
+
+    A no-op outside an invocation: a run submitted from the driver holds no
+    unit of anything, and its capacity is whatever the cluster declares.
+    """
+
+    placement = getattr(_OCCUPANCY, "placement", None)
+    if placement is None:
+        yield
+        return
+    with _BLOCKED_LOCK:
+        _BLOCKED_UNITS[placement] = _BLOCKED_UNITS.get(placement, 0) + 1
+    try:
+        yield
+    finally:
+        with _BLOCKED_LOCK:
+            remaining = _BLOCKED_UNITS.get(placement, 0) - 1
+            if remaining > 0:
+                _BLOCKED_UNITS[placement] = remaining
+            else:
+                _BLOCKED_UNITS.pop(placement, None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +204,24 @@ def _outcome(
 
 
 def _run_one(
+    item: PlannedInvocation,
+    transports: Mapping[str, Transport],
+    config: _RunConfig,
+    *upstream: _Step,
+) -> _Step:
+    """Execute one invocation, recording which placement's unit it holds.
+
+    The unit is the fact a nested submission needs: a body that authors and
+    submits a further Plan is blocked for that whole run while still holding
+    it, and `_require_nesting_headroom` can only decide whether that is
+    survivable if it knows which placement is being held.
+    """
+
+    with _occupying(_placement_of(item)):
+        return _run_one_here(item, transports, config, *upstream)
+
+
+def _run_one_here(
     item: PlannedInvocation,
     transports: Mapping[str, Transport],
     config: _RunConfig,
@@ -314,6 +403,56 @@ def _require_admission(
         "hedloom_run.cluster.cluster_for(site), which derives its workers from the "
         "same profile the placements come from."
     )
+
+
+def _require_nesting_headroom(
+    client: Any,
+    items: Sequence[PlannedInvocation],
+    transports: Mapping[str, Transport],
+) -> None:
+    """Refuse a nested run whose waiters already hold every unit it needs.
+
+    Sound rather than cautious, and the argument is short. Every running task
+    holds one unit of its placement, so the units held by *blocked* waiters
+    cannot be released until the work they are waiting for runs. If those
+    waiters account for a placement's whole capacity, no task of that placement
+    can be admitted, by anyone, ever — including the one this run is about to
+    submit. That is a deadlock rather than a delay, and it is knowable here,
+    before the inner plan spends anything.
+
+    A run that is not nested reads an empty `_BLOCKED_UNITS` and returns.
+    """
+
+    with _BLOCKED_LOCK:
+        blocked = dict(_BLOCKED_UNITS)
+    if not blocked:
+        return
+
+    offered = _declared_placements(client)
+    wanted = sorted(
+        {
+            name
+            for name in (_placement_of(item) for item in items)
+            if transports.get(name) is not None
+        }
+    )
+    for name in wanted:
+        capacity = offered.get(f"{PLACEMENT_RESOURCE}{name}", 0)
+        held = blocked.get(name, 0)
+        if capacity - held > 0:
+            continue
+        raise NestedCapacityExhausted(
+            f"this plan needs placement {name!r}, whose declared capacity is "
+            f"{capacity:g}, and {held:g} of those units are held by "
+            "invocations that are themselves waiting for a nested run. Every "
+            "unit is therefore held by something that cannot finish until this "
+            "plan does, so nothing here would ever be admitted and the run "
+            "would hang against workers that all read as busy. Give the "
+            "operation that submits a nested plan a placement of its own, so "
+            "its waiting does not consume the capacity the inner plan needs, "
+            f"or declare more {name!r} capacity than there are invocations "
+            "that nest."
+        )
 
 
 def _require_shippable(transports: Mapping[str, Transport]) -> None:
@@ -516,6 +655,25 @@ def _collect_preserved(
 def run_plan_graph(
     document: Mapping[str, Any],
     transport: Transport | None = None,
+    **options: Any,
+) -> RunReport:
+    """Execute a Plan as a Dask graph — see `_run_plan_graph` for the arguments.
+
+    This wrapper exists for one fact that cannot be observed from inside the
+    run: whether the caller is an invocation that will be blocked, holding a
+    unit of its own placement, for as long as this run takes. Counting that
+    here is what lets a nested run be refused instead of deadlocking, and it
+    costs a run submitted from the driver nothing — it holds no unit, so the
+    claim is a no-op.
+    """
+
+    with _waiting_on_nested_run():
+        return _run_plan_graph(document, transport, **options)
+
+
+def _run_plan_graph(
+    document: Mapping[str, Any],
+    transport: Transport | None = None,
     *,
     client: Any,
     transports: Mapping[str, Transport] | None = None,
@@ -573,6 +731,7 @@ def run_plan_graph(
         source_fingerprints=source_fingerprints,
     )
     _require_admission(client, items, available)
+    _require_nesting_headroom(client, items, available)
     futures: dict[str, Any] = {}
     taken: set[str] = set()
     for item in items:

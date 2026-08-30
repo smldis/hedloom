@@ -73,6 +73,14 @@ dashboard, and failure isolation are untested against anything but fakes.
   cannot be serialized is refused by placement name before anything runs, and
   one that must stay a singleton has to be built on the worker rather than
   passed to it.
+- An invocation that submits a further Plan holds one unit of its own placement
+  for the whole of that inner run. When the waiters hold every unit of a
+  placement the inner plan needs, the inner run is refused with
+  `NestedCapacityExhausted` before it spends anything, because no task of that
+  placement could ever be admitted again. Sound rather than cautious: every
+  running task holds a unit, so waiters reaching capacity means nothing can
+  release. A run submitted from the driver holds no unit and is never refused
+  for this.
 - Task keys are named after the authored key, so an operator watching a sweep
   sees points rather than digests. Tasks are submitted impure: reuse is
   `hedloom-exec`'s decision against declared inputs, never Dask's against call
