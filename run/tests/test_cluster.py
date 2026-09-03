@@ -10,6 +10,8 @@ failure names a cluster that opened a server, not a missing attribute.
 taken over a default that belongs to Dask.
 """
 
+import io
+import logging
 import threading
 import pytest
 
@@ -192,6 +194,44 @@ def test_a_silent_cluster_holds_no_http_server():
             assert client.submit(lambda: 6 * 7).result() == 42
     finally:
         cluster.close()
+
+
+def test_a_silent_cluster_does_not_narrate_its_own_startup():
+    """Silence is the terminal too, not only the network.
+
+    Behavioural like its neighbour: it attaches a handler of its own and asserts
+    what that handler receives, which is the same path a user's stderr is on. A
+    `distributed` that stops honouring this fails on the symptom — a study
+    buried in startup chatter — rather than on a keyword argument.
+
+    Both records are logged while the cluster is up, inside the window Dask
+    silences, because the point is a quieter run and not a deafer one.
+    """
+
+    received = io.StringIO()
+    handler = logging.StreamHandler(received)
+    handler.setLevel(logging.INFO)
+    logger = logging.getLogger("distributed")
+    was = logger.level
+    # Attached before construction: Dask raises the level of the handlers it
+    # finds on the logger at that moment, so a handler added later is not the
+    # thing under test.
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        cluster = spec_cluster({"local": {"nthreads": 1, "resources": None}})
+        try:
+            logging.getLogger("distributed.core").info("routine chatter")
+            logging.getLogger("distributed.core").warning("a worker was lost")
+        finally:
+            cluster.close()
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(was)
+
+    printed = received.getvalue()
+    assert "routine chatter" not in printed
+    assert "a worker was lost" in printed
 
 
 def test_a_silent_cluster_is_still_silent_when_it_has_two_workers():

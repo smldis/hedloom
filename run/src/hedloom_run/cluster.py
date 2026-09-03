@@ -64,6 +64,7 @@ fails on the symptom rather than on an import.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Mapping
 
 from hedloom_run.site import EXPOSURES, PLACEMENT_RESOURCE, Site, SiteError
@@ -314,10 +315,25 @@ def spec_cluster(
         name: {"cls": worker_cls, "options": {**worker_common, **dict(options)}}
         for name, options in workers.items()
     }
+    # Log noise is a different axis from network exposure, and Dask's own two
+    # defaults disagree about it: `LocalCluster` passes `silence_logs=WARNING`,
+    # a bare `SpecCluster` defaults it to False. Left alone, the quietest
+    # exposure a site can declare is the loudest one it can run — a default
+    # study prints some thirty `distributed` INFO lines at startup that the
+    # `dashboard = "network"` path, which opens a port, does not. Restated here
+    # so the two shapes this module builds are quiet on the same terms.
+    #
+    # This is not the seam `_silent` refuses. That one is a patch on a shared
+    # base class with no owner to undo it; this is Dask's own parameter, scoped
+    # by Dask to the cluster's lifetime — it raises the level of the
+    # `distributed` logger's stream handlers on start and restores them on
+    # close. WARNING rather than anything higher because a run that loses a
+    # worker must still say so.
     return _built(
         lambda: SpecCluster(
             scheduler={"cls": scheduler_cls, "options": scheduler},
             workers=spec,
+            silence_logs=logging.WARNING,
         ),
         dashboard,
     )
