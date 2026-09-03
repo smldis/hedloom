@@ -17,6 +17,8 @@ and they are worth it, because the alternative is a design whose only evidence
 is that it ought to work.
 """
 
+import io
+import logging
 import os
 import time
 
@@ -24,6 +26,7 @@ import pytest
 
 from hedloom_run.cluster import spec_cluster
 from hedloom_run.graph import _require_shippable
+from hedloom_run.site import Site
 
 distributed = pytest.importorskip("distributed")
 dask_jobqueue = pytest.importorskip("dask_jobqueue")
@@ -183,6 +186,64 @@ def test_a_readiness_worker_reaches_the_pool_through_a_plugin(pool, farm):
             pooled.close()
         client.close()
         readiness.close()
+
+
+def test_a_pool_can_still_report_a_lost_worker(farm, tmp_path):
+    """The pool is quiet, but not mute — and `open_pools` is what decides that.
+
+    dask-jobqueue silences a `JobQueueCluster` at ERROR, which is below the
+    level a farm reports its own casualties at: a worker that dies, a job the
+    queue kills for memory, a comm the scheduler loses are all WARNING. Left at
+    the default, a pool that lost half its workers said nothing at all, while
+    the readiness cluster beside it spoke at WARNING — so a study spanning both
+    heard one half of its own run.
+
+    Built through `open_pools` rather than `LSFCluster` directly, because the
+    level is this function's decision to make and a test against the class
+    would pass whatever `open_pools` did.
+    """
+
+    from hedloom_run.pooled import close_pools, open_pools
+
+    site = Site(
+        root=str(tmp_path / "records"),
+        placements={
+            "pool": {
+                "kind": "lsf-pooled",
+                "queue": "normal",
+                "cores": 1,
+                "memory_mb": 1000,
+                "walltime": "00:30",
+                "workers": 0,
+                "max_jobs": 1,
+            }
+        },
+    )
+
+    received = io.StringIO()
+    handler = logging.StreamHandler(received)
+    handler.setLevel(logging.INFO)
+    logger = logging.getLogger("distributed")
+    was = logger.level
+    # Attached before the pool is opened: dask raises the level of the handlers
+    # it finds at that moment, so one added later is not the thing under test.
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        pools = open_pools(site)
+        try:
+            logging.getLogger("distributed.core").info("routine chatter")
+            logging.getLogger("distributed.core").warning("a worker was lost")
+        finally:
+            close_pools(pools)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(was)
+
+    printed = received.getvalue()
+    assert "a worker was lost" in printed
+    # Still no startup narration: the fix raises the floor, it does not remove it.
+    assert "routine chatter" not in printed
 
 
 def test_a_transport_holding_a_pooled_client_is_still_refused(pool):

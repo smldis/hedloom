@@ -71,6 +71,7 @@ exactly why placement is authored per operation and not per study.
 
 from __future__ import annotations
 
+import logging
 import shlex
 import subprocess
 from typing import Any, Mapping
@@ -502,6 +503,16 @@ def open_pools(site: Any) -> dict[str, Any]:
                 walltime=str(options.get("walltime") or "1:00"),
                 processes=1,
                 n_workers=0,
+                # Louder than dask-jobqueue's default, not quieter. It silences
+                # a `JobQueueCluster` at ERROR, which takes the pool's warnings
+                # with it — and a farm worker that dies, a job that is killed
+                # for memory, or a scheduler that loses a comm are all reported
+                # at WARNING. A pool has no other way to say those things.
+                #
+                # This is the same level `spec_cluster` asks for, so a study
+                # that spans both hears both on the same terms rather than
+                # having one half quietly hold things back.
+                silence_logs=logging.WARNING,
                 scheduler_options=dict(scheduler_options),
             )
             clusters[name] = cluster
