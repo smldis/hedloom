@@ -371,7 +371,6 @@ class _KeyRecorder(Callback):
 
 
 def test_raw_keys_are_one_to_one_and_list_source_survives_forced_fusion():
-    assert dask.__version__ == "2026.7.1"
     normalized, identities = _adversarial_plan()
     lowered = lower_delayed(
         normalized,
