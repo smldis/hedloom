@@ -142,16 +142,60 @@ def test_a_mixed_plan_places_some_points_directly_and_some_on_the_pool(
     )
 
 
-def test_moving_an_operation_to_a_pool_reuses_what_it_already_produced(
-    tmp_path, farm
-):
-    """The kernel invariant, stated as reuse.
+def test_placement_does_not_reach_the_attempt_identity(tmp_path, farm):
+    """The kernel invariant, stated where it actually lives: the digest.
 
     Queue, cores and host are excluded from `IDENTITY_KEYS` deliberately: they
     do not change what a deterministic operation produces, so changing them
     must not invalidate a result. Pooling is the largest such change there is —
     a different substrate entirely — so if any placement were going to leak
     into identity, this is where it would show.
+
+    Asserted on `input_digest` rather than on reuse, because reuse is no longer
+    the right instrument for it. Since studies were given stable operator names
+    the attempt identity is `blake2b(Study.name, invocation_id, input_digest)`
+    (`docs/internals/mechanism.md`), so two *differently named* studies record
+    under different namespaces however identical their work — deliberately, and
+    the site refuses `study` in an override for the same reason. This test
+    therefore compares what placement is allowed to touch, and
+    `test_an_overridden_run_reuses_what_the_plain_run_produced` covers the
+    reuse half within one namespace.
+    """
+
+    site = site_with_pool(tmp_path)
+
+    on_pool = all_pooled(("ab",)).submit(site=site)
+    assert on_pool.succeeded, on_pool.summary()
+
+    # Same work, same inputs, placed directly instead of on the pool.
+    @study(default_policy=local())
+    def directly(words=("ab",)):
+        return notes.named("notes")(words)
+
+    placed_directly = directly().submit(site=site)
+    assert placed_directly.succeeded, placed_directly.summary()
+
+    # Guards the comparison below: two empty lists are equal for the wrong
+    # reason, and this plan has exactly one point.
+    assert len(on_pool.report.outcomes) == 1
+    assert len(placed_directly.report.outcomes) == 1
+    assert {item.placement for item in on_pool.report.outcomes} == {"pool"}
+    assert {item.placement for item in placed_directly.report.outcomes} == {"local"}
+    assert [item.input_digest for item in on_pool.report.outcomes] == [
+        item.input_digest for item in placed_directly.report.outcomes
+    ], (
+        "a point moved off the pool must keep the identity it had on it; "
+        "placement is not identity-bearing"
+    )
+
+
+def test_an_overridden_run_reuses_what_the_plain_run_produced(tmp_path, farm):
+    """The other half: same namespace, different substrate, nothing recomputed.
+
+    `Site.with_override` promises exactly this — "an overridden run lands on the
+    same attempt identities as a plain one, and the two reuse each other's
+    work". An override is how a placement is *reached*, which is why it may
+    carry `placement` and `kernel` and refuses everything the Plan owns.
     """
 
     site = site_with_pool(tmp_path)
@@ -159,17 +203,16 @@ def test_moving_an_operation_to_a_pool_reuses_what_it_already_produced(
     first = all_pooled(("ab",)).submit(site=site)
     assert first.succeeded, first.summary()
 
-    # Same study, same inputs, now placed directly on its own LSF job.
-    @study(default_policy=local())
-    def directly(words=("ab",)):
-        return notes.named("notes")(words)
-
-    second = directly().submit(site=site)
+    second = all_pooled(("ab",)).submit(
+        site=site,
+        override={"placement": {"pool": {"cores": 2, "walltime": "1:00"}}},
+    )
 
     assert second.succeeded, second.summary()
+    # `all` over nothing is True, so the count is part of the claim.
+    assert len(second.report.outcomes) == len(first.report.outcomes) == 1
     assert all(item.reused for item in second.report.outcomes), (
-        "a point moved off the pool must reuse the result the pool produced; "
-        "placement is not identity-bearing"
+        "changing how a placement is reached must not invalidate a result"
     )
 
 
