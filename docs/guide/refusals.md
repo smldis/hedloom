@@ -11,6 +11,7 @@ something specific, and none of them is a bug report.
 | `AttributeError` on `out.<name>` | This operation never declared a file output by that name. |
 | `UnsupportedPlacement` (per invocation) | No transport provides the placement this invocation asked for. Deliberately fatal rather than run elsewhere. |
 | `UnsupportedPlacement` (before anything runs) | The cluster declares no capacity for a placement the plan uses. Build it with `cluster_for(site)`, or just let `submit` do it. |
+| `NestedCapacityExhausted` | An operation submitted a nested Plan, and every unit of a placement that plan needs is held by an invocation already waiting for a nested run. Nothing could ever be admitted, so it is refused rather than hung. Give the nesting operation [a placement of its own](sites.md#placement-kinds), or declare more capacity than there are invocations that nest. |
 | `SiteError: placement 'x' declares no max_jobs` | An LSF placement needs its budget stated. There is [no safe default](sites.md#the-two-numbers-which-are-about-two-different-machines). |
 | `SiteError: placement 'x' declares unknown option 'queeu'` | A typo'd or unrepresentable placement option, named by placement *and* key. Never a bare `TypeError`. A pooled placement has a [narrower vocabulary](sites.md#kind--lsf-pooled--a-shared-set-of-workers) than a direct one. |
 | `SiteError: placement 'x' names an unknown kind` | A site builds `lsf-interactive` and `lsf-pooled` from configuration; `in-process` must be given its implementations. |

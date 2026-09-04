@@ -106,8 +106,9 @@ SITE = Site(
     address_spaces={"served": str(SERVED_DIR)},
     # Headroom on purpose: `refresh` holds one unit of `local` for as long as
     # the inner run takes, because it is blocked waiting on it. Declaring one
-    # would leave the inner plan nothing to run on — a waiter and the work it
-    # waits for cannot share a single unit.
+    # would leave the inner plan nothing to run on, which is refused as
+    # `NestedCapacityExhausted` rather than hung — but refused is not run, so
+    # the headroom is what makes this example work rather than explain itself.
     placements={"local": 4},
 )
 
