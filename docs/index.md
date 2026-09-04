@@ -80,6 +80,12 @@ printed output is real.
   path to hand a tool, one point's inputs are edited, and `check` answers
   `behind` with a non-zero status so a script can branch on it. `log`, `prune`
   and `pin` finish the tour. Every command is really executed.
+* [`examples/live_source.py`](../examples/live_source.py) — a study that
+  reads something served from outside it, re-read on every run: a
+  nonce-bearing stage fetches unconditionally and then submits an inner plan
+  whose declared source is fingerprinted by content, so an unchanged document
+  reuses everything below it and a changed one reuses nothing. Both stages
+  share one session, which is what keeps one budget open rather than two.
 * [`examples/retention.py`](../examples/retention.py) — what storage a study
   spends and when it can be taken back: two points diverge, a second pass
   supersedes them, and the survey's promised byte count is checked against
