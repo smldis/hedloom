@@ -67,12 +67,12 @@ needed a second file supplying implementations, command lines, output paths,
 transports and roots; for this project's reference study that file is six
 hundred lines whose only job is to agree with the first one.
 
-Declared file outputs also get a stable current-result name under
-`<Site.root>/latest/<study>/<authored-key>/<output>`. Each try-named workspace
-remains immutable evidence;
-editing an input still moves the record identity, while the alias is repointed
-to the selected try before the next launch. Use `hedloom where`, `hedloom check`, and `hedloom log` to resolve
-the current output, detect a cached stale path, and inspect why records reran.
+Each try-named workspace is immutable evidence, and each invocation's outcome
+says which record and try it landed on — `run["point:solve"].record` and
+`.try_number` — so a caller keeps an exact reference to the execution it got,
+reused or fresh. Editing an input moves the record; retrying moves only the
+try. Finding a record you kept no reference to is discovery, and that is being
+designed separately rather than approximated.
 
 - **The body is the implementation.** `@operation` here is `hedloom_flow`'s,
   wrapped so the function it already kept is remembered as callable. The Plan
@@ -85,9 +85,12 @@ the current output, detect a cached stale path, and inspect why records reran.
   `bsub -I` job with that invocation's queue, cores and licences.
 - **`@study` is the named execution envelope.** Calling the decorated function
   records its Plan and hands back something inspectable; `submit` is the only
-  thing that spends. Its name is the stable namespace used by records and CLI
-  selectors. A `@flow` is the same planning shape one level down, without an
-  execution namespace or submission authority.
+  thing that spends. Its name is the study's operator-facing name, for
+  authoring and run context; it does not reach storage at all. A record is
+  selected by the computation an invocation declares, so two studies declaring
+  the same work share one record and neither owns it. A `@flow` is the same
+  planning shape one level down, without an operator name or submission
+  authority.
 - **`sweep(points, key=...)`** names every call inside the loop, so reuse cannot
   be lost to renumbering — the trap that made unnamed invocations dangerous.
   `.named("...")` does it by hand for a single call.
@@ -197,20 +200,6 @@ A fourth pass resubmits all of it from one session and must spend nothing.
 `bsub`, checking the same numbers from the submission records rather than from
 the journals, so the two instruments have to agree.
 
-Once a study has run, the questions stop being about authoring and start being
-about a path. `examples/cli.py` is that loop, through the command line:
-
-```console
-python examples/cli.py
-```
-
-`hedloom where` resolves the current output to hand a tool; one point's inputs
-are then edited, and `hedloom check` answers `behind: … was superseded by …
-(arguments changed)` and **exits 1**, so a script can branch on it. The point
-nobody touched still answers `current`. `hedloom log` shows both iterations,
-and `hedloom pin` refuses an authored key that now names two of them rather
-than guessing which one you meant.
-
 Storage is the one resource a study spends that nothing returns on its own.
 `examples/retention.py` spends some deliberately and then takes it back:
 
@@ -219,9 +208,10 @@ python examples/retention.py
 ```
 
 Four points, two of which write their whole trace and then diverge. Nothing is
-reclaimable yet — `latest/` still resolves to those failures, because an alias
-is bound before a body runs so a tool can watch an output while it is written.
-A second pass corrects the diverging points, the alias moves, and the spent
-tries become candidates. One is pinned first, so the refusal to reclaim it is
-shown rather than asserted. The survey states how many bytes it would free; the
-filesystem is measured before and after; the two have to agree.
+reclaimable yet — the shipped seven-day floor protects work that recent, which
+is a fact about the evidence rather than about whose it is. A second pass runs
+the corrected points as their own computations, the floor is then lowered on
+purpose and said out loud, and the spent tries become candidates. One is pinned
+first, so the refusal to reclaim it is shown rather than asserted. The survey
+states how many bytes it would free; the filesystem is measured before and
+after; the two have to agree.

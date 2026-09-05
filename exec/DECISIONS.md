@@ -157,15 +157,61 @@ mode's design premise is wrong and needs revisiting.
   jobs and are *not* owner-bound the way `bsub -I` is; `LSFCluster.close()` and
   the declared walltime are the only two things that stop them, and only the
   walltime survives the submit host dying without warning.
-- **Cross-plan reuse.** Attempt identity includes `plan_id` and
-  `invocation_id`, so two plans doing identical work each compute it. Dropping
-  them would give a global content-addressed cache, which is more powerful and
-  riskier: an undeclared-input error would then leak between studies rather
-  than staying inside one. Deliberately conservative for now.
-- **Reuse depends on stable invocation IDs.** Keyed calls have stable scoped
-  IDs; unkeyed ones are authored-order and renumber when earlier work is
-  inserted, silently discarding reuse. This makes Hedloom Flow's authored keys
-  load-bearing for reuse, which was not their original purpose.
+- ~~**Cross-plan reuse.**~~ **Answered 2026-09-05 (user direction): one shared
+  record store, selected by the declared computation digest alone.** The
+  earlier position included `plan_id` and `invocation_id` in the identity, so
+  two plans doing identical work each computed it; that was recorded as
+  deliberately conservative. It is now reversed. `attempt_identity` takes a
+  computation digest and nothing else, and `execute(transport, bundle, *,
+  durability, root, workspace_root)` takes no requester at all: a record has no
+  owner, and none is recorded on it.
+
+  The risk named in the old entry is real and is now accepted rather than
+  avoided: an undeclared-input error reaches whoever declares the same work,
+  not only the study that made it. What identity asserts is equal *declared*
+  computational dependencies, under the author's existing responsibility to
+  declare them faithfully — not semantic equivalence, source immutability, or
+  determinism. An intentional independent repetition must declare a
+  computational distinction, such as a seed or a repetition index; renaming a
+  study or an authored key does not request a second execution.
+
+  What this does **not** yet answer: two simultaneous requesters of one record
+  are not coalesced — the claim refuses the loser by name rather than making it
+  wait — and there is no way to find a record you kept no reference to. Both
+  are open below.
+- **Sharing a record between simultaneous requesters.** Open. Reuse selects
+  existing evidence when a record is already published; while a record's claim
+  is held, an equivalent request reaches that record and is refused. Waiting on
+  a competing claim, coalescing equivalent requests in the scheduler, and
+  cancellation/retry policy under sharing are deferred together with the
+  nested-study redesign. Until then this prototype does not promise that every
+  simultaneous equivalent requester receives a successful shared result.
+- ~~**Who has used a record.**~~ **Closed as a question this unit answers,
+  2026-09-05.** It was answered by creator attribution, which was wrong once
+  records became shared: it named whichever requester arrived first and called
+  that ownership. `hedloom check` inherited the defect outright — it resolved a
+  shared result to its creator and judged currentness in that creator's
+  history, so a record B was deliberately still using could be reported
+  "behind" because A had moved on. Creator fields, `attempts_for`,
+  `stale_attempts`, automatic `supersedes`, `lineage`, `latest/` and the
+  `where`/`check`/`log` commands are removed rather than qualified.
+
+  What replaces them is narrower and true: `ExecutionResult.record` and
+  `.try_number` state the execution a call selected, and a caller keeps that
+  reference. Two declarations are two records that coexist; which is "current"
+  is a property of the plan a caller holds, so it is answered by comparing
+  declarations. **Discovery — finding a record from a study, a run, or a date —
+  does not exist**, and this unit is deliberately not growing a second
+  study-history system to approximate it. Study/run history, multiple-requester
+  pins, and operator discovery are separate work.
+- ~~**Reuse depends on stable invocation IDs.**~~ **No longer true of reuse,
+  2026-09-05.** Keyed calls have stable scoped IDs and unkeyed ones renumber
+  when earlier work is inserted, which used to discard reuse silently because
+  the invocation ID was in the identity. It is not any more: an upstream
+  reference already normalizes to the producer's digest rather than its name,
+  so renumbering or renaming an invocation leaves its record and everything
+  downstream of it unchanged. Authored keys stay load-bearing for Plan topology
+  and per-invocation reporting — `run[key]` — not for reuse and not for storage.
 - **Verifying declared inputs.** Reuse trusts the author's declaration. Whether
   the unit should ever hash actual input files, rather than accept a supplied
   digest, is undecided — it would catch undeclared dependencies but requires

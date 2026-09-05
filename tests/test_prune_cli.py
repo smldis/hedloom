@@ -10,14 +10,13 @@ from hedloom_exec.journal import AttemptJournal
 def _site_and_record(tmp_path):
     root = tmp_path / "records"
     work = tmp_path / "work"
-    identity = attempt_identity(plan_id="plan", invocation_id="point").rendered
+    identity = attempt_identity(computation_digest="plan/point").rendered
     journal = AttemptJournal(root, identity)
     with journal.claim():
         number = journal.begin_try()
         journal.append(
-            "created", **{"try": number, "plan": "plan", "invocation": "point-id",
-                          "operation": "work", "input_digest": "digest",
-                          "authored_key": "point"},
+            "created",
+            **{"try": number, "operation": "work", "input_digest": "digest"},
         )
         journal.publish_terminal(try_number=number, outcome="failed", manifest={})
     workspace = work / try_name(identity, number)
@@ -72,13 +71,21 @@ def test_cli_selection_overrides_site_rules(tmp_path, capsys):
     assert "0 candidate" in capsys.readouterr().out
 
 
-def test_cli_can_restrict_by_study_and_authored_invocation(tmp_path, capsys):
-    profile, _journal, workspace = _site_and_record(tmp_path)
-    assert main(["prune", "--site", str(profile), "--study", "other"]) == 0
-    assert "0 candidate" in capsys.readouterr().out
-    assert main(["prune", "--site", str(profile), "--invocation", "point"]) == 0
+def test_cli_can_restrict_to_one_record(tmp_path, capsys):
+    profile, journal, workspace = _site_and_record(tmp_path)
+    assert main(
+        ["prune", "--site", str(profile), "--record", journal.identity[:16]]
+    ) == 0
     assert "1 candidate" in capsys.readouterr().out
     assert workspace.exists()
+
+
+def test_cli_refuses_a_record_selector_that_matches_nothing(tmp_path, capsys):
+    """Better to refuse than to survey everything under a typo."""
+
+    profile, _journal, _workspace = _site_and_record(tmp_path)
+    assert main(["prune", "--site", str(profile), "--record", "hedloom-00"]) == 2
+    assert "no record matches" in capsys.readouterr().err
 
 
 def test_the_module_entry_point_runs_the_cli_rather_than_exiting_silently():

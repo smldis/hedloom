@@ -31,11 +31,10 @@ from hedloom_exec.artifacts import (
     workspace_path,
     write_diagnostics,
 )
-from hedloom_exec.alias import point_alias
 from hedloom_exec.errors import AttemptError
 from hedloom_exec.identity import try_name
 from hedloom_exec.journal import AttemptJournal, AttemptState, TryState
-from hedloom_exec.reuse import input_digest, input_digests
+from hedloom_exec.reuse import input_digest
 from hedloom_exec.transport import Observation, SubmissionRefused, Transport, substrate_of
 
 __all__ = [
@@ -298,18 +297,14 @@ def _launch_or_attach_locked(
     job_name = try_name(journal.identity, number)
 
     if not any(event.event == "created" for event in state.events):
-        created = {
-            "try": number,
-            "plan": bundle.get("plan"),
-            "invocation": bundle.get("invocation"),
-            "operation": bundle.get("operation"),
-            "input_digest": input_digest(bundle),
-            "input_digests": input_digests(bundle),
-        }
-        for name in ("authored_key", "supersedes"):
-            if bundle.get(name) is not None:
-                created[name] = bundle[name]
-        journal.append("created", **created)
+        journal.append(
+            "created",
+            **{
+                "try": number,
+                "operation": bundle.get("operation"),
+                "input_digest": input_digest(bundle),
+            },
+        )
 
     submitted_bundle = _bundle_for_try(
         journal,
@@ -357,7 +352,13 @@ def _bundle_for_try(
     workspace_root: str | Path | None,
     create_workspace: bool,
 ) -> Mapping[str, Any]:
-    """Bind one try's workspace and repoint its derived current aliases."""
+    """Bind one try's workspace, so declared outputs have somewhere to land.
+
+    The workspace is named by the try, and that name is the only stable
+    reference to it. There is no derived per-requester view: a record belongs
+    to a computation rather than to a study, so a name-shaped alias could only
+    have pointed one requester's spelling at another's work.
+    """
 
     prepared: Mapping[str, Any] = {**bundle, "try": number}
     declared_outputs = bundle.get("outputs")
@@ -370,21 +371,7 @@ def _bundle_for_try(
         if create_workspace
         else workspace_path(root, name)
     )
-    prepared = {**prepared, "workdir": str(workdir)}
-    plan_id = bundle.get("plan")
-    invocation_id = bundle.get("invocation")
-    if declared_outputs and plan_id and invocation_id:
-        alias_key = bundle.get("authored_key") or invocation_id
-        for output, declaration in sorted(declared_outputs.items()):
-            if isinstance(declaration, Mapping) and "path" in declaration:
-                point_alias(
-                    journal.directory.parent,
-                    plan_id=plan_id,
-                    authored_key=alias_key,
-                    output=output,
-                    target=workdir / declaration["path"],
-                )
-    return prepared
+    return {**prepared, "workdir": str(workdir)}
 
 
 def _require_matching_inputs(
@@ -411,8 +398,9 @@ def _require_matching_inputs(
     if recorded != current:
         raise StaleIdentity(
             f"attempt {journal.identity} was created from inputs {recorded} "
-            f"but this bundle digests to {current}. Derive the identity from "
-            f"plan_id/invocation_id so changed inputs get their own attempt."
+            f"but this bundle digests to {current}. A record is selected by "
+            f"the declared computation, so a changed declaration must be given "
+            f"its own record rather than written into this one."
         )
 
 

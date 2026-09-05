@@ -31,7 +31,6 @@ from hedloom import (
     sweep,
 )
 from hedloom.binding import BoundTransport, Shell, Workspace
-from hedloom.cli import main as hedloom_cli
 from hedloom_exec.transport import RECORDED_TEXT_LIMIT, SubmissionRefused
 from hedloom_exec.reuse import scan_attempts
 from hedloom_run.driver import RunReport
@@ -521,10 +520,12 @@ def test_an_explicit_study_name_is_the_record_and_cli_namespace(site, capsys):
 
     assert subject.name == "short-study"
     assert run.study_name == "short-study"
-    assert {item.plan_id for item in records} == {"short-study"}
     assert "study short-study" in subject.summary().splitlines()[0]
-    assert hedloom_cli(["log", "--root", site.root, "short-study:write"]) == 0
-    assert records[0].identity in capsys.readouterr().out
+    # The name is the study's, for authoring and run context. It is not on the
+    # record, which is named by the computation and shared with anyone who
+    # declares the same work.
+    assert len(records) == 1
+    assert run["write"].record == records[0].identity
 
 
 def test_exported_output_names_do_not_rename_or_invalidate_a_study(site):
@@ -538,10 +539,17 @@ def test_exported_output_names_do_not_rename_or_invalidate_a_study(site):
 
     assert first.study_name == second.study_name == "stable-study"
     assert second.report.outcomes[0].reused
-    assert {item.plan_id for item in scan_attempts(site.root)} == {"stable-study"}
+    assert len(scan_attempts(site.root)) == 1
 
 
-def test_study_names_separate_identical_outputs_and_authored_keys(site):
+def test_different_declarations_get_their_own_records(site):
+    """Different words are different computations, hence different records.
+
+    The study name separates nothing: two studies declaring the same word
+    would share one record — `tests/test_shared_computation_identity.py` holds
+    that half. Here the *words* differ, and that is what makes two records.
+    """
+
     @study(name="first-study", default_policy=local())
     def first():
         return {"note": write_note.named("write")(word="one").note}
@@ -550,14 +558,12 @@ def test_study_names_separate_identical_outputs_and_authored_keys(site):
     def second():
         return {"note": write_note.named("write")(word="two").note}
 
-    first().submit(site=site, sequential=True)
-    second().submit(site=site, sequential=True)
+    one = first().submit(site=site, sequential=True)
+    two = second().submit(site=site, sequential=True)
 
-    records = scan_attempts(site.root)
-    assert {(item.plan_id, item.authored_key) for item in records} == {
-        ("first-study", "write"),
-        ("second-study", "write"),
-    }
+    records = {item.identity for item in scan_attempts(site.root)}
+    assert records == {one["write"].record, two["write"].record}
+    assert len(records) == 2
 
 
 def test_two_study_definitions_cannot_claim_one_name():

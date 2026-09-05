@@ -6,9 +6,10 @@ that Plan document and executes them with durable records.
 
 The point of the demonstration is the third run. Refine one point's grid and
 rerun: that point and the reduction downstream of it recompute, the untouched
-points are reused from their published manifests, and the superseded result is
-still on disk and nameable rather than overwritten. Nothing is asked to declare
-that it changed — the digest of what went in is what decides.
+points are reused from their published manifests, and the earlier result is
+still on disk under its own record rather than overwritten or declared
+obsolete. Nothing is asked to declare that it changed — the digest of what went
+in is what decides, and each declaration keeps its own record.
 
 The work is the trapezoid rule over a definite integral whose value is
 analytic, so a reused result and a recomputed one can be checked against each
@@ -49,10 +50,9 @@ except ModuleNotFoundError:  # pragma: no cover - guidance, not logic
 
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.planned import plan_bundles
-from hedloom_exec.reuse import describe_staleness, scan_attempts, stale_attempts
+from hedloom_exec.reuse import scan_attempts
 from hedloom_exec.transport import InProcessTransport
 
-PLAN_ID = "refinement"
 POINTS = {"coarse": 8, "medium": 32, "fine": 128}
 
 # The integral is exp(-x) over [0, 1], whose exact value is 1 - 1/e. Declared
@@ -142,15 +142,13 @@ def run(document, root, label):
         bundle["resolved_inputs"] = resolved
 
         result = execute(
-            transport,
-            bundle,
-            durability=Durability.RECORDED,
-            root=root,
-            plan_id=PLAN_ID,
-            invocation_id=item.invocation_id,
+            transport, bundle, durability=Durability.RECORDED, root=root
         )
         verb = "reused " if result.disposition == "completed" else "ran    "
-        print(f"  {verb} {item.authored_key:<14} {item.input_digest[:12]}")
+        print(
+            f"  {verb} {item.authored_key:<14} {item.input_digest[:12]}"
+            f"  {result.record}#{result.try_number}"
+        )
 
         for output in ("result", "verdict"):
             values[f"output:{item.input_digest}:{output}"] = result.value
@@ -172,20 +170,19 @@ def main():
         verdicts = [value for key, value in values.items() if "verdict" in key]
         print(f"\n  final verdict: {verdicts[-1] if verdicts else None}")
 
-        known = scan_attempts(root)
-        superseded = [
-            record
-            for item in plan_bundles(second)
-            for record in stale_attempts(
-                root,
-                plan_id=PLAN_ID,
-                invocation_id=item.invocation_id,
-                current_digest=item.input_digest,
-                records=known,
+        # The edit did not overwrite anything, and nothing declared the old
+        # result obsolete. Both computations are in the store, each addressed
+        # by what it computed. "Current" is a property of the plan you are
+        # holding, not of the store: comparing this plan's declarations with
+        # what is there is the whole of the question.
+        current = {item.input_digest for item in plan_bundles(second)}
+        print("\n  records in the store:")
+        for record in sorted(scan_attempts(root), key=lambda item: item.identity):
+            mark = "this plan" if record.input_digest in current else "  earlier"
+            print(
+                f"   {mark}  {record.identity}  {record.outcome or 'unfinished'}"
+                f"  (inputs {record.input_digest})"
             )
-        ]
-        print("\n  superseded but retained:")
-        print("   " + describe_staleness(superseded).replace("\n", "\n   "))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

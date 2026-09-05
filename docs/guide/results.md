@@ -98,10 +98,16 @@ to be authored last — and silently stopped being it the moment anything was
 appended. Export what the study produces and read it by name.
 
 Each outcome carries `authored_key`, `operation`, `input_digest`,
-`disposition`, `outcome`, `placement`, `value`, `artifacts`, `changed_keys` and
-`error`. Those
-first three are public join keys on purpose: **result tooling — a summary table,
-a run diff — is a consumer of this data and needs no change to hedloom.**
+`disposition`, `outcome`, `placement`, `value`, `artifacts`, `record`,
+`try_number` and `error`. Those first three are public join keys on purpose:
+**result tooling — a summary table, a run diff — is a consumer of this data and
+needs no change to hedloom.**
+
+`record` and `try_number` are the exact execution this invocation landed on:
+the content-addressed record, and the try whose evidence was published or
+reused. They are what to pin, prune around, or read back later, and they are
+stated by the run rather than reconstructed afterwards. An invocation that was
+blocked or refused reached no execution and leaves both `None`.
 
 The report is in **plan order** regardless of completion order, so two runs of
 one plan stay comparable; `on_event` fires in completion order, because those
@@ -142,53 +148,61 @@ accepting the current one is a separate, durable human action
 (`hedloom_exec.reuse.accept_for_reuse`). Acceptance selects standing evidence;
 it does not pin it.
 
-## Following the current file output
+## Finding what a run actually executed
 
-A record keeps the content-addressed name, while each execution has an immutable
-`<record>-<try>` workspace. Editing an identity-bearing input moves the record;
-retrying unchanged inputs increments only the try. For each declared file
-output, Hedloom also maintains a stable view:
+A record keeps the content-addressed name, while each execution has an
+immutable `<record>-<try>` workspace. Editing an identity-bearing input moves
+the record; retrying unchanged inputs increments only the try.
 
-```text
-<Site.root>/latest/<study>/<authored-key>/<output>
+The run tells you which one it used:
+
+```python
+outcome = run["coarse:integrate"]
+outcome.record        # 'hedloom-<20 hex>' — the computation's record
+outcome.try_number    # the try whose evidence was published or reused
+outcome.artifacts["result"]["address"]   # where that try's output landed
 ```
 
-The entry is a symlink to the selected try's workspace file. It is created
-or atomically repointed before the work launches, so reopening it follows the
-current try and can observe a file while it grows. A program that already has
-the old file open keeps that file descriptor until it reopens. Before the work
-first writes the file, the symlink intentionally dangles; Hedloom does not
-pre-create the declared output, because existence is evidence that the work
-produced it.
+That pair is the address for everything else. There is no per-study view of
+outputs and no name-shaped selector, because a record holds a computation and
+belongs to no study: two studies declaring the same work reach the same record,
+so `<study>:<key>` could only ever have named whichever of them ran first.
 
-The operator commands accept either `--site site.toml` or `--root ATTEMPTS`:
+The operator commands take a record identity, or any unambiguous prefix of one,
+optionally with `#<try>`:
 
 ```console
-hedloom where --site site.toml amplifier:point:write --output result
-hedloom check --site site.toml /path/cached/by/a/consumer
-hedloom log --site site.toml amplifier:point:write
+hedloom pin   --site site.toml hedloom-3f9c2a10#0 --reason "quoted in a report"
+hedloom pins  --site site.toml
+hedloom unpin --site site.toml pin-1a2b3c --reason done
+hedloom prune --site site.toml --record hedloom-3f9c2a10 --failed
 ```
 
-The selector is `<study-name>:<authored-key>`. The first colon separates the
-study namespace; further colons belong to the authored key, as in the keyed
-sweep point `point:write`.
+`pin` protects one terminal try's workspace; `prune` surveys and reclaims spent
+ones. Both address records and tries and nothing else.
 
-`where` prints the current workspace path for a script that resolves rather
-than remembers. `check` exits zero for a current recorded path, one for a stale
-one, and two for a path that is not a recorded attempt. `log` lists distinct
-record creations newest first, marking the alias target as current and naming
-which identity keys changed. Returning to an earlier result moves the current
-marker back to it without weakening or replacing its original identity.
+What this does **not** give you is a way to find a record you have no reference
+to. Discovery — listing studies, browsing runs, asking what a study produced
+last week — is not built. A caller that wants a reference later must keep the
+one its run reported. This is a real gap in the operator interface, and it is
+the piece being designed separately rather than approximated here.
 
 On disk, a layout-1 record keeps `events.jsonl`, one immutable
-`manifest/<try>.json` per terminal try, and an atomic `standing.json` pointer to
-the evidence currently reusable. Roots written before the Phase 1 identity and
-layout change are unreadable; this prototype has no migration.
+`manifest/<try>.json` per terminal try, and an atomic `standing.json` pointer
+to the evidence currently reusable. Identity renderings have changed as the
+contract changed, so a record written under an older one is not selected by
+today's digest — its contents remain perfectly readable, because layout 1 has
+not changed. There is no migration and none is needed: old records simply are
+not reused.
 
 ```{warning}
-**Reuse trusts your declaration.** An operation whose result depends on an
-undeclared file, wall-clock time, or a mutable network resource is not honestly
-reusable, and no digest detects that.
+**Reuse trusts your declaration, across studies.** An operation whose result
+depends on an undeclared file, wall-clock time, or a mutable network resource
+is not honestly reusable, and no digest detects that. Because one shared record
+serves every study that declares the same work, such an error reaches whoever
+declares it, not only the study that made it. To repeat work deliberately,
+declare the distinction — a seed, a repetition index. Renaming a study or an
+authored key does not ask for a second execution.
 ```
 
 ## Starting from a file the study did not write
@@ -248,17 +262,16 @@ only `--apply` removes selected bytes, after a second check under the record
 claim. Records and immutable manifests remain even when a spent workspace is
 reclaimed.
 
-Spent storage is storage nothing resolves to, so a failure is not reclaimable
-while it is still the newest try at its authored key. A `latest/` alias is
-bound before a body runs, which is what lets a tool watch an output as it is
-written — and it means every current try has an alias, whether it succeeded or
-not. Such a try is skipped as `aliased`. A failed try becomes a candidate once
-a later run at the same key supersedes it and the alias moves, which is also
-the point at which nobody is still reading it.
-`examples/retention.py` runs exactly that lifecycle.
+What protects a try is a property of the evidence, never of who asked for it:
+the retention floor (seven days by default) protects recent work, the standing
+evidence a later run would reuse is never a candidate, an unreconciled or
+non-terminal try is never a candidate, a contended record is skipped rather
+than waited on, and a pin is a refusal. `examples/retention.py` runs exactly
+that lifecycle and checks the byte arithmetic at every step.
 
-Use `hedloom pin --site site.toml <selector> --reason TEXT` when a report or
-external tool holds a try path. A pin is terminal-only and per-try, stored in
+Use `hedloom pin --site site.toml <record>#<try> --reason TEXT` when a report
+or external tool holds a try path; `run[key].record` and `.try_number` are
+where that reference comes from. A pin is terminal-only and per-try, stored in
 the record with actor, reason, layout and content digests. Verification detects
 drift; a changed record layout reports the promise void. Write-bit removal is
 an accident-catching guardrail, not enforcement—the owner and open descriptors

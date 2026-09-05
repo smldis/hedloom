@@ -4,13 +4,7 @@ import pytest
 
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.identity import attempt_identity
-from hedloom_exec.reuse import (
-    attempts_for,
-    describe_staleness,
-    input_digest,
-    scan_attempts,
-    stale_attempts,
-)
+from hedloom_exec.reuse import input_digest, scan_attempts
 from hedloom_exec.transport import InProcessTransport
 
 BUNDLE = {
@@ -59,13 +53,13 @@ def test_unserializable_inputs_are_refused_with_an_explanation():
         input_digest({"operation": "a", "inputs": {"handle": object()}})
 
 
-def test_identity_is_content_addressed_when_a_digest_is_given():
-    base = attempt_identity(plan_id="p", invocation_id="i")
-    with_inputs = attempt_identity(plan_id="p", invocation_id="i", input_digest="abc")
-    other_inputs = attempt_identity(plan_id="p", invocation_id="i", input_digest="def")
+def test_identity_is_the_declared_computation_and_nothing_else():
+    with_inputs = attempt_identity(computation_digest="abc")
+    other_inputs = attempt_identity(computation_digest="def")
 
-    assert base.rendered != with_inputs.rendered != other_inputs.rendered
-    assert with_inputs.input_digest == "abc"
+    assert with_inputs.rendered != other_inputs.rendered
+    assert with_inputs.computation_digest == "abc"
+    assert attempt_identity(computation_digest="abc") == with_inputs
 
 
 def test_unchanged_inputs_reuse_the_published_result(tmp_path):
@@ -74,8 +68,8 @@ def test_unchanged_inputs_reuse_the_published_result(tmp_path):
     common = {
         "durability": Durability.RECORDED,
         "root": str(tmp_path),
-        "plan_id": "plan-1",
-        "invocation_id": "inv-a",
+
+
     }
 
     first = execute(shared, BUNDLE, **common)
@@ -94,8 +88,8 @@ def test_changed_inputs_do_not_reuse_the_old_result(tmp_path):
     common = {
         "durability": Durability.RECORDED,
         "root": str(tmp_path),
-        "plan_id": "plan-1",
-        "invocation_id": "inv-a",
+
+
     }
 
     execute(shared, BUNDLE, **common)
@@ -107,45 +101,77 @@ def test_changed_inputs_do_not_reuse_the_old_result(tmp_path):
     assert len(scan_attempts(tmp_path)) == 2
 
 
-def test_prior_results_are_named_as_superseded_not_discarded(tmp_path):
-    common = {
-        "durability": Durability.RECORDED,
-        "root": str(tmp_path),
-        "plan_id": "plan-1",
-        "invocation_id": "inv-a",
-    }
-    execute(transport(), BUNDLE, **common)
-    changed = dict(BUNDLE, inputs={"model": "sha256:bbb"})
-    execute(transport(), changed, **common)
-
-    stale = stale_attempts(
-        tmp_path,
-        plan_id="plan-1",
-        invocation_id="inv-a",
-        current_digest=input_digest(changed),
-    )
-
-    assert len(stale) == 1
-    assert stale[0].input_digest == input_digest(BUNDLE)
-    assert stale[0].outcome == "succeeded"
-    assert "succeeded" in describe_staleness(stale)
-
-
-def test_attempts_are_attributable_to_their_invocation(tmp_path):
-    common = {"durability": Durability.RECORDED, "root": str(tmp_path)}
-    execute(transport(), BUNDLE, plan_id="plan-1", invocation_id="inv-a", **common)
-    execute(transport(), BUNDLE, plan_id="plan-1", invocation_id="inv-b", **common)
-
-    assert len(attempts_for(tmp_path, plan_id="plan-1", invocation_id="inv-a")) == 1
-    assert len(scan_attempts(tmp_path)) == 2
-
-
 def test_scanning_an_absent_root_is_empty_not_an_error(tmp_path):
     assert scan_attempts(tmp_path / "nothing-here") == ()
 
 
-def test_recorded_execution_still_requires_enough_to_identify_itself(tmp_path):
-    with pytest.raises(ValueError, match="plan_id and invocation_id"):
-        execute(
-            transport(), BUNDLE, durability=Durability.RECORDED, root=str(tmp_path)
-        )
+def test_recorded_execution_needs_only_a_bundle_and_a_root(tmp_path):
+    """No study, no Plan ID, no invocation ID, no authored key."""
+
+    import inspect
+
+    parameters = inspect.signature(execute).parameters
+    assert set(parameters) == {
+        "transport", "bundle", "durability", "root", "workspace_root"
+    }
+
+    result = execute(
+        transport(), BUNDLE, durability=Durability.RECORDED, root=str(tmp_path)
+    )
+    assert result.outcome == "succeeded"
+    assert result.record == scan_attempts(tmp_path)[0].identity
+    assert result.try_number == 0
+
+
+def test_recorded_execution_still_requires_a_root(tmp_path):
+    with pytest.raises(ValueError, match="requires a root"):
+        execute(transport(), BUNDLE, durability=Durability.RECORDED)
+
+
+def test_ephemeral_execution_selects_no_record_or_try():
+    result = execute(transport(), BUNDLE)
+
+    assert result.outcome == "succeeded"
+    assert result.record is None and result.try_number is None
+
+
+def test_a_prior_failure_gets_a_new_try_in_the_same_shared_record(tmp_path):
+    """A retry is a numbered try, and the result names which one it selected.
+
+    Failure is not reusable evidence, so the next request for that declaration
+    runs again -- as try 1 under the record try 0 already failed in, whoever
+    asks. Reuse then selects try 1, and says so.
+    """
+
+    def explode(**kwargs):
+        raise RuntimeError("no")
+
+    common = {"durability": Durability.RECORDED, "root": str(tmp_path)}
+    failed = execute(
+        InProcessTransport({"simulate": explode}),
+        BUNDLE,
+        **common,
+    )
+    assert failed.outcome == "failed"
+
+    runs: list[str] = []
+    retried = execute(
+        transport(runs),
+        BUNDLE,
+        **common,
+    )
+
+    assert retried.outcome == "succeeded"
+    assert retried.record == failed.record
+    assert (failed.try_number, retried.try_number) == (0, 1)
+    assert len(scan_attempts(tmp_path)) == 1
+    assert len(runs) == 1
+    assert sorted(
+        int(path.stem) for path in (retried.journal.directory / "manifest").glob("*.json")
+    ) == [0, 1]
+
+    # And the succeeded evidence is now what a third requester reuses.
+    third = execute(transport(runs), BUNDLE, **common)
+    assert third.disposition == "completed"
+    assert third.try_number == 1, "reuse selects the try that actually succeeded"
+    assert len(runs) == 1

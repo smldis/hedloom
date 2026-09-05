@@ -6,7 +6,7 @@ from hedloom_exec.journal import AttemptJournal, ClaimNotHeld, ConcurrentClaim
 from hedloom_exec.transport import Observation, TransportError
 
 
-IDENTITY = attempt_identity(plan_id="allocation", invocation_id="one").rendered
+IDENTITY = attempt_identity(computation_digest="allocation/one").rendered
 BUNDLE = {"operation": "work"}
 
 

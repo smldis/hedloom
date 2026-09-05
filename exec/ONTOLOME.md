@@ -58,16 +58,49 @@ The unit now also studies whether content-addressed identity derived from a
 Plan document makes rerunning honest. `examples/planned_refinement.py`
 is the current evidence: three points and a reduction run, rerun with nothing
 recomputed, then one point refined so that it and the reduction rerun while
-its siblings are reused and the superseded results stay nameable.
+its siblings are reused and the earlier results keep their own records.
 
 ## Current contracts
 
 - Distribution: `hedloom-exec`, independently installable on Python 3.10 or newer,
   with no dependencies. It does not import `hedloom_flow`.
-- `attempt_identity(plan_id, invocation_id, input_digest)` is a pure stable
-  record identity. Phase 1 deliberately removed the old sequence hash slot, so
-  every identity rendering changed. There is no migration: roots written by an
-  earlier phase are unreadable and must not be mixed with layout-1 roots.
+- `attempt_identity(computation_digest)` is a pure stable record identity, and
+  the digest is the *only* thing that selects a record. Study name, authored
+  key, Plan ID, placement, kernel and try number describe who asked or where it
+  ran and are excluded, so two requesters declaring the same computation reach
+  one shared record and the second reuses the first's evidence. `AttemptIdentity`
+  carries no requester metadata, so identity equality is record equality.
+  A missing or empty digest is refused rather than defaulted: there is no
+  requester-derived fallback that would look content-addressed without being it.
+  Every identity rendering changed with this contract, as it did when Phase 1
+  removed the sequence slot. That is a *selection* change, not a format change:
+  layout 1 is unaltered, so records written under an earlier rendering remain
+  readable and scannable — today's digest simply does not select them, and they
+  are not reused. There is no migration and none is required.
+- What equal identity asserts is **equal declared computational dependencies**,
+  under the existing author responsibility to declare them faithfully. It does
+  not assert semantic equivalence, source immutability, or determinism, and it
+  now carries that trust between studies rather than within one. An intentional
+  independent repetition must declare a computational distinction, such as a
+  seed or repetition index; renaming an invocation does not request one.
+- A record has **no owner**. The `created` event carries the try, the operation
+  and the declaration digest, and nothing that names a study, a Plan, an
+  invocation or an authored key. Nothing in this unit answers "whose record is
+  this?", "what did this replace?" or "is this path still current?", because a
+  shared record has no single requester whose history those questions could be
+  answered from. Two declarations are two records that coexist; which one is
+  current is a property of the plan a caller holds, answered by comparing
+  declarations rather than by asking the store.
+- `ExecutionResult.record` and `.try_number` are how a caller keeps hold of what
+  it executed: the record, and the try whose evidence was published or reused.
+  A call that selected no try leaves both `None` rather than naming a plausible
+  neighbour. Finding a record without such a reference is **discovery**, which
+  this unit deliberately does not provide; study and run history belong
+  elsewhere and are not approximated here.
+- Two *simultaneous* requesters of one shared record are not coalesced. The
+  record claim refuses the loser by name rather than making it wait, so an
+  equivalent concurrent request reaches the right record and gets a refusal
+  instead of a result. Waiting, coalescing and scheduler-side sharing are open.
 - A record is named by that identity. A try workspace and every external job
   are named `<record>-<n>`; discovery, cancellation, and watcher matching use
   that try name, never the bare record identity.
@@ -143,26 +176,15 @@ its siblings are reused and the superseded results stay nameable.
   operation, command, arguments, cwd, declared inputs, and explicitly nominated
   `identity_env`. Queue, walltime, cores, host, and general `env` are excluded,
   so changing where work runs never invalidates what it produced.
-- `input_digests(...)` records one explanatory digest for each of the nine
-  identity-bearing keys. These are additional evidence only: the aggregate
-  `input_digest(...)` remains the same BLAKE2b over the same canonical mapping.
-- Attempt identity may be content-addressed by folding that digest in. Changed
-  declared inputs then land at a different identity. Treating the selected
+- Attempt identity is that digest and only that digest. Changed
+  declared inputs land at a different identity. Treating the selected
   manifest as a reusable result relies on the declaration faithfully identifying
   the computation and its dependencies; constructing a digest does not establish
   that assumption. Reuse soundness is a commitment under that assumption, not
   an unconditional observation about every caller.
-- `stale_attempts(...)` names prior results for an invocation whose inputs have
-  since changed. Superseded work is retained and explainable, never silently
-  overwritten.
-- A new record's `created` event also carries its authored key, component
-  digests, and the prior different-digest identity it supersedes. All are
-  attribution: none participates in identity. `supersedes` orders first creation;
-  it does not claim to record a later return to an already-existing identity.
-- `lineage(...)` reads creation order from `supersedes`, reports which identity
-  keys changed, and reads currentness separately from the output aliases. That
-  separation is required after an edit is reverted: the older record becomes
-  current again without receiving a second `created` event.
+- `scan_attempts(...)` reads every record under a root: identity, declaration
+  digest, standing outcome and try, and creation time. It is the whole of what
+  the store will say about a record, and it says nothing about requesters.
 - `hedloom_exec.planned.plan_bundles(...)` derives content-addressed bundles from a
   Hedloom Flow Plan **document**, at schema 2 or 3; a document at any other
   schema is refused by version rather than misread. The coupling is to the portable
@@ -213,16 +235,12 @@ its siblings are reused and the superseded results stay nameable.
   overwrite the evidence of what the previous attempt produced. Only declared
   outputs are recorded; anything else the command left behind stays as unnamed
   evidence.
-- Declared file outputs also have a derived live view at
-  `<attempt-root>/latest/<plan>/<authored-key>/<output>`. Each entry is a
-  symlink atomically created or repointed after workspace preparation and
-  before launch, so a fresh open follows the try currently selected even while
-  that file grows. The target is deliberately not pre-created: until the work
-  writes it, the honest state is a dangling alias. This view never participates
-  in content-addressed identity.
-- Because `latest/` is inside the attempt root, every attempt-root reader admits
-  a directory only when it is a valid record with layout 1. The alias tree and any
-  other ordinary directory are not attempt records.
+- A declared output's address is the try workspace path, and the try name is
+  the only stable reference to it. There is no derived per-requester view: a
+  name-shaped alias would have had to choose one requester's spelling for work
+  that belongs to none of them. Every attempt-root reader admits a directory
+  only when it is a valid record with layout 1, so an ordinary directory left
+  in the root is not mistaken for a record.
 - A declared filesystem output that does not exist with its declared file or
   directory shape after the work reports success fails the invocation.
   Publishing a manifest without it would let downstream work resolve an
@@ -266,9 +284,10 @@ its siblings are reused and the superseded results stay nameable.
   generously.
 - `prune.survey(...)` is a read-only classification of every try. It creates
   no directory, measures actual workspace trees rather than manifest size
-  claims, and explains every exclusion. Standing reusable evidence, current
-  aliases, non-terminal and unreconciled tries, and workspaces escaping the
-  declared root are never candidates.
+  claims, and explains every exclusion. Standing reusable evidence, pinned
+  tries, non-terminal and unreconciled tries, tries newer than the floor, and
+  workspaces escaping the declared root are never candidates. Every one of
+  those is a property of the evidence; none asks who requested it.
 - `Survey.apply()` is the only destructive retention operation. Each proposed
   try is reclassified while its non-blocking record claim is held; contention
   skips rather than waits. A durable `workspace_removed` event precedes byte
@@ -291,7 +310,8 @@ The unit contributes durable attempt identity, terminal evidence, and sound
 reuse to the repository's author-plan-execute-evaluate vision. It is the first
 unit to own any part of *execute*, and with Hedloom Flow it now composes one
 runnable vertical slice: author a flow, plan it, execute it, edit one input,
-and rerun with unchanged work skipped and superseded results retained.
+and rerun with unchanged work skipped and the earlier results retained under
+their own records.
 
 ## Exclusions
 
@@ -328,8 +348,16 @@ declared resources will not say so.
 Reuse soundness depends on inputs being *declared*. An operation whose result
 depends on an undeclared file, wall-clock time, or a mutable network resource
 is not honestly reusable, and no digest detects that; the unit records what an
-author claims rather than verifying it. Attempt discovery is a directory scan,
-which is fine at prototype scale and wrong at any other.
+author claims rather than verifying it. That trust is now shared: one shared
+record serves every caller declaring the same work, so such an error reaches
+whoever declares it.
+
+The unit also owns **no discovery**. `scan_attempts` walks a directory, which
+is fine at prototype scale and wrong at any other, and it can answer only
+"which records exist and what did they compute". Finding a record from a study
+name, a run, a date, or an operator's memory is not possible here and is not
+being approximated: a caller keeps the record and try its execution reported,
+or it has no reference. Study and run history belong elsewhere.
 
 ## Child composition
 

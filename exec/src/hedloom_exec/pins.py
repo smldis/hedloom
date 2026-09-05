@@ -277,7 +277,15 @@ def verify(pin: Pin, *, layout: int) -> Verification:
 
 
 def resolve_selector(root: str | os.PathLike[str], selector: str):
-    """Resolve one record selector and optional try suffix from records alone."""
+    """Resolve ``<record>`` or ``<record>#<try>`` against the records present.
+
+    A record identity, or any unambiguous prefix of one, is the whole selector
+    vocabulary. There is no name-shaped form, because a record is selected by
+    the computation it holds and belongs to no study: a `<study>:<key>` pin
+    would have addressed whichever requester happened to reach it first.
+    A caller that has just executed something already holds the exact reference
+    to pin — `ExecutionResult.record` and `.try_number`.
+    """
 
     from hedloom_exec.journal import AttemptJournal
     from hedloom_exec.reuse import scan_attempts
@@ -289,13 +297,9 @@ def resolve_selector(root: str | os.PathLike[str], selector: str):
         if not suffix.isdigit() or str(int(suffix)) != suffix:
             raise PinSelectionError("try selector must end in #<non-negative integer>")
         requested_try = int(suffix)
-    if base.startswith("hedloom-"):
-        matches = [item for item in records if item.identity.startswith(base)]
-    else:
-        matches = [
-            item for item in records
-            if f"{item.plan_id}:{item.authored_key}" == base
-        ]
+    if not base:
+        raise PinSelectionError("a selector must name a record identity or prefix")
+    matches = [item for item in records if item.identity.startswith(base)]
     if not matches:
         raise PinSelectionError(f"no record matches {selector!r}")
     if len(matches) != 1:

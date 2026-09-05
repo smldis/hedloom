@@ -97,7 +97,7 @@ python ../composition.py docs          # from the repository root: python compos
 
 **Name all four unit test directories.** Every unit's `pyproject.toml` sets
 `testpaths = ["tests"]`, so a bare `pytest -q` from here collects only the
-façade's 58 tests and silently skips the other 400. It exits zero either way,
+façade's 107 tests and silently skips the other 502. It exits zero either way,
 which is the worst shape a check can have.
 
 A successful Sphinx build can still report missing toctree entries and

@@ -75,7 +75,7 @@ def run(document, site, tmp_path):
     return run_plan(
         document,
         transport(),
-        plan_id="study",
+
         root=site.root,
         source_fingerprints=site.fingerprints(document),
     )
@@ -98,9 +98,9 @@ def test_editing_a_source_in_place_invalidates_the_work_that_read_it(
 def test_without_a_fingerprint_an_edit_is_invisible(study, tmp_path):
     """Documents the behaviour a run gets by declaring nothing. Not a feature."""
 
-    first = run_plan(document(), transport(), plan_id="study", root=study.root)
+    first = run_plan(document(), transport(), root=study.root)
     (tmp_path / "inputs" / "ota.cir").write_text("* edited\n")
-    second = run_plan(document(), transport(), plan_id="study", root=study.root)
+    second = run_plan(document(), transport(), root=study.root)
 
     assert first.outcomes[0].ran
     assert second.outcomes[0].reused, "declaration-only identity cannot see this"
@@ -192,7 +192,7 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
     assert site.threads == 32
     assert site.dashboard == "none"
     lsf = site.transports["lsf"]
-    job = try_name(attempt_identity(plan_id="site", invocation_id="default").rendered, 0)
+    job = try_name(attempt_identity(computation_digest="site/default").rendered, 0)
     argv = lsf.build_argv(job, {"command": ["simulate"]})
     assert argv[argv.index("-W") + 1] == "240"
     assert argv[argv.index("-app") + 1] == "spectre"
@@ -271,7 +271,7 @@ def test_an_invocation_overrides_a_profile_memory_default(tmp_path):
         },
     }
 
-    job = try_name(attempt_identity(plan_id="site", invocation_id="override").rendered, 0)
+    job = try_name(attempt_identity(computation_digest="site/override").rendered, 0)
     argv = lsf.build_argv(job, bundle)
     assert argv[argv.index("-R") + 1] == "rusage[mem=8192]"
 

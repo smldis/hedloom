@@ -4,16 +4,15 @@ from hedloom_exec.journal import AttemptJournal
 
 
 def _record(tmp_path):
-    identity = attempt_identity(plan_id="plan", invocation_id="point").rendered
+    identity = attempt_identity(computation_digest="plan/point").rendered
     root = tmp_path / "records"
     work = tmp_path / "work"
     journal = AttemptJournal(root, identity)
     with journal.claim():
         number = journal.begin_try()
         journal.append(
-            "created", **{"try": number, "plan": "plan", "invocation": "point",
-                          "operation": "work", "input_digest": "digest",
-                          "authored_key": "point"},
+            "created",
+            **{"try": number, "operation": "work", "input_digest": "digest"},
         )
         journal.publish_terminal(try_number=number, outcome="failed", manifest={})
     workspace = work / try_name(identity, number)
@@ -30,11 +29,11 @@ def test_pin_cli_requires_both_explicit_roots(tmp_path, capsys):
     assert "both --root and --workspace-root" in capsys.readouterr().err
 
 
-def test_pin_cli_resolves_a_human_selector(tmp_path, capsys):
+def test_pin_cli_resolves_a_record_prefix(tmp_path, capsys):
     journal, root, work = _record(tmp_path)
     status = main(["pin", "--root", str(root), "--workspace-root", str(work),
-                   "plan:point", "--reason", "report", "--actor", "engineer",
-                   "--no-freeze"])
+                   journal.identity[:16], "--reason", "report",
+                   "--actor", "engineer", "--no-freeze"])
     assert status == 0
     made = journal.fold().pins[0]
     assert made.pin_id in capsys.readouterr().out
@@ -75,3 +74,13 @@ def test_pin_cli_uses_both_roots_from_a_site(tmp_path):
     assert main(["pin", "--site", str(profile), journal.identity,
                  "--reason", "report", "--no-freeze"]) == 0
     assert journal.fold().pins[0].is_active
+
+
+def test_pin_cli_refuses_a_name_shaped_selector(tmp_path, capsys):
+    """A record belongs to no study, so `<study>:<key>` addresses nothing."""
+
+    _journal, root, work = _record(tmp_path)
+    status = main(["pin", "--root", str(root), "--workspace-root", str(work),
+                   "plan:point", "--reason", "report", "--no-freeze"])
+    assert status == 2
+    assert "no record matches" in capsys.readouterr().err

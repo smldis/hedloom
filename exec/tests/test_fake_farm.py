@@ -42,7 +42,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def record_identity(label):
-    return attempt_identity(plan_id="fake-farm", invocation_id=label).rendered
+    return attempt_identity(computation_digest=f"fake-farm/{label}").rendered
 
 
 @pytest.fixture
@@ -91,8 +91,8 @@ def test_the_submission_reaches_bsub_with_its_declared_shape(farm, tmp_path):
         {"command": [sys.executable, "-c", "pass"]},
         durability=Durability.RECORDED,
         root=str(tmp_path),
-        plan_id="plan-1",
-        invocation_id="inv-shape",
+
+
     )
 
     identity = result.journal.identity
@@ -116,8 +116,8 @@ def test_a_finished_job_is_not_discovered(farm, tmp_path):
         {"command": [sys.executable, "-c", "pass"]},
         durability=Durability.RECORDED,
         root=str(tmp_path),
-        plan_id="plan-1",
-        invocation_id="inv-done",
+
+
     )
 
     assert result.outcome == "succeeded"

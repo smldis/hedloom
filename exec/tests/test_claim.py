@@ -12,7 +12,7 @@ from hedloom_exec.journal import AttemptJournal, ConcurrentClaim, JournalError
 from hedloom_exec.transport import InProcessTransport
 
 
-IDENTITY = attempt_identity(plan_id="claim", invocation_id="one").rendered
+IDENTITY = attempt_identity(computation_digest="claim/one").rendered
 
 
 def test_the_claim_covers_every_try_at_one_input_set(tmp_path):
@@ -111,7 +111,7 @@ def test_a_new_record_becomes_visible_with_its_layout_already_in_it(
         return rename(source, destination)
 
     monkeypatch.setattr(journal_module.os, "rename", watched)
-    identity = attempt_identity(plan_id="p", invocation_id="atomic").rendered
+    identity = attempt_identity(computation_digest="p/atomic").rendered
     journal = AttemptJournal(tmp_path, identity)
 
     with journal.claim():
@@ -125,7 +125,7 @@ def test_a_new_record_becomes_visible_with_its_layout_already_in_it(
 def test_concurrent_callers_are_refused_by_name_not_by_a_missing_layout(tmp_path):
     """Every loser meets a claimed record, never one still being built."""
 
-    identity = attempt_identity(plan_id="p", invocation_id="racing").rendered
+    identity = attempt_identity(computation_digest="p/racing").rendered
     entered = []
     refusals = []
 
@@ -152,7 +152,7 @@ def test_concurrent_callers_are_refused_by_name_not_by_a_missing_layout(tmp_path
 def test_a_record_with_a_journal_and_no_layout_is_still_refused(tmp_path):
     """The refusal that matters is kept: a pre-layout-1 root stays unreadable."""
 
-    identity = attempt_identity(plan_id="p", invocation_id="ancient").rendered
+    identity = attempt_identity(computation_digest="p/ancient").rendered
     journal = AttemptJournal(tmp_path, identity)
     journal.directory.mkdir(parents=True)
     journal.log_path.write_text('{"seq": 0, "event": "created", "data": {}}\n')

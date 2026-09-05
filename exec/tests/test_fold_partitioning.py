@@ -3,7 +3,7 @@ from hedloom_exec.identity import attempt_identity
 from hedloom_exec.journal import AttemptJournal
 
 
-IDENTITY = attempt_identity(plan_id="fold", invocation_id="sticky").rendered
+IDENTITY = attempt_identity(computation_digest="fold/sticky").rendered
 
 
 def journal(tmp_path):

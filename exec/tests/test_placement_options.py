@@ -18,7 +18,7 @@ from hedloom_exec.lsf import CommandResult, LSFInteractiveTransport
 from hedloom_exec.transport import SubmissionRefused
 
 COMMAND = ["simulate", "--point", "tt"]
-IDENTITY = attempt_identity(plan_id="placement", invocation_id="job").rendered
+IDENTITY = attempt_identity(computation_digest="placement/job").rendered
 JOB = try_name(IDENTITY, 0)
 JOB_TWO = try_name(IDENTITY, 1)
 
@@ -221,8 +221,8 @@ def test_retuning_the_resource_request_still_reuses_the_result(tmp_path):
     common = {
         "durability": Durability.RECORDED,
         "root": str(tmp_path),
-        "plan_id": "plan-1",
-        "invocation_id": "inv-a",
+
+
     }
 
     first = execute(lsf, bundle(queue="normal", memory_mb=2000), **common)
@@ -242,8 +242,8 @@ def test_what_the_job_asked_for_is_published_with_the_result(tmp_path):
         bundle(queue="bigmem", cores=8, licences={"spectre": 1}),
         durability=Durability.RECORDED,
         root=str(tmp_path),
-        plan_id="plan-1",
-        invocation_id="inv-a",
+
+
     )
 
     placement = result.journal.read_manifest()["result"]["placement"]

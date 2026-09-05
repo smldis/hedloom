@@ -13,15 +13,15 @@ has to live somewhere durable and be chosen *before* submission.
 
 ```python
 from hedloom_exec import (
-    AttemptJournal, InProcessTransport, attempt_identity,
+    AttemptJournal, InProcessTransport, attempt_identity, input_digest,
     launch_or_attach, reconcile,
 )
 
-identity = attempt_identity(plan_id="plan-1", invocation_id="inv-a")
+bundle = {"operation": "double", "arguments": {"value": 21}}
+identity = attempt_identity(computation_digest=input_digest(bundle))
 journal = AttemptJournal("attempts", identity.rendered)
 transport = InProcessTransport({"double": lambda value: value * 2})
 
-bundle = {"operation": "double", "arguments": {"value": 21}}
 result = launch_or_attach(journal, transport, bundle)   # 'claimed'
 state = reconcile(journal, transport)                   # 'succeeded'
 
@@ -38,8 +38,9 @@ Storage policy is inspectable before it is destructive. A
 `RetentionPolicy` contains named rules whose conditions narrow one another;
 `prune.survey(record_root, policy, workspace_root=...)` reports candidate
 tries, excluded tries, reasons, and measured reclaimable bytes without
-creating or deleting anything. It never selects the standing result, a live
-alias, a non-terminal try, or `unreconciled` evidence.
+creating or deleting anything. It never selects the standing result, a
+non-terminal try, `unreconciled` evidence, or a pinned try, and it protects
+everything newer than the policy's floor.
 
 Applying that returned survey is the deliberate destructive gesture. Every
 candidate is checked again under its record claim, then a
@@ -66,7 +67,7 @@ inputs moved:
 
 ```python
 from hedloom_exec.durability import Durability, execute
-from hedloom_exec.reuse import input_digest, stale_attempts
+from hedloom_exec.reuse import input_digest
 
 bundle = {
     "operation": "solve",
@@ -75,18 +76,27 @@ bundle = {
     "identity_env": {"TOOL_ROOT": "/opt/toolchain/2026.1"},
 }
 
-execute(lsf, bundle, durability=Durability.RECORDED, root="attempts",
-        plan_id="plan-1", invocation_id="inv-tt")
+result = execute(lsf, bundle, durability=Durability.RECORDED, root="attempts")
+result.record        # 'hedloom-<20 hex>' — this declaration's record
+result.try_number    # the try whose evidence was published or reused
 ```
 
-Queue, walltime, cores, and general `env` deliberately do **not** participate,
-so retuning resources never invalidates a result. Change the model, and the
-invocation lands on a new identity and reruns; the previous result stays on
-disk and `stale_attempts(...)` can name it as superseded rather than having
-quietly overwritten it.
+The bundle is the whole request. Nothing identifies the caller, because a
+record has no owner: two callers declaring the same work select one record and
+the second reuses the first's evidence. Queue, walltime, cores, and general
+`env` deliberately do **not** participate either, so retuning resources never
+invalidates a result. Change the model, and the declaration lands on a
+different record and runs; the earlier record stays exactly where it was,
+neither overwritten nor declared obsolete. Which record is "current" is a
+property of the plan you are holding, so it is answered by comparing
+declarations rather than by asking the store.
 
-This trusts your declaration. An operation that reads an undeclared file is not
-honestly reusable, and no digest will notice.
+This trusts your declaration, and the trust is now shared. An operation that
+reads an undeclared file is not honestly reusable, and no digest will notice —
+and under one shared store that error reaches whoever declares the same work,
+not only the study that made it. An intentional independent repetition must
+declare a distinction, such as a seed or a repetition index; naming a second
+invocation differently does not request a second execution.
 
 Run the evidence with:
 
@@ -146,8 +156,6 @@ execute(
     durability=Durability.RECORDED,
     root="attempts",
     workspace_root="/nfs/studies/sweep",
-    plan_id="sweep",
-    invocation_id="point-tt",
 )
 ```
 
@@ -161,17 +169,12 @@ only if an operation declares `{"stream": "stdout"}`. A declared output that
 never appears fails the invocation rather than publishing a manifest that points
 at nothing.
 
-For a planned invocation with an authored key, execution also maintains
-`<attempt-root>/latest/<plan>/<authored-key>/<output>` as an atomic symlink to
-each declared file output. It points at the workspace before launch, which
-makes a fresh open useful while the file grows. The link may dangle until the
-work writes; Hedloom never touches the target in advance. This stable view is
-additional to the content-addressed record and does not change its identity.
-
-The `created` event records the authored key, try, prior different-digest record,
-and a digest for each identity key. `lineage()` uses those facts to explain
-creation order while taking currentness from the alias, so edit → revert can
-correctly make an older reusable record current again.
+The `created` event records the try, the operation, and the digest of the
+declaration — and nothing else. There is no requester on a record and no
+derived per-requester view of outputs: the try workspace, named
+`<record>-<try>`, is where a declared output lands, and `ExecutionResult`
+hands back the record and try that produced it. Finding a record without such
+a reference is discovery, which this unit does not provide.
 
 ## Running on LSF
 
@@ -190,8 +193,6 @@ execute(
     {"command": ["solve", "-b", "point_tt.in"], "cwd": "run/tt"},
     durability=Durability.RECORDED,
     root="attempts",
-    plan_id="sweep",
-    invocation_id="point-tt",
 )
 ```
 

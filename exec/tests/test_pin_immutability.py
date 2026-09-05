@@ -11,7 +11,7 @@ from hedloom_exec.pins import PinError, pin as make_pin, unpin, verify
 
 
 def _pinned(tmp_path, *, empty=False):
-    identity = attempt_identity(plan_id="plan", invocation_id="point").rendered
+    identity = attempt_identity(computation_digest="plan/point").rendered
     journal = AttemptJournal(tmp_path / "records", identity)
     with journal.claim():
         number = journal.begin_try()
@@ -116,7 +116,7 @@ def test_an_empty_workspace_can_still_be_pinned(tmp_path):
 def test_a_crash_between_chmod_and_the_event_leaves_an_explainable_state(
     tmp_path, monkeypatch
 ):
-    identity = attempt_identity(plan_id="plan", invocation_id="point").rendered
+    identity = attempt_identity(computation_digest="plan/point").rendered
     journal = AttemptJournal(tmp_path / "records", identity)
     with journal.claim():
         number = journal.begin_try()

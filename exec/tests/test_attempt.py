@@ -28,7 +28,7 @@ BUNDLE = {
 }
 
 
-IDENTITY = attempt_identity(plan_id="attempt", invocation_id="test").rendered
+IDENTITY = attempt_identity(computation_digest="attempt/test").rendered
 
 
 def journal(tmp_path, identity=IDENTITY):

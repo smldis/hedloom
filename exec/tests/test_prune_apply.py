@@ -10,14 +10,13 @@ from hedloom_exec.transport import Observation
 
 
 def _record(tmp_path, label="point", *, content=b"payload", outcome="failed"):
-    identity = attempt_identity(plan_id="plan", invocation_id=label).rendered
+    identity = attempt_identity(computation_digest=f"plan/{label}").rendered
     journal = AttemptJournal(tmp_path / "records", identity)
     with journal.claim():
         number = journal.begin_try()
         journal.append(
-            "created", **{"try": number, "plan": "plan", "invocation": label,
-                          "operation": "work", "input_digest": label,
-                          "authored_key": label},
+            "created",
+            **{"try": number, "operation": "work", "input_digest": label},
         )
         journal.publish_terminal(try_number=number, outcome=outcome, manifest={})
     workspace = tmp_path / "work" / try_name(identity, number)
@@ -65,15 +64,18 @@ def test_apply_leaves_the_record_directory_intact(tmp_path):
 
 
 def test_apply_rechecks_preconditions_under_the_claim(tmp_path):
+    """A protection acquired after the survey still stops the removal."""
+
+    from hedloom_exec.pins import pin
+
     journal, number, workspace = _record(tmp_path)
     proposal = _survey(tmp_path)
-    from hedloom_exec.alias import point_alias
-
-    point_alias(journal.directory.parent, plan_id="plan", authored_key="point",
-                output="result", target=workspace / "result.bin")
+    pin(journal, try_number=number, workspace_root=tmp_path / "work",
+        reason="wanted after all", actor="tester", freeze=False)
     report = proposal.apply()
     assert report.removed == ()
     assert report.skipped[0].try_number == number
+    assert report.skipped[0].reason == "pinned"
     assert workspace.exists()
 
 
@@ -196,8 +198,8 @@ def test_a_run_after_pruning_behaves_as_if_nothing_was_pruned(tmp_path):
         "durability": Durability.RECORDED,
         "root": str(tmp_path / "records"),
         "workspace_root": str(tmp_path / "work"),
-        "plan_id": "plan",
-        "invocation_id": "point",
+
+
     }
     first = execute(transport, {"operation": "work"}, **options)
     survey(tmp_path / "records", _policy(), workspace_root=tmp_path / "work").apply()

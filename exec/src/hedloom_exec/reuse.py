@@ -1,9 +1,11 @@
-"""Input identity, sound reuse, and explaining what went stale.
+"""Input identity and sound reuse.
 
 Reuse is only honest if "already done" means "already done *with these
 inputs*". This module derives a digest over the parts of a bundle that
 determine its result, so that a changed input produces a different attempt
-rather than a silently reused old one.
+rather than a silently reused old one. That digest is the whole of a record's
+identity: nothing about who asked participates, so two requesters declaring the
+same computation are asking for the same record.
 
 What participates is a real design decision, not an implementation detail:
 
@@ -23,23 +25,19 @@ that promise explicit.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from hashlib import blake2b
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 import json
 
 from hedloom_exec.journal import AttemptJournal
 
 __all__ = [
     "AttemptRecord",
-    "describe_staleness",
     "IDENTITY_KEYS",
-    "attempts_for",
     "input_digest",
-    "input_digests",
     "scan_attempts",
-    "stale_attempts",
 ]
 
 IDENTITY_KEYS = (
@@ -85,48 +83,21 @@ def input_digest(bundle: Mapping[str, Any]) -> str:
     return blake2b(canonical.encode(), digest_size=16).hexdigest()
 
 
-def input_digests(bundle: Mapping[str, Any]) -> dict[str, str]:
-    """One additional explanatory digest for each identity-bearing key.
-
-    These digests do not compose the aggregate returned by :func:`input_digest`.
-    That aggregate intentionally remains a BLAKE2b digest of the complete
-    canonical mapping, byte-for-byte as it was before component evidence was
-    recorded.  Missing and explicit ``None`` values compare alike because the
-    aggregate omits both.
-    """
-
-    digests: dict[str, str] = {}
-    for key in IDENTITY_KEYS:
-        material = (
-            {key: bundle[key]}
-            if key in bundle and bundle[key] is not None
-            else {}
-        )
-        try:
-            canonical = json.dumps(material, sort_keys=True, separators=(",", ":"))
-        except TypeError as error:
-            raise ValueError(
-                "bundle inputs must be JSON-serializable to have a stable identity; "
-                "pass a digest or a declared reference rather than a live object"
-            ) from error
-        digests[key] = blake2b(canonical.encode(), digest_size=16).hexdigest()
-    return digests
-
-
 @dataclass(frozen=True, slots=True)
 class AttemptRecord:
-    """What one record says about itself, without opening try payloads."""
+    """What one record says about itself, without opening try payloads.
+
+    A record describes a computation, not a requester. It carries no study,
+    Plan ID, invocation ID or authored key: those name who asked, and asking
+    twice for the same declaration is one record, so storing an owner on it
+    could only ever be the first caller's name masquerading as authority.
+    """
 
     identity: str
-    plan_id: str | None
-    invocation_id: str | None
     input_digest: str | None
     outcome: str | None
     directory: Path
-    authored_key: str | None = None
     try_number: int | None = None
-    supersedes: str | None = None
-    input_digests: Mapping[str, str] = field(default_factory=dict)
     created_at: str | None = None
 
     @property
@@ -165,75 +136,11 @@ def scan_attempts(root: str | Path) -> tuple[AttemptRecord, ...]:
         records.append(
             AttemptRecord(
                 identity=directory.name,
-                plan_id=data.get("plan"),
-                invocation_id=data.get("invocation"),
                 input_digest=data.get("input_digest"),
                 outcome=selected_outcome,
                 directory=directory,
-                authored_key=data.get("authored_key"),
                 try_number=selected_try,
-                supersedes=data.get("supersedes"),
-                input_digests=dict(data.get("input_digests") or {}),
                 created_at=created.at if created else None,
             )
         )
     return tuple(records)
-
-
-def attempts_for(
-    root: str | Path,
-    *,
-    plan_id: str,
-    invocation_id: str,
-    records: Iterable[AttemptRecord] | None = None,
-) -> tuple[AttemptRecord, ...]:
-    """Every recorded attempt at one planned invocation, across input changes.
-
-    Pass ``records`` from a single `scan_attempts` when asking about many
-    invocations. Otherwise each question rescans and reparses every attempt
-    directory, which turns a sweep of n invocations into n full rescans.
-    """
-
-    source = scan_attempts(root) if records is None else records
-    return tuple(
-        record
-        for record in source
-        if record.plan_id == plan_id and record.invocation_id == invocation_id
-    )
-
-
-def stale_attempts(
-    root: str | Path,
-    *,
-    plan_id: str,
-    invocation_id: str,
-    current_digest: str,
-    records: Iterable[AttemptRecord] | None = None,
-) -> tuple[AttemptRecord, ...]:
-    """Prior results for this invocation that no longer describe current inputs.
-
-    These are not garbage. They are what the work used to conclude, and being
-    able to name them is how a changed input gets explained rather than
-    silently overwritten.
-    """
-
-    return tuple(
-        record
-        for record in attempts_for(
-            root,
-            plan_id=plan_id,
-            invocation_id=invocation_id,
-            records=records,
-        )
-        if record.input_digest is not None and record.input_digest != current_digest
-    )
-
-
-def describe_staleness(records: Iterable[AttemptRecord]) -> str:
-    """One human-readable line per superseded attempt."""
-
-    return "\n".join(
-        f"{record.identity}: {record.outcome or 'unfinished'} "
-        f"(inputs {record.input_digest})"
-        for record in records
-    )

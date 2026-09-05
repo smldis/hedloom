@@ -13,7 +13,7 @@ from hedloom_exec.prune import RetentionPolicy, RetentionRule, survey
 
 
 def _record(tmp_path, label="point", outcomes=("failed",)):
-    identity = attempt_identity(plan_id="plan", invocation_id=label).rendered
+    identity = attempt_identity(computation_digest=f"plan/{label}").rendered
     journal = AttemptJournal(tmp_path / "records", identity)
     workspaces = []
     for outcome in outcomes:
@@ -21,9 +21,9 @@ def _record(tmp_path, label="point", outcomes=("failed",)):
             number = journal.begin_try()
             if not any(event.event == "created" for event in journal.events()):
                 journal.append(
-                    "created", **{"try": number, "plan": "plan",
-                                  "invocation": label, "operation": "work",
-                                  "input_digest": label, "authored_key": label},
+                    "created",
+                    **{"try": number, "operation": "work",
+                       "input_digest": label},
                 )
             journal.publish_terminal(try_number=number, outcome=outcome, manifest={})
         workspace = tmp_path / "work" / try_name(identity, number)
@@ -120,7 +120,7 @@ def test_two_pins_on_one_try_release_independently(tmp_path):
 
 
 def test_pinning_a_non_terminal_try_is_refused(tmp_path):
-    identity = attempt_identity(plan_id="plan", invocation_id="point").rendered
+    identity = attempt_identity(computation_digest="plan/point").rendered
     journal = AttemptJournal(tmp_path / "records", identity)
     with journal.claim():
         number = journal.begin_try()
@@ -148,36 +148,22 @@ def test_an_ambiguous_identity_prefix_is_refused_with_candidates(tmp_path):
     assert second.identity in str(caught.value)
 
 
-def test_an_authored_key_selector_resolves_from_records_alone(tmp_path):
-    journal, _ = _record(tmp_path, "point")
-    record, tries = resolve_selector(journal.directory.parent, "plan:point")
-    assert record.identity == journal.identity
-    assert [item.number for item in tries] == [0]
+def test_a_name_shaped_selector_is_refused(tmp_path):
+    """There is no `<study>:<key>` address: a record belongs to no study."""
+
+    _record(tmp_path, "point")
+    with pytest.raises(PinSelectionError, match="no record matches"):
+        resolve_selector(tmp_path / "records", "plan:point")
 
 
-def test_an_authored_key_that_matches_no_record_is_refused(tmp_path):
-    with pytest.raises(PinSelectionError, match="no record"):
-        resolve_selector(tmp_path, "plan:missing")
+def test_a_selector_that_matches_no_record_is_refused(tmp_path):
+    with pytest.raises(PinSelectionError, match="no record matches"):
+        resolve_selector(tmp_path, "hedloom-000000000000000000")
 
 
-def test_an_authored_key_matching_several_records_lists_them(tmp_path):
-    first, _ = _record(tmp_path, "point")
-    # Same human selector, different content identity.
-    identity = attempt_identity(plan_id="plan", invocation_id="point",
-                                input_digest="different").rendered
-    second = AttemptJournal(tmp_path / "records", identity)
-    with second.claim():
-        number = second.begin_try()
-        second.append(
-            "created", **{"try": number, "plan": "plan", "invocation": "point2",
-                          "operation": "work", "input_digest": "different",
-                          "authored_key": "point"},
-        )
-        second.publish_terminal(try_number=number, outcome="failed", manifest={})
-    with pytest.raises(PinSelectionError) as caught:
-        resolve_selector(first.directory.parent, "plan:point")
-    assert first.identity in str(caught.value)
-    assert second.identity in str(caught.value)
+def test_an_empty_selector_is_refused(tmp_path):
+    with pytest.raises(PinSelectionError, match="record identity or prefix"):
+        resolve_selector(tmp_path, "#0")
 
 
 def test_accept_for_reuse_does_not_create_a_pin(tmp_path):

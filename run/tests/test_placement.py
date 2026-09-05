@@ -69,7 +69,7 @@ def test_invocations_land_on_the_placement_they_asked_for(tmp_path):
             ("heavy", {"name": "lsf-direct", "options": {"queue": "bigmem"}}),
         ),
         transports={"local": local, "lsf-direct": direct},
-        plan_id="p",
+
         root=str(tmp_path),
     )
 
@@ -86,7 +86,7 @@ def test_a_placement_nobody_provides_fails_rather_than_falling_back(tmp_path):
     report = run_plan(
         document(("heavy", {"name": "lsf-pool", "options": {}})),
         transports={"local": Recorder("local")},
-        plan_id="p",
+
         root=str(tmp_path),
     )
 
@@ -100,7 +100,7 @@ def test_a_single_transport_still_serves_a_uniform_run(tmp_path):
     report = run_plan(
         document(("a", {"name": "local", "options": {}})),
         Recorder("local"),
-        plan_id="p",
+
         root=str(tmp_path),
     )
     assert report.succeeded
@@ -115,7 +115,7 @@ def test_requested_resolved_and_observed_are_recorded_separately(tmp_path):
             ("heavy", {"name": "lsf-direct", "options": {"queue": "bigmem"}})
         ),
         transports={"lsf-direct": direct},
-        plan_id="p",
+
         root=str(tmp_path),
     )
 
@@ -136,7 +136,7 @@ def test_placement_is_recorded_before_the_substrate_is_touched(tmp_path):
     run_plan(
         document(("heavy", {"name": "lsf-direct", "options": {}})),
         transports={"lsf-direct": direct},
-        plan_id="p",
+
         root=str(tmp_path),
     )
 
@@ -184,7 +184,7 @@ def test_an_authored_resource_need_survives_all_the_way_to_the_submission(
                 defaults={"walltime": "5"}, runner=SubprocessRunner()
             )
         },
-        plan_id="study",
+
         root=str(tmp_path / "attempts"),
         commands={"work": ["/bin/echo", "ran"]},
     )
@@ -206,13 +206,13 @@ def test_placement_does_not_change_result_identity(tmp_path):
     first = run_plan(
         document(("a", {"name": "local", "options": {}})),
         transports={"local": Recorder("local")},
-        plan_id="p",
+
         root=str(tmp_path),
     )
     moved = run_plan(
         document(("a", {"name": "lsf-direct", "options": {"queue": "big"}})),
         transports={"lsf-direct": Recorder("lsf-direct")},
-        plan_id="p",
+
         root=str(tmp_path),
     )
 
