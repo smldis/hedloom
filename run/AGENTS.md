@@ -16,8 +16,10 @@ implementing it.
 
 ## Where to read, and what to trust
 
-`ONTOLOME.md` states this unit's contracts and is maintained; `docs/index.md`
-is its published documentation and is maintained. The parent's `design/`
+`ONTOLOME.md` is this unit's ongoing self-study, including commitments, evidence,
+assumptions, and open questions. Refine it when work yields useful insight;
+update commitments explicitly when they change. `docs/index.md` is its published
+documentation and is maintained. The parent's `design/`
 directory holds reviews and plans that are not — in particular
 `design/concurrency-two-workers-2026-08-15.md` and
 `design/pooled-placement-plan.md`, both of which this unit's source still cites

@@ -1,5 +1,10 @@
 # Hedloom Flow Ontology
 
+This is the ongoing self-study of the component rooted here. Briefly inhabit
+its perspective as you work: what are you learning about what it is, why it
+exists, and what it might become? Help this account evolve when you have
+something useful to add.
+
 ## Purpose and scope
 
 Hedloom Flow owns generic, Python-authored definitions of operations and reusable
@@ -20,13 +25,18 @@ not a public or general execution surface.
 
 The current runnable API studies whether ordinary Python authoring can produce
 one deterministic, executor-neutral graph while retaining explicit contracts
-and nested flow structure. Its tests and tool-free example now provide
+and nested flow structure. Its tests and tool-free example provide
 evidence for ordered collection fan-in, scoped authored Plan identity, the
 static distinction between addressed artifact sources and ephemeral operation
-outputs, and a bounded local Delayed lowering of those contracts. Changes
-should preserve
-inspectability, immutability, early validation, and the separation between
-planning and runtime authority.
+outputs, and a bounded local Delayed lowering of those contracts.
+
+Inspectability, immutability, early validation, and the separation between
+planning and runtime authority are chosen commitments. Repeatable graph
+construction also relies on the author's flow-building Python making the same
+choices from the same declared context; the API does not enforce that discipline.
+The Delayed instrument supports Plan sufficiency for its bounded case. Whether
+the same declarations remain a useful handoff as consumers' needs evolve is an
+open hypothesis, not settled by retaining the instrument inside this unit.
 
 ## Current contracts
 

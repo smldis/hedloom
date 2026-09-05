@@ -16,7 +16,7 @@ containing ontology.
 
 | Surface | Where | Maintained against the code? |
 | --- | --- | --- |
-| Contracts | `ONTOLOME.md` | **Yes** — update it in the same change that alters a contract. |
+| Self-study, including commitments, evidence, assumptions, and open questions | `ONTOLOME.md` | **Yes** — refine it when work yields useful insight; update commitments explicitly when they change. |
 | Documentation | `docs/index.md`, `docs/architecture.md` (published) | **Yes.** |
 | Design record | `PLANNING.md`, `IMPLEMENTATION.md`, `design/` | **No.** Phase records describe what a phase delivered, including contracts that have since changed — schema 2, for instance, where this unit now emits and validates schema 3 only. |
 

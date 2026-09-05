@@ -48,9 +48,12 @@ more elaborate.
 
 ## Where to read, and what to trust
 
-`ONTOLOME.md` states this unit's contracts and is repo-native; `DECISIONS.md` is
-a published, living ledger of what is settled, what is open, and what would
-change our minds. Both are maintained against the code.
+`ONTOLOME.md` is this unit's ongoing self-study, including commitments, evidence,
+assumptions, and open questions. Refine it when work yields useful insight;
+update commitments explicitly when they change. It is repo-native;
+`DECISIONS.md` is a published, living ledger of what is settled, what is open,
+and what would change our minds. Both are maintained against code and use,
+keeping observations distinguishable from commitments.
 `design/` is not maintained and not published — it records how the unit was
 built on a date. Do not cite it as evidence of current behaviour.
 

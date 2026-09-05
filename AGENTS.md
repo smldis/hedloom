@@ -48,11 +48,12 @@ because a caller reads the return value and not the ontology.
 
 ## Where to read, and what to trust
 
-Three surfaces, deliberately separate. Know which one you are in.
+Know which surface you are reading and what its statements mean.
 
 | Surface | Where | Maintained against the code? |
 | --- | --- | --- |
-| **Contracts** — what each unit guarantees now, and its exclusions | `ONTOLOME.md` in each unit; `exec/DECISIONS.md` | **Yes.** Update it in the same change that alters the contract. |
+| **Self-study** — each unit's evolving understanding, including commitments, evidence, assumptions, and open questions | `ONTOLOME.md` in each unit | **Yes.** Refine it when work yields useful insight; update commitments explicitly when they change. |
+| **Decision ledger** — what is settled, open, and would change an answer | `exec/DECISIONS.md` | **Yes.** Keep decisions and their evidence current. |
 | **Documentation** — how to use it and how it works | `docs/` in each unit; built by `python composition.py docs` from the repository root | **Yes.** Everything under a `docs/` directory is published to the Sphinx site. |
 | **Design record** — reviews, plans, proposals, phase trackers | `design/` in `hedloom`, `flow` and `exec`; `flow/PLANNING.md`; `flow/IMPLEMENTATION.md` | **No.** Written on a date, never edited to stay true, never published. |
 

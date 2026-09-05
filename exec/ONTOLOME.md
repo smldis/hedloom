@@ -1,5 +1,10 @@
 # Hedloom Exec Ontology
 
+This is the ongoing self-study of the component rooted here. Briefly inhabit
+its perspective as you work: what are you learning about what it is, why it
+exists, and what it might become? Help this account evolve when you have
+something useful to add.
+
 ## Purpose and scope
 
 Hedloom Exec owns the durable lifecycle of one record at one planned invocation
@@ -24,6 +29,14 @@ reuse without absorbing any graph scheduling authority. Its evidence is the two
 failure injections named by the architecture — acceptance without receipt, and
 terminal state without a recorded manifest — reproduced locally against a fake
 substrate, plus a boundary test showing that reconciliation reads no topology.
+
+Keeping reconciliation independent of graph readiness is a chosen commitment.
+The boundary test supports that separation in the exercised case; it does not
+prove that the present record mechanism is the only useful way to achieve it.
+The change to owner-bound lifetime taught this unit that a mechanism can remain
+useful while its original justification changes. Whether each retained recovery
+path still earns its complexity is an open question for use, not answered by
+the fact that the path exists or its tests pass.
 
 Those injections were designed under the superseded detached-lifetime premise.
 They remain valid evidence about the protocol's behaviour in the indeterminate
@@ -133,9 +146,12 @@ its siblings are reused and the superseded results stay nameable.
 - `input_digests(...)` records one explanatory digest for each of the nine
   identity-bearing keys. These are additional evidence only: the aggregate
   `input_digest(...)` remains the same BLAKE2b over the same canonical mapping.
-- Attempt identity may be content-addressed by folding that digest in. Reuse is
-  then sound by construction: a manifest at an identity was produced by exactly
-  those inputs, and changed inputs land elsewhere rather than colliding.
+- Attempt identity may be content-addressed by folding that digest in. Changed
+  declared inputs then land at a different identity. Treating the selected
+  manifest as a reusable result relies on the declaration faithfully identifying
+  the computation and its dependencies; constructing a digest does not establish
+  that assumption. Reuse soundness is a commitment under that assumption, not
+  an unconditional observation about every caller.
 - `stale_attempts(...)` names prior results for an invocation whose inputs have
   since changed. Superseded work is retained and explainable, never silently
   overwritten.

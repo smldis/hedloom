@@ -1,5 +1,10 @@
 # Hedloom Run Ontology
 
+This is the ongoing self-study of the component rooted here. Briefly inhabit
+its perspective as you work: what are you learning about what it is, why it
+exists, and what it might become? Help this account evolve when you have
+something useful to add.
+
 ## Purpose and scope
 
 Hedloom Run walks a validated Plan and executes it. It owns dependency order,
@@ -18,14 +23,15 @@ measurements behind it.
 **Readiness is a kernel, not the unit.** What the unit owns is the *binding* a
 run performs: which substrate provides a placement, which command implements an
 operation, and which address an upstream output landed at. `hedloom_run.binding`
-holds those rules once, and both kernels use them, because changing which
-kernel decides readiness must change how long a plan takes and nothing else.
+holds those rules once, and both kernels use them. Sharing that binding is a
+chosen design for preserving meaning when the readiness kernel changes; its
+presence alone does not establish equivalence for every workload.
 
 ## Mode of being
 
 **Development state:** `prototype`
 
-Two kernels exist, holding the same meaning.
+Two kernels exist with a commitment to preserve the meaning of the bound work.
 
 `driver.run_plan` executes one invocation at a time in the order the Plan
 already determines. It needs no scheduler and remains the reference: its
@@ -34,11 +40,18 @@ the edited branch and its dependents on a third, blocks successors of a failure
 rather than running them against inputs that do not exist, and passes a file
 written by one step to the step that reads it.
 
-`graph.run_plan_graph` gives readiness to Dask. Its decisive evidence is that
-the two kernels produce the same input digests and the same values for the same
-Plan, and that a result recorded by one is reused by the other. Adoption is
-recorded, but the kernel has not yet run a real study; its concurrency,
+`graph.run_plan_graph` gives readiness to Dask. The cross-kernel cases in
+`tests/test_graph.py` provide evidence of equal input digests and values for
+their tested Plans, and reuse of a result recorded by the other kernel.
+Adoption is recorded, but the kernel has not yet run a real study; its concurrency,
 dashboard, and failure isolation are untested against anything but fakes.
+
+Those observations support the shared-binding design without establishing
+that two kernels will always earn their maintenance cost. Their value as an
+execution choice and a reference for comparison remains a question for actual
+workloads. The failure differences and shared-filesystem assumption described
+below qualify this account; they must remain visible when interpreting its
+equivalence claims.
 
 ## Current contracts
 

@@ -1,5 +1,10 @@
 # Hedloom Ontology
 
+This is the ongoing self-study of the component rooted here. Briefly inhabit
+its perspective as you work: what are you learning about what it is, why it
+exists, and what it might become? Help this account evolve when you have
+something useful to add.
+
 ## Purpose and scope
 
 Hedloom is the operator-facing composition of the three units beneath it. It owns
@@ -20,8 +25,16 @@ purpose was to restate the first file correctly.
 
 **Development state:** `prototype`
 
-The unit studies whether one file can be a whole study without the Plan ceasing
-to be inspectable before it spends anything. Its evidence is
+The unit's commitment is to join authoring and execution through the children's
+public contracts while preserving inspection before submission. Its working
+hypothesis is that this join removes repeated agreement between separate files
+without creating a second account of what those children own. The examples
+below provide bounded evidence for that benefit. They do not settle whether
+every current convenience belongs in this facade: a convenience that repeatedly
+restates a child's rules would challenge the present boundary, even if it works.
+
+The unit studies whether one authoring file can connect a Plan to its execution
+while retaining inspection before submission. Its evidence is
 `examples/grid_refinement.py`: three grid resolutions integrating `exp(-x)` over
 [0, 1] with real `awk`, whose value is analytic, so the measured 0.632943
 against an exact 0.6321206 is checkable — the coarse grid's 0.130% gap is the
