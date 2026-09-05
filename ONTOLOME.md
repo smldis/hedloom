@@ -17,6 +17,14 @@ are selected by the computation an invocation declares, so equal declarations
 in different studies are one record — and it does not make one study's results
 private to it.
 
+`Study` is the named execution envelope for a Plan and its implementations.
+It implements the executable part of the manifesto's wider study: an inquiry
+bringing together intent, context, actions, evidence, and decisions. Several
+executions may contribute to that inquiry as its question changes. Executing a
+Plan supplies outcomes and evidence; it does not by itself establish an
+accepted conclusion. Ownership of the wider inquiry remains open until use
+gives a reason to place it.
+
 It exists because that agreement kept being written by hand. A Plan declared
 what work meant; a separate binding supplied implementations, command lines,
 output paths, transports and roots; a third caller walked the result. Every
@@ -35,6 +43,19 @@ without creating a second account of what those children own. The examples
 below provide bounded evidence for that benefit. They do not settle whether
 every current convenience belongs in this facade: a convenience that repeatedly
 restates a child's rules would challenge the present boundary, even if it works.
+
+Operator experience exposes a further limit of the join: retained evidence can
+be difficult to find after execution. An operator reported struggling to
+discover earlier attempts for inspection and debugging. The name-based
+resolution that used to stand in for this has been removed rather than kept as
+a partial answer: it resolved a shared record to whichever study created it,
+which was wrong once records became shared. A run now hands back the exact
+record and try it used, and that reference provides direct access to
+an execution. The facade does not persist a study-run history or provide a
+study-to-execution discovery surface; retained records alone do not supply it.
+Discovery from a study or attempt root through to tries, diagnostics, and
+results is a concrete need for this operator-facing join. Its eventual surface
+remains to be developed; this observation does not settle wider inquiry ownership.
 
 The unit studies whether one authoring file can connect a Plan to its execution
 while retaining inspection before submission. Its evidence is
@@ -188,19 +209,13 @@ that would place each point on its own job as a comment rather than a claim.
   so records written under an earlier one are not selected by today's digest and
   are not reused; their contents remain readable. There is no migration path in
   this prototype and none is needed.
-- Retained evidence is hard to find after execution, and nothing here hides
-  that. The name-based resolution that used to stand in for discovery is
-  removed rather than kept as a partial answer: it resolved a shared record to
-  whichever study created it, which is wrong once records are shared. A run
-  hands back the exact record and try it used, and keeping that reference is
-  the only way to return to an execution. Discovery from a study or attempt
-  root through to tries, diagnostics, and results remains a concrete need for
-  this operator-facing join, and its surface remains to be developed.
 - `hedloom pin`, `hedloom unpin`, and `hedloom pins` protect and inspect
   terminal try workspaces by record identity or unique prefix, optionally with
   `#<try>`.
   Pinning is an operator action with a reason and actor; it is never authored
-  into a study and never implied by accepting a result for reuse.
+  into a study and never implied by accepting a result for reuse. Neither
+  pinning nor reuse acceptance constitutes acceptance of an engineering
+  conclusion.
 - A study may begin from a file it did not write. An operation declaring an
   `input_artifact` source as an input is handed its located path, and the same
   reading that locates it fingerprints it, so delivery and staleness cannot

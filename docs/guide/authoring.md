@@ -1,5 +1,12 @@
 # Authoring a study
 
+Hedloom's `Study` is the executable part of a wider inquiry: a named Plan
+together with its implementations. An inquiry may involve several executions,
+revised questions, and decisions made from their evidence. This authoring
+surface does not own that wider lifecycle. See
+[reading results](results.md#reading-a-run-studyrun) for the distinction between
+execution success, an evaluation verdict, and an accepted conclusion.
+
 Three decorators, and only the third one can spend anything.
 
 | You write | What it is | When its body runs |

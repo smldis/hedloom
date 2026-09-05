@@ -234,7 +234,11 @@ class StudyRun:
 
 
 class Study:
-    """A named authored Plan together with the operations that implement it."""
+    """A named execution envelope for a Plan and its implementations.
+
+    This is the executable part of a wider inquiry, whose intent,
+    interpretation, and decisions are not owned by this object.
+    """
 
     def __init__(
         self,

@@ -9,7 +9,7 @@ run.succeeded                 # True iff every invocation succeeded
 run.summary()                 # one line per invocation: disposition, key, outcome
 run.report.outcomes           # every InvocationOutcome, in plan order
 run.document                  # the Plan this run executed
-run.study_name                # the durable namespace this run was recorded under
+run.study_name                # the durable operator name this run was requested under
 ```
 
 `run["coarse:integrate"]` looks up an `InvocationOutcome` by the authored key,
@@ -113,6 +113,19 @@ The report is in **plan order** regardless of completion order, so two runs of
 one plan stay comparable; `on_event` fires in completion order, because those
 are two different questions.
 
+Execution outcome, evaluation verdict, and accepted conclusion answer different
+questions. An evaluation operation can run successfully and return
+`{"passes": False}` because the measured value misses its declared tolerance.
+`run.succeeded` can still be `True`: the evaluation completed correctly.
+An exception or a failed command instead reports an execution problem; the
+execution record alone cannot decide whether that problem also has meaning
+for the inquiry.
+
+Accepting a conclusion requires interpreting the evidence under its criteria
+and assumptions. Hedloom does not infer that acceptance from a returned value,
+execution success, reuse, or pinning. A failing verdict can be useful evidence
+for revising the question or choosing the next experiment.
+
 ## Reuse, and what invalidates it
 
 Work whose declared inputs are unchanged is reused, not repeated. This is
@@ -146,7 +159,7 @@ that the record cannot tell apart. Failed tries are retained. A later
 submission allocates the next try in the same content-addressed record, and
 accepting the current one is a separate, durable human action
 (`hedloom_exec.reuse.accept_for_reuse`). Acceptance selects standing evidence;
-it does not pin it.
+it does not pin it or accept its interpretation as an engineering conclusion.
 
 ## Finding what a run actually executed
 

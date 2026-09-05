@@ -2,6 +2,11 @@
 
 Author a study, see what it will do, and run it — from one file.
 
+Here `Study` means a named execution envelope: a Plan and the operations that
+implement it. It supplies the executable part of a wider inquiry, which also
+includes intent, context, interpretation, and decisions. A completed run
+provides evidence; accepting a conclusion requires judgment about that evidence.
+
 ```python
 from hedloom import Site, artifact, file, flow, local, operation, shell, study, sweep
 

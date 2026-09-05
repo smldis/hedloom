@@ -539,6 +539,48 @@ authorised by this note; they are the shapes work would take.
 | **fold** | the ordinary downstream invocation that consumes a subtree's export |
 | **degenerate tree** | one fixed edge, statically known — `live_source.py` |
 
+## Follow-up — Shared computation requests and nested scheduling (2026-09-05)
+
+Added at the user's request during the attempt-identity discussion so these
+questions can be considered together. This addition does not adopt C1–C9 or
+authorize a nesting/scheduler implementation.
+
+The identity direction is now one shared store: a declared computation digest
+selects a record, independent of study name and authored invocation key. Each
+actual execution has its own numbered try; a future study-history surface would
+record the requesting contexts separately. See [the identity implementation plan](attempt-identity-implementation-2026-09-05.md)
+and [the discoverability handoff](../DISCOVERABILITY-ATTEMPT-IDENTITY-HANDOFF.md).
+This is an invocation-computation identity, not adoption of C2's proposal to
+identify a whole subtree by its Plan document.
+
+Equivalent requests will therefore meet the same record more often, including
+siblings and separate studies. Scheduler coalescing could let several requests
+share one execution within a scheduler. It cannot alone arbitrate independent
+sessions or processes sharing the store. Exec must retain exclusive claims;
+the layer that waits for a shared result and returns it to each requester is
+still to be chosen. Current `AttemptJournal.claim` is nonblocking and raises
+`ConcurrentClaim`; the graph kernel reports this attempt error as a refused,
+failed invocation. Exclusion is not yet successful result sharing.
+
+Consider with C3's admission/budget question:
+
+- Where do equivalent callers converge, and how does each retain its own
+  invocation outcome and the exact selected record/try reference?
+- Can a waiting caller release capacity without weakening placement limits?
+  A nested waiter must not hold the last resource its producer needs. Account
+  for dependencies across nested plans and refuse cyclic waiting.
+- What happens when the producer fails, the owning controller disappears, or
+  one consumer cancels while another still needs the execution? A consumer
+  withdrawing interest and cancelling the shared execution are distinct acts.
+- What coordinates two schedulers/controllers? Preserve the record protocol's
+  exclusivity and owner-bound job lifetime; do not assume Dask task keys alone
+  solve this boundary.
+
+The identity implementation deliberately keeps the present claim refusal and
+does not add waiting, retries, resource donation, or scheduler coalescing.
+Verify this limitation explicitly rather than claiming that shared identity
+already means every simultaneous caller receives a result.
+
 Written on a date, and never edited to stay true — `design/README.md`'s rule
 applies here as well. If any of this becomes true it belongs in `docs/` or an
 `ONTOLOME.md`; if it is refused, this file records what was refused and why,
