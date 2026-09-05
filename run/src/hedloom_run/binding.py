@@ -29,6 +29,7 @@ __all__ = [
     "UnsupportedPlacement",
     "available_transports",
     "build_bundle",
+    "output_value",
     "produced_by",
     "resolve",
     "select_transport",
@@ -91,6 +92,30 @@ def resolve(reference: Any, produced: Mapping[str, Any]) -> Any:
     return None
 
 
+def output_value(
+    artifacts: Mapping[str, Mapping[str, Any]], value: Any, name: str
+) -> Any:
+    """What one declared output of a succeeded result resolves to.
+
+    A filesystem output resolves to its recorded address, because that is what
+    a downstream command opens, and because reading the bytes on a caller's
+    behalf would be a second, unrecorded notion of what the output is. A stream
+    or returned output resolves to what was recorded under that name. An output
+    with no recorded artifact resolves to the whole returned value, which is
+    all an operation declaring nothing about where its result lands produced.
+
+    Shared for the same reason the rest of this module is: the façade reads an
+    exported output by name, and a second copy of this rule would let a study
+    mean one thing to a downstream input and another to the caller reading the
+    same output.
+    """
+
+    artifact = artifacts.get(name)
+    if artifact is None:
+        return value
+    return artifact.get("address", artifact.get("value"))
+
+
 def produced_by(item: PlannedInvocation, result: Any) -> dict[str, Any]:
     """What this invocation contributes under the keys that reference it.
 
@@ -98,15 +123,12 @@ def produced_by(item: PlannedInvocation, result: Any) -> dict[str, Any]:
     downstream command opens. Anything else contributes its value.
     """
 
-    contributed: dict[str, Any] = {}
-    for name in item.output_names or ("",):
-        key = f"output:{item.input_digest}:{name}"
-        artifact = result.artifacts.get(name)
-        if artifact is not None:
-            contributed[key] = artifact.get("address", artifact.get("value"))
-        else:
-            contributed[key] = result.value
-    return contributed
+    return {
+        f"output:{item.input_digest}:{name}": output_value(
+            result.artifacts, result.value, name
+        )
+        for name in item.output_names or ("",)
+    }
 
 
 def select_transport(

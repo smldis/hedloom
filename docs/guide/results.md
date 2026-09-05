@@ -3,18 +3,99 @@
 ## Reading a run: `StudyRun`
 
 ```python
+run.outputs["verdict"].value  # what the study exported under that name
 run["coarse:integrate"].artifacts["result"]["address"]
-run.value            # the plan's conclusion: its final invocation's value
-run.succeeded        # True iff every invocation succeeded
-run.summary()        # one line per invocation: disposition, key, outcome
-run.report.outcomes  # every InvocationOutcome, in plan order
-run.document         # the Plan this run executed
-run.study_name       # the durable namespace this run was recorded under
+run.succeeded                 # True iff every invocation succeeded
+run.summary()                 # one line per invocation: disposition, key, outcome
+run.report.outcomes           # every InvocationOutcome, in plan order
+run.document                  # the Plan this run executed
+run.study_name                # the durable namespace this run was recorded under
 ```
 
 `run["coarse:integrate"]` looks up an `InvocationOutcome` by the authored key,
 raising `KeyError` for a key nothing was authored with rather than returning
 `None` and deferring the mistake.
+
+## What the study produced: `run.outputs`
+
+A study produces what its Plan **exports** — the mapping the `@study` body
+returns — under the names the author gave those outputs:
+
+```python
+@study(default_policy=local())
+def characterise():
+    measured = measure.named("measure")(write_grid.named("grid")(steps=64))
+    return {"measurements": measured, "verdict": evaluate.named("evaluate")(measured)}
+
+run = characterise().submit(site=site)
+
+run.outputs["measurements"].value       # 6
+run.outputs["verdict"].value            # {"passes": False, "measured": 6}
+run.outputs["verdict"].authored_key     # "evaluate" — which invocation produced it
+run.outputs["verdict"].outcome.reused   # whether this run recomputed it
+```
+
+Authored names, never report or completion order. Appending an invocation to a
+study cannot change what its outputs mean, a study that exports nothing has an
+empty mapping, and one that exports several keeps them several — there is no
+unwrapping to a single value and no preferred entry. A name the study never
+exported raises `KeyError`, naming the ones it did.
+
+Each entry is a `StudyOutput`, which keeps the reference and the outcome rather
+than resolving them away:
+
+| | |
+| --- | --- |
+| `.value` | what the exported port resolved to |
+| `.artifact` | the recorded artifact for that port, or `None` if it has none |
+| `.available` | whether the producing invocation succeeded in this run |
+| `.outcome` | the producing `InvocationOutcome`, or `None` |
+| `.authored_key` | the producer, as the study was authored |
+| `.invocation_id`, `.output_name`, `.reference` | what the Plan exported |
+
+A **port**, not a producer: one invocation declaring both `file("note.txt")`
+and `returned()` exports two different things, and each resolves to its own.
+A file or directory output resolves to its **recorded address**, the same value
+a downstream operation receives — reading the bytes stays the caller's
+decision. This is `hedloom_run.binding`'s rule, shared rather than restated, so
+an exported output and a downstream input cannot disagree about what an
+invocation produced.
+
+**An output nobody produced is not `None`.** Reading `.value` or `.artifact` for
+a failed or blocked producer raises `OutputUnavailable`, naming the invocation
+and its recorded error. `None` returned by a succeeded body is a result and
+stays one; the two are never the same answer.
+
+```python
+run = characterise().submit(site=site, stop_on_failure=False)
+verdict = run.outputs["verdict"]
+if verdict.available:
+    decide(verdict.value)
+else:
+    print(verdict.outcome.outcome, verdict.outcome.error)
+```
+
+Exporting a value does not make it durably serializable. What is recorded is
+what the attempt record can hold; an arbitrary Python object returned by a body
+is available to this process and is not a preservation format.
+
+### Execution, verdict, and conclusion
+
+Three different questions, and only the first is `run.succeeded`:
+
+* **Execution** — did the work run? An evaluation that computes
+  `{"passes": False}` **succeeded**: it did its job and reported a failing
+  measurement.
+* **Verdict** — what did it return? That is `run.outputs["verdict"].value`, and
+  hedloom neither interprets it nor prefers an output named like one.
+* **Conclusion** — is the result accepted? That depends on criteria,
+  assumptions and interpretation. Nothing here infers it from execution
+  success, from reuse, or from a pin.
+
+There is no aggregate `run.value`. It answered with the last invocation in
+report order, which is the study's conclusion only when the conclusion happens
+to be authored last — and silently stopped being it the moment anything was
+appended. Export what the study produces and read it by name.
 
 Each outcome carries `authored_key`, `operation`, `input_digest`,
 `disposition`, `outcome`, `placement`, `value`, `artifacts`, `changed_keys` and

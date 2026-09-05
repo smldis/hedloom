@@ -139,7 +139,7 @@ def test_a_local_study_never_calls_the_status_reader_and_keeps_completion_output
 
     output = capsys.readouterr().out
     assert run.succeeded
-    assert run.value == 7
+    assert run.outputs["value"].value == 7
     assert reader.calls == 0
     assert "[watch]" not in output
     assert "point" in output and "succeeded" in output
@@ -241,7 +241,7 @@ def test_a_status_reader_failure_prints_once_and_cannot_fail_the_run(
 
     output = capsys.readouterr().out
     assert run.succeeded, run.summary()
-    assert run.value == 41
+    assert run.outputs["value"].value == 41
     assert reader.calls == 1
     assert output.count("[watch disabled]") == 1
     assert "bjobs is too old for -o" in output

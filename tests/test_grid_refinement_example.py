@@ -39,7 +39,7 @@ def test_the_integral_is_right_and_converges_at_second_order(tmp_path: Path) -> 
     run = grid_refinement.grid_refinement().submit(site=site_for(tmp_path))
     assert run.succeeded, run.summary()
 
-    verdict = run.value
+    verdict = run.outputs["verdict"].value
     exact = math.exp(-0.0) - math.exp(-1.0)
     assert verdict["exact"] == pytest.approx(exact)
 
@@ -76,4 +76,4 @@ def test_a_second_submission_recomputes_nothing(tmp_path: Path) -> None:
     second = subject.submit(site=site)
     assert second.succeeded, second.summary()
     assert len(second.report.reused) == len(second.report.outcomes)
-    assert second.value == first.value
+    assert second.outputs["verdict"].value == first.outputs["verdict"].value

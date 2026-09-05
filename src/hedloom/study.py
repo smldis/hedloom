@@ -21,6 +21,7 @@ same declaration rather than from two files that must agree.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping as MappingABC
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Thread
@@ -30,21 +31,160 @@ import warnings
 from hedloom_exec.prune import RetentionPolicy, survey
 from hedloom_exec.transport import Transport, TransportError
 from hedloom_exec.watch import AttemptStatus, LSFStatusReader, live_attempts, observe
+from hedloom_run.binding import output_value
 from hedloom_run.driver import InvocationOutcome, RunReport, run_plan
 from hedloom_run.site import Site
 
 from hedloom.binding import BoundTransport
 
-__all__ = ["Study", "StudyRun", "start_watcher", "submit"]
+__all__ = [
+    "OutputUnavailable",
+    "Study",
+    "StudyOutput",
+    "StudyRun",
+    "start_watcher",
+    "submit",
+]
 
 _WATCH_INTERVAL_SECONDS = 10.0
 _WATCH_JOIN_SECONDS = 1.0
 _WATCH_THREAD_NAME = "hedloom-watch"
 
 
+class OutputUnavailable(RuntimeError):
+    """An exported output exists in the Plan but this run did not produce it.
+
+    Raised rather than returned, because every value a body may legitimately
+    return is also a plausible answer here. ``None`` from a succeeded
+    invocation is a result; ``None`` from one that failed is the absence of a
+    result, and a caller that cannot tell them apart draws conclusions from
+    work that never happened.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class StudyOutput:
+    """One output the Plan exported, with the outcome that produced it.
+
+    The reference and the outcome are kept rather than resolved away, so a
+    caller can ask which invocation an output came from, whether it was reused,
+    and why it is missing, without guessing an authored key.
+    """
+
+    name: str
+    reference: Mapping[str, Any]
+    outcome: InvocationOutcome | None
+
+    @property
+    def invocation_id(self) -> str | None:
+        """The invocation the Plan says produces this output."""
+
+        return self.reference.get("invocation_id")
+
+    @property
+    def output_name(self) -> str | None:
+        """Which of that invocation's declared outputs this export names."""
+
+        return self.reference.get("output_name")
+
+    @property
+    def authored_key(self) -> str | None:
+        """The producer, addressed the way the study was authored."""
+
+        return self.outcome.authored_key if self.outcome is not None else None
+
+    @property
+    def available(self) -> bool:
+        """Whether the producing invocation succeeded in this run."""
+
+        return self.outcome is not None and self.outcome.outcome == "succeeded"
+
+    @property
+    def value(self) -> Any:
+        """What this exported output port resolved to.
+
+        A file or directory output resolves to its recorded address rather than
+        its bytes: the artifact is the result, and reading it is the caller's
+        decision. This is the same resolution a downstream input receives,
+        because it is the same rule, shared with both kernels in
+        ``hedloom_run.binding``.
+        """
+
+        outcome = self._produced()
+        return output_value(outcome.artifacts, outcome.value, self.output_name)
+
+    @property
+    def artifact(self) -> Mapping[str, Any] | None:
+        """The recorded artifact for this port, or ``None`` if it has none.
+
+        A file or directory output records its address, size and modification
+        time. An output whose operation declared nothing about where it lands
+        records nothing, and its result is the returned value.
+        """
+
+        return self._produced().artifacts.get(self.output_name)
+
+    def _produced(self) -> InvocationOutcome:
+        """The outcome that produced this output, or refuse to invent one."""
+
+        if self.reference.get("type") != "output":
+            raise OutputUnavailable(
+                f"output {self.name!r} is not produced by an invocation: the "
+                f"Plan exports a reference of type "
+                f"{self.reference.get('type')!r}, which this façade does not "
+                "resolve to a result"
+            )
+        if self.outcome is None:
+            raise OutputUnavailable(
+                f"output {self.name!r} names invocation "
+                f"{self.invocation_id!r}, which this run did not report"
+            )
+        if self.outcome.outcome != "succeeded":
+            where = self.outcome.authored_key or self.outcome.invocation_id
+            detail = f": {self.outcome.error}" if self.outcome.error else ""
+            raise OutputUnavailable(
+                f"output {self.name!r} was not produced: {where} "
+                f"{self.outcome.outcome}{detail}"
+            )
+        return self.outcome
+
+
+class StudyOutputs(MappingABC):
+    """Exported outputs under the names the author gave them, and nothing else."""
+
+    __slots__ = ("_entries",)
+
+    def __init__(self, entries: Mapping[str, StudyOutput]) -> None:
+        self._entries = dict(entries)
+
+    def __getitem__(self, name: str) -> StudyOutput:
+        try:
+            return self._entries[name]
+        except KeyError:
+            exported = ", ".join(self._entries) or "none"
+            raise KeyError(
+                f"this study exports no output named {name!r}; "
+                f"exports: {exported}"
+            ) from None
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics
+        return f"StudyOutputs({sorted(self._entries)})"
+
+
 @dataclass(frozen=True, slots=True)
 class StudyRun:
-    """What a run produced, addressable under ``study_name`` as authored."""
+    """What a run produced, addressable under ``study_name`` as authored.
+
+    Outcomes and exported outputs are evidence. Whether an evaluation passed is
+    the value it returned; whether the engineering conclusion is accepted is
+    neither of those, and nothing here decides it.
+    """
 
     report: RunReport
     document: Mapping[str, Any]
@@ -57,13 +197,36 @@ class StudyRun:
         raise KeyError(f"no invocation was authored with key {authored_key!r}")
 
     @property
-    def value(self) -> Any:
-        """The last invocation's value: a plan's conclusion is its final step."""
+    def outputs(self) -> Mapping[str, StudyOutput]:
+        """What this study exported, under the names the author gave them.
 
-        return self.report.outcomes[-1].value if self.report.outcomes else None
+        The author decides what a study produces, so neither report order nor
+        completion order appears here: appending an unrelated invocation
+        changes nothing about what the outputs mean. A Plan exporting nothing
+        has an empty mapping, and one exporting several keeps them several —
+        there is no unwrapping to a single value and no preferred entry.
+        """
+
+        by_invocation = {
+            outcome.invocation_id: outcome for outcome in self.report.outcomes
+        }
+        return StudyOutputs(
+            {
+                exported["name"]: StudyOutput(
+                    name=exported["name"],
+                    reference=dict(exported.get("reference") or {}),
+                    outcome=by_invocation.get(
+                        (exported.get("reference") or {}).get("invocation_id")
+                    ),
+                )
+                for exported in self.document.get("outputs", [])
+            }
+        )
 
     @property
     def succeeded(self) -> bool:
+        """Whether every invocation succeeded. It judges no returned value."""
+
         return self.report.succeeded
 
     def summary(self) -> str:

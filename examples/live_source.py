@@ -226,7 +226,7 @@ def refresh(*, nonce: str) -> dict:
     if not run.succeeded:
         raise RuntimeError(f"the reading study failed:\n{run.summary()}")
     return {
-        "summary": run.value,
+        "summary": run.outputs["summary"].value,
         "inner": [
             {"key": outcome.authored_key, "reused": outcome.reused}
             for outcome in run.report.outcomes
@@ -265,7 +265,7 @@ def main() -> int:
                 if not run.succeeded:
                     print(run.summary())
                     return 1
-                result = run.value
+                result = run.outputs["result"].value
                 inner = "  ".join(
                     f"{item['key']}:{'reused' if item['reused'] else 'ran   '}"
                     for item in result["inner"]
