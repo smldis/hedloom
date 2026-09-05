@@ -151,6 +151,12 @@ equivalence claims.
   meaning; a run binds mechanism. Operations absent from both run in-process.
 - A file output contributes its recorded address to downstream inputs, because
   that is what a downstream command opens. Other outputs contribute values.
+  `binding.output_value(artifacts, value, name)` is that rule as one function,
+  used by `produced_by` for downstream inputs and by the façade for an output a
+  Plan exports. Promoted rather than restated for the reason the rest of this
+  module is shared: two copies would let a study mean one thing to a downstream
+  input and another to the caller reading the same output. It reads a recorded
+  result and resolves no addresses, so it acquires no new authority here.
 - Work whose inputs are unchanged is reused rather than repeated; that decision
   belongs to `hedloom-exec` and is not re-implemented here.
 - Both kernels pass each invocation's authored key into execution attribution

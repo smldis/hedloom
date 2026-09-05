@@ -44,10 +44,17 @@ from hedloom_run.site import Site, SiteError  # noqa: F401
 
 from hedloom.binding import BoundTransport, Shell, Workspace, shell  # noqa: F401
 from hedloom.session import Session, session  # noqa: F401
-from hedloom.study import Study, StudyRun, submit  # noqa: F401
+from hedloom.study import (  # noqa: F401
+    OutputUnavailable,
+    Study,
+    StudyOutput,
+    StudyRun,
+    submit,
+)
 
 __all__ = [
     "ArtifactContract",
+    "OutputUnavailable",
     "Parameter",
     "Plan",
     "Policy",
@@ -58,6 +65,7 @@ __all__ = [
     "SiteError",
     "Study",
     "StudyBuilder",
+    "StudyOutput",
     "StudyRun",
     "Workspace",
     "address",

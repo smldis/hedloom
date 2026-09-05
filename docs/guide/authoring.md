@@ -154,6 +154,12 @@ operation and flow definitions. An explicit name is useful for a short, stable
 CLI namespace. Output names do not name a study: returning `{"psf": psf}`
 still leaves this study named `grid-refinement`.
 
+**What the study returns is what it exports**, and those names are how the run
+is read afterwards — `run.outputs["verdict"].value`, never an aggregate over
+whatever happened to run last. Export everything a reader of this study needs,
+including a measurement that a later step also consumes; see
+[reading results](results.md#what-the-study-produced-runoutputs).
+
 `default_policy` is where work runs unless a call says otherwise.
 
 Calling `.submit` on the decorated *name* rather than on a study is the mistake

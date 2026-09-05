@@ -151,7 +151,7 @@ def main() -> int:
     print(subject.summary(), "\n")
 
     run = subject.submit(site=site, watch=True)
-    print("\nconclusion:", run.value)
+    print("\nconclusion:", run.outputs["verdict"].value)
     print("coarse grid estimated", run["coarse:estimate"].value)
     return 0 if run.succeeded else 1
 

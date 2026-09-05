@@ -137,8 +137,40 @@ that would place each point on its own job as a comment rather than a claim.
   moving the record changes what is reused, which is a different installation
   rather than a different way of running this one.
 - `StudyRun` retains `study_name` and is addressable the way the study was
-  authored: `run["coarse:integrate"]` is that invocation's outcome, and
-  `run.value` is the plan's conclusion.
+  authored: `run["coarse:integrate"]` is that invocation's outcome.
+- `run.outputs` is what the study's Plan exported, under the names its author
+  gave those outputs. Authored names decide it; report order and completion
+  order do not, so appending an invocation cannot change what a study produced.
+  A Plan exporting nothing has an empty mapping, and one exporting several
+  keeps them several: there is no unwrapping to a single value and no preferred
+  entry. A name the study did not export raises `KeyError`.
+- Each entry is a `StudyOutput`, which retains the Plan's reference and the
+  producing `InvocationOutcome` rather than resolving them away, so provenance
+  and reuse are inspectable without guessing an authored key. `.value` resolves
+  that exported **port** — one invocation declaring both a file and a returned
+  output exports two different things — through `hedloom_run.binding`, shared
+  with both kernels so an exported output and a downstream input cannot
+  disagree. A file or directory output resolves to its recorded address; the
+  bytes are the caller's to read.
+- An output nobody produced is refused rather than answered. `.value` and
+  `.artifact` raise `OutputUnavailable` for a failed, blocked or unreported
+  producer, naming it and its recorded error; `.available` asks the same
+  question without raising. `None` returned by a succeeded body is a result and
+  stays distinguishable from an absent one. Exporting a value does not make it
+  durably serializable: what an attempt record can hold is unchanged by being
+  exported.
+- Execution, verdict, and accepted conclusion are three questions.
+  `run.succeeded` reports the first, over invocation outcomes only: an
+  evaluation returning `{"passes": False}` succeeded. The second is the value
+  that evaluation exported, which this unit neither interprets nor prefers by
+  name. The third depends on criteria, assumptions and interpretation, and is
+  inferred here from nothing — not from execution, not from reuse, not from a
+  pin.
+- The aggregate `StudyRun.value` is **removed**. It answered with the last
+  invocation in report order, which is a study's conclusion only when the
+  conclusion happens to be authored last, and stopped being it silently as soon
+  as anything was appended. The removal is breaking, and deliberately has no
+  alias: a convenience that keeps its name would keep its meaning.
 - A recorded file output has a stable live view under
   `<Site.root>/latest/<study>/<authored-key>/<output>`. Identity-bearing inputs
   choose a record, and each execution gets a distinct try workspace beneath

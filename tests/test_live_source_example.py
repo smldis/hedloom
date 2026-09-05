@@ -27,7 +27,8 @@ def site_for(tmp_path: Path) -> Site:
 def outcomes_of(run) -> dict[str, bool]:
     """Which inner invocations were reused, by authored key."""
 
-    return {item["key"]: item["reused"] for item in run.value["inner"]}
+    result = run.outputs["result"].value
+    return {item["key"]: item["reused"] for item in result["inner"]}
 
 
 def test_an_unchanged_document_reuses_the_inner_plan(tmp_path, monkeypatch) -> None:
@@ -52,7 +53,10 @@ def test_an_unchanged_document_reuses_the_inner_plan(tmp_path, monkeypatch) -> N
         second = farm.submit(live_source.live_source(uuid.uuid4().hex))
         assert second.succeeded, second.summary()
         assert outcomes_of(second) == {"tally": True, "summarise": True}
-        assert second.value["summary"] == first.value["summary"]
+        assert (
+            second.outputs["result"].value["summary"]
+            == first.outputs["result"].value["summary"]
+        )
 
 
 def test_a_changed_document_invalidates_everything_below_it(
@@ -76,5 +80,6 @@ def test_a_changed_document_invalidates_everything_below_it(
         assert second.succeeded, second.summary()
 
         assert outcomes_of(second) == {"tally": False, "summarise": False}
-        assert second.value["summary"] != first.value["summary"]
-        assert second.value["summary"]["commonest"] == "delta"
+        changed = second.outputs["result"].value["summary"]
+        assert changed != first.outputs["result"].value["summary"]
+        assert changed["commonest"] == "delta"

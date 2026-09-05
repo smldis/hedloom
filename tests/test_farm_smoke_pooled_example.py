@@ -99,4 +99,6 @@ def test_moving_a_point_off_the_pool_reuses_rather_than_reruns(tmp_path, farm) -
     assert len(moved.report.reused) == len(moved.report.outcomes), (
         "changing where work runs must change how long it takes and nothing else"
     )
-    assert moved.value == first.value
+    assert {name: item.value for name, item in moved.outputs.items()} == {
+        name: item.value for name, item in first.outputs.items()
+    }, "every exported summary must be the one the first run recorded"
