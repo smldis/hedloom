@@ -6,7 +6,7 @@ import pytest
 
 
 def test_a_pin_records_the_layout_it_was_made_under(tmp_path):
-    identity = attempt_identity(plan_id="plan", invocation_id="point").rendered
+    identity = attempt_identity(computation_digest="plan/point").rendered
     journal = AttemptJournal(tmp_path / "records", identity)
     with journal.claim():
         number = journal.begin_try()
@@ -19,7 +19,7 @@ def test_a_pin_records_the_layout_it_was_made_under(tmp_path):
 
 
 def test_verify_reports_layout_changed_rather_than_drift(tmp_path):
-    identity = attempt_identity(plan_id="plan", invocation_id="point").rendered
+    identity = attempt_identity(computation_digest="plan/point").rendered
     journal = AttemptJournal(tmp_path / "records", identity)
     with journal.claim():
         number = journal.begin_try()

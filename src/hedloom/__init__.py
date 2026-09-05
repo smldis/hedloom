@@ -228,10 +228,14 @@ def study(
     back a handle — so what comes back is a plan you can inspect before
     spending anything.
 
-    ``name`` is the durable, operator-facing namespace used by records and CLI
-    selectors. It defaults to the decorated function's ``module.qualname``, as
-    operation and flow definition names do. A finished Plan has no function
-    from which to infer it, so that form requires ``name=``.
+    ``name`` is the study's durable, operator-facing name, for authoring and
+    run context. It does not reach storage: an execution record is selected by
+    the computation an invocation declares, so a differently named study
+    declaring the same work reuses that record instead of repeating the work
+    under its own name, and neither study owns it. ``name`` defaults to the
+    decorated function's ``module.qualname``, as operation and flow definition
+    names do. A finished Plan has no function from which to infer it, so that
+    form requires ``name=``.
 
     `default_policy` is where every call in the study runs unless a call says
     otherwise: `local()` for work that runs in this process, `lsf(...)` for work

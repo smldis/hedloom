@@ -75,11 +75,6 @@ printed output is real.
   submission. `farm_smoke_pooled.py` is the same shape through a pool.
 * `examples/farm_multi_client.py` — what happens when two studies, or two
   controllers, want the farm at once, measured from the attempt journals.
-* [`examples/cli.py`](../examples/cli.py) — the operator's loop rather than the
-  author's, driven entirely through the `hedloom` command: `where` resolves a
-  path to hand a tool, one point's inputs are edited, and `check` answers
-  `behind` with a non-zero status so a script can branch on it. `log`, `prune`
-  and `pin` finish the tour. Every command is really executed.
 * [`examples/live_source.py`](../examples/live_source.py) — a study that
   reads something served from outside it, re-read on every run: a
   nonce-bearing stage fetches unconditionally and then submits an inner plan
@@ -87,8 +82,9 @@ printed output is real.
   reuses everything below it and a changed one reuses nothing. Both stages
   share one session, which is what keeps one budget open rather than two.
 * [`examples/retention.py`](../examples/retention.py) — what storage a study
-  spends and when it can be taken back: two points diverge, a second pass
-  supersedes them, and the survey's promised byte count is checked against
+  spends and when it can be taken back: two points diverge, a second pass runs
+  the corrections as their own computations, and the survey's promised byte
+  count is checked against
   what the filesystem actually loses. One spent try is pinned first, so the
   refusal to reclaim it is shown rather than asserted.
 

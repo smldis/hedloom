@@ -26,7 +26,7 @@ BUNDLE = {
     "arguments": {},
 }
 
-IDENTITY = attempt_identity(plan_id="injection", invocation_id="test").rendered
+IDENTITY = attempt_identity(computation_digest="injection/test").rendered
 JOB = try_name(IDENTITY, 0)
 
 

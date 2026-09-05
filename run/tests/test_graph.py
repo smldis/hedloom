@@ -179,7 +179,7 @@ def test_a_cluster_that_cannot_admit_the_plan_is_refused(tmp_path):
                     chain(),
                     client=bare,
                     transports=transports(),
-                    plan_id="study",
+
                     root=str(tmp_path),
                 )
     finally:
@@ -194,7 +194,7 @@ def test_a_plan_runs_and_reports_in_plan_order(client, tmp_path):
         chain(),
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path),
     )
 
@@ -211,7 +211,7 @@ def test_an_upstream_value_reaches_its_consumer(client, tmp_path):
         chain(),
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path),
     )
 
@@ -226,14 +226,14 @@ def test_the_graph_kernel_produces_the_same_identities_as_the_loop(client, tmp_p
     sequential = run_plan(
         chain(),
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path / "loop"),
     )
     graphed = run_plan_graph(
         chain(),
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path / "graph"),
     )
 
@@ -251,14 +251,14 @@ def test_a_result_recorded_by_one_kernel_is_reused_by_the_other(client, tmp_path
     run_plan(
         chain(),
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path),
     )
     graphed = run_plan_graph(
         chain(),
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path),
     )
 
@@ -279,14 +279,14 @@ def test_stopped_reports_have_the_same_shape_in_both_kernels(client, tmp_path):
     sequential = run_plan(
         plan,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path / "loop"),
     )
     graphed = run_plan_graph(
         plan,
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path / "graph"),
     )
 
@@ -318,7 +318,7 @@ def test_a_failure_blocks_its_dependent_and_spares_the_others(client, tmp_path):
         ),
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path),
         stop_on_failure=False,
     )
@@ -412,7 +412,7 @@ def test_stopping_cancels_the_unstarted_and_waits_for_the_in_flight(tmp_path):
                         transports={
                             "local": InProcessTransport({"controlled": controlled})
                         },
-                        plan_id="study",
+
                         root=str(tmp_path / "attempts"),
                     )
                 except BaseException as error:
@@ -484,7 +484,7 @@ def test_disabling_the_stop_runs_every_independent_branch(tmp_path):
                     transports={
                         "local": InProcessTransport({"controlled": controlled})
                     },
-                    plan_id="study",
+
                     root=str(tmp_path / "attempts"),
                     stop_on_failure=False,
                 )
@@ -536,7 +536,7 @@ def test_disabling_the_stop_never_enters_stop_admission(
         ),
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path),
         stop_on_failure=False,
     )
@@ -550,19 +550,24 @@ def test_disabling_the_stop_never_enters_stop_admission(
 def test_a_concurrent_claim_is_reported_without_losing_other_outcomes(
     client, tmp_path
 ):
+    # The two surviving points declare different arguments on purpose. A
+    # record is selected by the declared computation, so two identically
+    # declared points are one shared record asked for twice at once, and this
+    # pass answers that with the claim refusal rather than by coalescing. What
+    # is under test here is that one refusal does not lose other outcomes.
     report = run_plan_graph(
         document(
             [
-                invocation("before", "double"),
+                invocation("before", "double", config=[{"name": "value", "value": 1}]),
                 invocation("contended", "explode"),
-                invocation("after", "double"),
+                invocation("after", "double", config=[{"name": "value", "value": 2}]),
             ]
         ),
         client=client,
         transports={
             "local": ContendedTransport({"double": double, "explode": explode})
         },
-        plan_id="study",
+
         root=str(tmp_path),
         stop_on_failure=False,
     )
@@ -623,7 +628,7 @@ def test_an_escaping_exception_cancels_before_it_propagates(tmp_path):
                                 {"double": double, "controlled": controlled}
                             )
                         },
-                        plan_id="study",
+
                         root=str(tmp_path / "attempts"),
                         on_event=broken_observer,
                     )
@@ -684,7 +689,7 @@ def test_a_placement_nobody_provides_fails_rather_than_falling_back(
         ),
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path),
     )
 
@@ -699,7 +704,7 @@ def test_events_report_while_the_sweep_is_still_running(client, tmp_path):
         chain(),
         client=client,
         transports=transports(),
-        plan_id="study",
+
         root=str(tmp_path),
         on_event=seen.append,
     )
@@ -721,7 +726,7 @@ def test_a_transport_that_cannot_reach_a_worker_is_refused_by_name(client, tmp_p
             chain(),
             client=client,
             transports={"local": unshippable},
-            plan_id="study",
+
             root=str(tmp_path),
         )
 

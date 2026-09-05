@@ -1,4 +1,12 @@
-"""Read-only retention surveys over spent try workspaces."""
+"""Read-only retention surveys over spent try workspaces.
+
+Selection is a property of the record and its tries: outcome, age, size, and
+how many terminal tries to keep. Nothing here asks who requested a record, and
+nothing exempts a try because some derived per-requester view points at it. The
+protections that remain are the ones about the evidence itself — an unfinished
+or unreconciled try, a contended record, the standing evidence a future reuse
+would select, and a pin someone made deliberately.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +18,6 @@ import os
 import re
 import shutil
 
-from hedloom_exec.alias import aliases_into
 from hedloom_exec.artifacts import workspace_path
 from hedloom_exec.identity import try_name
 from hedloom_exec.journal import AttemptJournal, ConcurrentClaim, TERMINAL_OUTCOMES
@@ -209,7 +216,7 @@ class Candidate:
 
 
 SkipReason = Literal[
-    "pinned", "floor", "unreconciled", "contended", "reusable", "aliased",
+    "pinned", "floor", "unreconciled", "contended", "reusable",
     "non-terminal", "outside-roots", "no-rule",
 ]
 
@@ -484,10 +491,6 @@ def survey(
                     Skip(record.identity, number, "no-rule", "workspace is missing")
                 )
                 continue
-            if aliases_into(record_root, workspace):
-                skipped.append(Skip(record.identity, number, "aliased"))
-                continue
-
             selected: Candidate | None = None
             for rule in policy.rules:
                 if rank.get(number, 0) < rule.keep_latest:

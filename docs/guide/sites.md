@@ -74,8 +74,10 @@ named by placement *and* key rather than raising a bare `TypeError`.
 
 Retention says what one storage site can afford to keep, not what a study
 means. Conditions within one rule are ANDed; named rules are ORed. The global
-floor, standing reusable result, active aliases and pins, non-terminal tries,
-and `unreconciled` evidence remain protected regardless of a rule.
+floor, standing reusable result, active pins, non-terminal tries, and
+`unreconciled` evidence remain protected regardless of a rule. Every one of
+those is a property of the evidence itself; none of them asks which study
+requested the work.
 
 `hedloom prune --site site.toml` prints the survey and changes nothing.
 `--apply` is the separate destructive gesture, and every candidate is checked

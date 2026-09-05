@@ -43,7 +43,7 @@ class FakeBjobs:
 
 
 def record_identity(label):
-    return attempt_identity(plan_id="watch", invocation_id=label).rendered
+    return attempt_identity(computation_digest=f"watch/{label}").rendered
 
 
 def submitted_attempt(root, label="abc", transport="lsf-interactive"):
@@ -163,8 +163,8 @@ def test_observing_cannot_change_what_an_attempt_concludes(tmp_path):
     common = {
         "durability": Durability.RECORDED,
         "root": str(tmp_path),
-        "plan_id": "study",
-        "invocation_id": "invoke:a",
+
+
     }
     first = execute(transport, {"operation": "work"}, **common)
     for identity in (path.name for path in tmp_path.iterdir()):
@@ -282,12 +282,18 @@ def test_a_corrupt_observation_file_cannot_hide_a_result(tmp_path):
     assert status_of(tmp_path, journal.identity).observed is None
 
 
-def test_the_view_names_the_invocation_rather_than_the_digest(tmp_path):
+def test_the_view_names_the_try_that_is_actually_running(tmp_path):
+    """The try name is the job name, the workspace name, and what is watched.
+
+    It is also the only name a record has. There is no invocation name to show
+    here: a record is not owned by the invocation that first asked for it.
+    """
+
     journal = submitted_attempt(tmp_path)
     rows = observe(
         tmp_path, LSFStatusReader(FakeBjobs([(try_name(journal.identity, 0), "RUN")]))
     )
 
     text = render(rows)
-    assert "invoke:point-tt" in text
+    assert try_name(journal.identity, 0) in text
     assert "running" in text

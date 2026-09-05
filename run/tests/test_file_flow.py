@@ -78,7 +78,7 @@ def test_a_file_written_by_one_step_is_read_by_the_next(farm, tmp_path):
     report = run_plan(
         document(),
         farm,
-        plan_id="study",
+
         root=str(tmp_path / "attempts"),
         workspace_root=str(tmp_path / "work"),
         commands={
@@ -106,7 +106,7 @@ def test_the_upstream_address_is_available_to_the_consumer(farm, tmp_path):
     run_plan(
         document(),
         farm,
-        plan_id="study",
+
         root=str(tmp_path / "attempts"),
         workspace_root=str(tmp_path / "work"),
         commands={"simulate": [sys.executable, "-c", WRITE]},

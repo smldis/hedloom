@@ -6,7 +6,6 @@ import os
 
 import pytest
 
-from hedloom_exec.alias import point_alias
 from hedloom_exec.identity import attempt_identity, try_name
 from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.prune import (
@@ -15,7 +14,7 @@ from hedloom_exec.prune import (
 
 
 def _journal(tmp_path, label="point"):
-    identity = attempt_identity(plan_id="plan", invocation_id=label).rendered
+    identity = attempt_identity(computation_digest=f"plan/{label}").rendered
     return AttemptJournal(tmp_path / "records", identity)
 
 
@@ -24,9 +23,9 @@ def _terminal(journal, outcome="failed", *, result=None):
         number = journal.begin_try()
         if not any(event.event == "created" for event in journal.fold().events):
             journal.append(
-                "created", **{"try": number, "plan": "plan",
-                "invocation": "invoke:point", "operation": "work",
-                "input_digest": "digest", "authored_key": "point"},
+                "created",
+                **{"try": number, "operation": "work",
+                   "input_digest": "digest"},
             )
         journal.publish_terminal(
             try_number=number, outcome=outcome, manifest=result or {},
@@ -265,17 +264,6 @@ def test_older_than_measures_publication_not_file_mtime(tmp_path):
         _policy(_failed(older_than="7d")), workspace_root=tmp_path / "work",
     )
     assert found.candidates == ()
-
-
-def test_an_aliased_workspace_is_never_a_candidate(tmp_path):
-    journal = _journal(tmp_path)
-    number = _terminal(journal)
-    workspace = _workspace(tmp_path, journal, number)
-    point_alias(journal.directory.parent, plan_id="plan", authored_key="point",
-                output="result", target=workspace / "result.bin")
-    found = survey(journal.directory.parent, _policy(_failed()),
-                   workspace_root=tmp_path / "work")
-    assert found.skipped[0].reason == "aliased"
 
 
 def test_a_survey_of_an_empty_root_is_not_an_error(tmp_path):

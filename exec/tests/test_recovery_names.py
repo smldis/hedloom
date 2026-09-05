@@ -7,7 +7,7 @@ from hedloom_exec.lsf import LSFInteractiveTransport
 from hedloom_exec.transport import Observation, TransportError
 
 
-IDENTITY = attempt_identity(plan_id="recover", invocation_id="one").rendered
+IDENTITY = attempt_identity(computation_digest="recover/one").rendered
 BUNDLE = {"operation": "work", "command": ["true"]}
 
 

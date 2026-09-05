@@ -230,8 +230,14 @@ plan schema 3: 10 invocations, 0 sources
   medium:write_grid  grid_refinement.write_grid  local
 ```
 
-`study.name` is its durable operator namespace. `study.plan` is the exact
-document `submit` will run — not a second, hand-written description of it.
+`study.name` is its durable operator-facing name, for authoring and run
+context. It does not reach storage: a record is selected by the computation an
+invocation declares, so a study that declares the same work as another one
+reuses that work rather than repeating it under its own name, and neither
+study owns the record; see
+[how a study becomes work](../internals/mechanism.md). `study.plan` is the
+exact document `submit` will run — not a second, hand-written description of
+it.
 
 `hedloom.visualize` draws the same thing two other ways; see
 [looking at a study before running it](results.md#looking-at-a-study-before-running-it).

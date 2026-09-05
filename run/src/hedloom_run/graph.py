@@ -159,7 +159,6 @@ def _waiting_on_nested_run():
 class _RunConfig:
     """Where the durable record and the workspaces live, for one run."""
 
-    plan_id: str
     root: str
     workspace_root: str | None = None
     outputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None
@@ -275,9 +274,6 @@ def _run_one_here(
             durability=Durability.RECORDED,
             root=config.root,
             workspace_root=config.workspace_root,
-            plan_id=config.plan_id,
-            invocation_id=item.invocation_id,
-            authored_key=item.authored_key,
         )
     except (AttemptError, TransportError) as error:
         return _Step(
@@ -302,7 +298,8 @@ def _run_one_here(
             placement=placement_name,
             value=result.value,
             artifacts=dict(result.artifacts),
-            changed_keys=result.changed_keys,
+            record=result.record,
+            try_number=result.try_number,
             error=(result.detail or {}).get("error"),
         ),
         contributed,
@@ -677,7 +674,6 @@ def _run_plan_graph(
     *,
     client: Any,
     transports: Mapping[str, Transport] | None = None,
-    plan_id: str,
     root: str,
     workspace_root: str | None = None,
     commands: Mapping[str, Sequence[str]] | None = None,
@@ -717,7 +713,6 @@ def _run_plan_graph(
         dict(transports) if transports is not None else {"*": transport}
     )
     config = _RunConfig(
-        plan_id=plan_id,
         root=root,
         workspace_root=workspace_root,
         outputs=outputs,

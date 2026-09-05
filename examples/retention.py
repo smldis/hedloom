@@ -11,19 +11,18 @@ This example spends some storage on purpose and then reclaims it, checking the
 arithmetic at every step rather than trusting a summary:
 
     first pass    four points, two diverge after writing their trace
-    reclaimable   nothing yet — `latest/` still resolves to those failures
-    second pass   the diverging points corrected; the failures are superseded
+    the floor     nothing reclaimable under the shipped seven-day floor
+    second pass   the diverging points corrected, as new computations
     survey        names the spent tries and changes nothing
     pin           one spent try promised to a reader
     apply         frees exactly the bytes the survey promised
 
-The two passes are the point, not padding. A `latest/` alias is bound before a
-body runs, so a tool can watch an output while it is still being written —
-which means the newest try at a key always has something resolving to it,
-whether it succeeded or not. Spent storage is storage nothing points at, so a
-failure becomes reclaimable when it is superseded and not before. A policy
-that reclaimed the current failure at a key would strand the path a colleague
-was reading.
+The floor is the point of the second step, not padding. Every protection here
+is a property of the evidence rather than of who asked for it: how recent a
+try is, whether it is the standing evidence a later run would reuse, and
+whether someone pinned it. A correction is a different computation and gets
+its own record; it does not declare the earlier one obsolete, and nothing
+reclaims a try because some other study moved on.
 
 Every number here is checkable. The survey states how many bytes it would
 free; the filesystem is measured before and after; the two must agree. A run
@@ -181,24 +180,21 @@ def main(work: Path | None = None) -> int:
           f"{outcomes.count('failed')} failed")
     print(f"    on disk: {payload_bytes(records, workspaces)} byte(s)")
 
-    # Nothing is reclaimable yet, and that is the rule rather than a gap. A
-    # `latest/` alias is bound before a body runs -- so a tool can watch an
-    # output while it is written -- which means the newest try at a key always
-    # has something resolving to it, failed or not. Spent storage is storage
-    # nothing points at, and a failure only becomes that once it is superseded.
+    # Nothing is reclaimable yet, and that is the shipped floor rather than a
+    # gap: recent work is protected because someone is probably still reading
+    # it. The floor is a duration, not a judgement about whose work it is.
     stopgap = survey(
         records,
         RetentionPolicy(
             rules=(RetentionRule(name="failed", outcome=("failed",), keep_latest=0),),
-            floor="0s",
         ),
         workspace_root=workspaces,
     )
-    aliased = [item for item in stopgap.skipped if item.reason == "aliased"]
-    print(f"    reclaimable now: {len(stopgap.candidates)} — the two failures are "
-          f"still what `latest/` resolves to ({len(aliased)} skipped as aliased)")
+    held = [item for item in stopgap.skipped if item.reason == "floor"]
+    print(f"    reclaimable now: {len(stopgap.candidates)} — the failures are "
+          f"newer than the seven-day floor ({len(held)} skipped as floor)")
 
-    print("\n=== second pass: the operator corrects the diverging points")
+    print("\n=== second pass: the corrected points are different computations")
     fixed = spending_study(CORRECTED).submit(
         site=site, watch=True, stop_on_failure=False
     )
@@ -206,7 +202,7 @@ def main(work: Path | None = None) -> int:
     print(f"\n    invocations: {settled_now.count('succeeded')} succeeded, "
           f"{settled_now.count('failed')} failed")
     print(f"    on disk: {payload_bytes(records, workspaces)} byte(s) — the first "
-          "pass's failures are still there, now superseded")
+          "pass's failures are still there, under their own records")
 
     # The default floor is seven days, which would spare everything here. An
     # example that quietly ran with the shipped default and reclaimed nothing
@@ -306,7 +302,7 @@ def main(work: Path | None = None) -> int:
     settled = [item for item in surviving if item.outcome == "succeeded"]
     for record in settled:
         if not (workspaces / f"{record.identity}-{record.try_number}").is_dir():
-            print(f"    FAILED: {record.authored_key} settled and was reclaimed "
+            print(f"    FAILED: {record.identity} settled and was reclaimed "
                   "anyway; a reusable result is never a candidate")
             return 1
     print(f"    reusable: {len(settled)} settled point(s) untouched — a result a "

@@ -384,10 +384,6 @@ class Study:
         fingerprints = site.fingerprints(document)
         common = dict(
             transports=transports,
-            # The execution kernel consumes a generic Plan and therefore calls
-            # this its plan ID. At the facade the durable namespace belongs to
-            # the Study, not to whichever outputs its current Plan exports.
-            plan_id=self.name,
             root=site.root,
             workspace_root=site.workspace_root,
             source_fingerprints=fingerprints,
@@ -464,13 +460,8 @@ def _reporter(
     def report(outcome: InvocationOutcome) -> None:
         name = outcome.authored_key or outcome.invocation_id
         disposition = "reused" if outcome.reused else outcome.disposition
-        reason = (
-            f"  rerun: {', '.join(outcome.changed_keys)} changed"
-            if outcome.changed_keys
-            else ""
-        )
         detail = f"  {outcome.error}" if outcome.error else ""
-        print(f"[{disposition:>9}] {name:<32}{outcome.outcome}{reason}{detail}")
+        print(f"[{disposition:>9}] {name:<32}{outcome.outcome}{detail}")
 
     return report
 
@@ -521,7 +512,7 @@ def _watch(
 
 
 def _watch_transition(row: AttemptStatus, previous: str | None) -> str:
-    name = row.invocation_id or row.identity
+    name = row.job_name or row.identity
     transition = f"{previous} → {row.observed}" if previous else f"→ {row.observed}"
     queued = (
         f" ({row.queue_seconds:.0f}s queued)"

@@ -12,7 +12,10 @@ one thing none of them could own alone: the join between an authored study and
 its execution. An author writes operations, a flow, and a plan; `submit` runs
 exactly those, because it holds both halves rather than requiring two files to
 agree about them. The facade also owns the study's durable, operator-facing
-name: the namespace joining authored invocation keys to execution records.
+name: what an operator selects a run by. It is not a record namespace — records
+are selected by the computation an invocation declares, so equal declarations
+in different studies are one record — and it does not make one study's results
+private to it.
 
 It exists because that agreement kept being written by hand. A Plan declared
 what work meant; a separate binding supplied implementations, command lines,
@@ -91,7 +94,9 @@ that would place each point on its own job as a comment rather than a claim.
   `module.qualname` is inferred, following operation and flow identities. Two
   definitions in one process cannot claim one name. A finished Plan requires
   an explicit name because it has no defining function from which to infer
-  one. Exported Plan output names do not participate in study identity.
+  one. Exported Plan output names do not participate in study identity, and
+  the study name does not participate in execution-record identity: it names
+  the requester, and the declared computation names the record.
 - An operation body **runs**. It receives the inputs the Plan resolved, its
   declared config, and — if it names the reserved parameter `out` — a
   `Workspace` addressing that attempt's own directory. Attribute access on the
@@ -171,23 +176,29 @@ that would place each point on its own job as a comment rather than a claim.
   conclusion happens to be authored last, and stopped being it silently as soon
   as anything was appended. The removal is breaking, and deliberately has no
   alias: a convenience that keeps its name would keep its meaning.
-- A recorded file output has a stable live view under
-  `<Site.root>/latest/<study>/<authored-key>/<output>`. Identity-bearing inputs
-  choose a record, and each execution gets a distinct try workspace beneath
-  that record; only this operator-facing view stays put. Every run repoints it
-  to the selected try before launch, including a run that returns to an older
-  reusable record.
-- Attempt-record layout 1 is the only readable recorded layout. Phase 1 removed
-  the sequence slot from identity hashing, deliberately changing every rendered
-  identity; roots written before this phase are unreadable and there is no
-  migration path in this prototype.
-- `hedloom where`, `hedloom check`, and `hedloom log` resolve the current output,
-  reject a cached path that is behind, and list creation-order iterations with
-  their changed identity keys. They accept either a site profile or an explicit
-  attempt root. Live run output names reruns by changed key and labels completed
-  reuse as `reused` rather than inventing a rerun reason.
+- Identity-bearing inputs choose a record, and each execution gets a distinct
+  try workspace beneath it. A declared output's address is that try's path, and
+  `InvocationOutcome.record` and `.try_number` name the execution an invocation
+  landed on, whether it ran or reused. There is no per-study view of outputs:
+  a record is shared by everyone who declares its computation, so a name-shaped
+  view would have had to choose one requester's spelling for work that belongs
+  to none of them.
+- Attempt-record layout 1 is the only readable recorded layout, and it has not
+  changed. Identity *renderings* have changed as the identity contract changed,
+  so records written under an earlier one are not selected by today's digest and
+  are not reused; their contents remain readable. There is no migration path in
+  this prototype and none is needed.
+- Retained evidence is hard to find after execution, and nothing here hides
+  that. The name-based resolution that used to stand in for discovery is
+  removed rather than kept as a partial answer: it resolved a shared record to
+  whichever study created it, which is wrong once records are shared. A run
+  hands back the exact record and try it used, and keeping that reference is
+  the only way to return to an execution. Discovery from a study or attempt
+  root through to tries, diagnostics, and results remains a concrete need for
+  this operator-facing join, and its surface remains to be developed.
 - `hedloom pin`, `hedloom unpin`, and `hedloom pins` protect and inspect
-  terminal try workspaces by human selector, record identity or unique prefix.
+  terminal try workspaces by record identity or unique prefix, optionally with
+  `#<try>`.
   Pinning is an operator action with a reason and actor; it is never authored
   into a study and never implied by accepting a result for reuse.
 - A study may begin from a file it did not write. An operation declaring an

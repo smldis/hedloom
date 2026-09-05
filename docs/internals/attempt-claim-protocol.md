@@ -18,12 +18,20 @@ and are the reason that question has a checkable answer instead of a note.
 
 ## Names and layout
 
-One invocation with one input digest has one record identity:
+One declared computation has one record identity, whoever asks for it:
 
 ```text
-attempt_identity(plan_id, invocation_id, input_digest)
+attempt_identity(computation_digest)
     -> hedloom-<blake2b-80bit>
 ```
+
+The requester is not a component. Two studies, or two authored keys, declaring
+the same computation select the same record. That makes the exclusion below
+load-bearing in a way it was not when every study had its own namespace: a
+concurrent equivalent request now reaches *this* record rather than a private
+one, and is refused by name rather than made to wait. Reuse of a published
+result still succeeds; what is refused is a second live claim. Coalescing or
+waiting for the holder is a scheduler question and is not answered here.
 
 The Phase 1 rendering deliberately differs from every earlier rendering: the
 old sequence hash slot was removed rather than filled with a vestigial zero.
@@ -75,7 +83,7 @@ with journal.claim():
     resume an allocated try that has no submission intent,
         otherwise begin_try() reserves the next number
     flush try_started
-    prepare that try's workspace and aliases
+    prepare that try's workspace
     flush submit_intent
     submit or discover using <record>-<try>
     append submit_receipt when available

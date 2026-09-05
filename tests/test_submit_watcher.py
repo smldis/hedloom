@@ -47,7 +47,7 @@ class StopAfter:
 
 
 def submitted_attempt(root: Path, label: str = "point") -> AttemptJournal:
-    identity = attempt_identity(plan_id="watch-submit", invocation_id=label).rendered
+    identity = attempt_identity(computation_digest=f"watch-submit/{label}").rendered
     journal = AttemptJournal(root, identity)
     with journal.claim():
         number = journal.begin_try()
@@ -56,8 +56,6 @@ def submitted_attempt(root: Path, label: str = "point") -> AttemptJournal:
             "created",
             **{
                 "try": number,
-                "plan": "study",
-                "invocation": "point",
                 "operation": "simulate",
                 "input_digest": "d" * 32,
             },
@@ -92,8 +90,10 @@ def test_the_poller_prints_each_transition_once_and_queue_time_on_running(
     _watch(tmp_path, reader, StopAfter(3))
 
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0] == "[watch] point → pending"
-    assert lines[1].startswith("[watch] point pending → running (")
+    # The try name is what the farm was told and what the record is called;
+    # there is no requester name to print instead.
+    assert lines[0] == f"[watch] {job} → pending"
+    assert lines[1].startswith(f"[watch] {job} pending → running (")
     assert lines[1].endswith("s queued)")
     assert len(lines) == 2
     assert status_of(tmp_path, journal.identity).queue_seconds is not None
@@ -112,7 +112,7 @@ def test_a_job_first_seen_running_still_prints_a_queue_measurement(tmp_path, cap
     )
 
     line = capsys.readouterr().out.strip()
-    assert line.startswith("[watch] point → running (")
+    assert line.startswith(f"[watch] {job} → running (")
     assert line.endswith("s queued)")
     assert status_of(tmp_path, journal.identity).queue_seconds is not None
 

@@ -15,7 +15,7 @@ from hedloom_exec.lsf import CommandResult, LSFInteractiveTransport, LSFPooledTr
 from hedloom_exec.transport import SubmissionRefused
 
 BUNDLE = {"command": ["simulate", "--point", "tt"]}
-IDENTITY = attempt_identity(plan_id="lsf", invocation_id="abc").rendered
+IDENTITY = attempt_identity(computation_digest="lsf/abc").rendered
 JOB = try_name(IDENTITY, 0)
 
 
@@ -139,8 +139,8 @@ def test_recorded_execution_over_lsf_reuses_a_published_result(tmp_path):
     common = {
         "durability": Durability.RECORDED,
         "root": str(tmp_path),
-        "plan_id": "plan-1",
-        "invocation_id": "inv-a",
+
+
     }
 
     first = execute(lsf, BUNDLE, **common)

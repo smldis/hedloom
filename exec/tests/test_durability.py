@@ -36,8 +36,8 @@ def test_recorded_execution_leaves_a_readable_attempt(tmp_path):
         BUNDLE,
         durability=Durability.RECORDED,
         root=str(tmp_path),
-        plan_id="plan-1",
-        invocation_id="inv-a",
+
+
     )
 
     identity = result.journal.identity
@@ -54,8 +54,8 @@ def test_recorded_execution_reuses_a_published_result(tmp_path):
     common = {
         "durability": Durability.RECORDED,
         "root": str(tmp_path),
-        "plan_id": "plan-1",
-        "invocation_id": "inv-a",
+
+
     }
 
     first = execute(shared, BUNDLE, **common)

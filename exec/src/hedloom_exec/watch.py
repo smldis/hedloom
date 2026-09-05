@@ -158,7 +158,6 @@ class AttemptStatus:
     identity: str
     try_number: int | None = None
     job_name: str | None = None
-    invocation_id: str | None = None
     operation: str | None = None
     phase: str = "unsubmitted"
     outcome: str | None = None
@@ -210,7 +209,6 @@ def status_of(root: str | Path, identity: str) -> AttemptStatus:
         identity=identity,
         try_number=number,
         job_name=try_name(identity, number) if number is not None else None,
-        invocation_id=created.get("invocation"),
         operation=created.get("operation"),
         phase=state.phase,
         outcome=state.outcome,
@@ -339,11 +337,11 @@ def render(rows: Iterable[AttemptStatus]) -> str:
     the only place a fact can be seen.
     """
 
-    lines = [f"{'invocation':<34}{'phase':<11}{'farm':<10}{'queued':>8}"]
+    lines = [f"{'record':<34}{'phase':<11}{'farm':<10}{'queued':>8}"]
     for row in rows:
         queued = row.queue_seconds
         lines.append(
-            f"{(row.invocation_id or row.identity)[:33]:<34}"
+            f"{(row.job_name or row.identity)[:33]:<34}"
             f"{row.outcome or row.phase:<11}"
             f"{row.observed or '-':<10}"
             f"{('-' if queued is None else format(queued, '.0f') + 's'):>8}"

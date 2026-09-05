@@ -107,7 +107,16 @@ def test_a_study_runs_entirely_on_a_pool(tmp_path, farm):
 def test_a_mixed_plan_places_some_points_directly_and_some_on_the_pool(
     tmp_path, farm
 ):
-    """Spike step 4. Two substrates, one plan, one run, one report."""
+    """Spike step 4. Two substrates, one plan, one run, one report.
+
+    The two arms compute *different* words on purpose. A record is selected by
+    the declared computation and placement is not part of it, so writing the
+    same word on both arms would be one shared record asked for twice at once
+    — which this pass leaves as a claim refusal rather than coalescing. What
+    this test is about is that one plan reaches two substrates in one run;
+    placement-independence of identity is asserted by
+    `test_placement_does_not_reach_the_attempt_identity` instead.
+    """
 
     site = site_with_pool(tmp_path)
 
@@ -117,11 +126,11 @@ def test_a_mixed_plan_places_some_points_directly_and_some_on_the_pool(
     @flow
     def mixed(words):
         direct = [
-            write_note.options(policy=local())(word=word)
+            write_note.options(policy=local())(word=f"{word}-local")
             for word in sweep(words, key=lambda item: f"local-{item}")
         ]
         on_pool = [
-            write_note.options(policy=pooled())(word=word)
+            write_note.options(policy=pooled())(word=f"{word}-pool")
             for word in sweep(words, key=lambda item: f"pool-{item}")
         ]
         return {"direct": direct[-1], "pooled": on_pool[-1]}
@@ -151,15 +160,13 @@ def test_placement_does_not_reach_the_attempt_identity(tmp_path, farm):
     a different substrate entirely — so if any placement were going to leak
     into identity, this is where it would show.
 
-    Asserted on `input_digest` rather than on reuse, because reuse is no longer
-    the right instrument for it. Since studies were given stable operator names
-    the attempt identity is `blake2b(Study.name, invocation_id, input_digest)`
-    (`docs/internals/mechanism.md`), so two *differently named* studies record
-    under different namespaces however identical their work — deliberately, and
-    the site refuses `study` in an override for the same reason. This test
-    therefore compares what placement is allowed to touch, and
-    `test_an_overridden_run_reuses_what_the_plain_run_produced` covers the
-    reuse half within one namespace.
+    Asserted on both halves. A record is now selected by the declared
+    computation alone (`exec/src/hedloom_exec/identity.py`), so two
+    *differently named* studies declaring the same work reach the same record:
+    the second run must therefore both carry the same digest and reuse the
+    first run's evidence rather than recompute it. These two submits are
+    sequential, so nothing here depends on the deferred question of what two
+    simultaneous requesters should do.
     """
 
     site = site_with_pool(tmp_path)
@@ -186,6 +193,10 @@ def test_placement_does_not_reach_the_attempt_identity(tmp_path, farm):
     ], (
         "a point moved off the pool must keep the identity it had on it; "
         "placement is not identity-bearing"
+    )
+    assert all(item.reused for item in placed_directly.report.outcomes), (
+        "the same declared computation in another study must select the same "
+        "record and reuse its evidence, not recompute it under a new name"
     )
 
 

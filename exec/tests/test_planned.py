@@ -244,7 +244,7 @@ def test_the_real_hedloom_flow_example_plan_derives(tmp_path):
     assert len(reduction) == 1
 
 
-def test_the_end_to_end_example_reuses_and_supersedes():
+def test_the_end_to_end_example_reuses_and_keeps_both_records():
     """The example is the slice; keep it runnable."""
 
     import os
@@ -271,4 +271,7 @@ def test_the_end_to_end_example_reuses_and_supersedes():
     assert second.count("reused") == 4 and "ran    " not in second
     # The edited point and the reduction downstream of it, and nothing else.
     assert third.count("ran    ") == 2 and third.count("reused") == 2
-    assert "superseded but retained" in output
+    # Both declarations are in the store; neither obsoletes the other.
+    assert "records in the store" in output
+    assert output.count("this plan") == 4
+    assert output.count("  earlier") == 2

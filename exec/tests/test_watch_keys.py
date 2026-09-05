@@ -16,7 +16,7 @@ class Reader:
 
 
 def live_record(tmp_path):
-    identity = attempt_identity(plan_id="watch-keys", invocation_id="one").rendered
+    identity = attempt_identity(computation_digest="watch-keys/one").rendered
     journal = AttemptJournal(tmp_path, identity)
     with journal.claim():
         number = journal.begin_try()

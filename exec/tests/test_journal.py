@@ -6,7 +6,7 @@ from hedloom_exec.identity import attempt_identity
 from hedloom_exec.journal import AttemptJournal, JournalError, LAYOUT_VERSION
 
 
-IDENTITY = attempt_identity(plan_id="journal", invocation_id="test").rendered
+IDENTITY = attempt_identity(computation_digest="journal/test").rendered
 
 
 def journal(tmp_path):

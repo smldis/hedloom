@@ -4,15 +4,11 @@ from hedloom_exec.attempt import accept_for_reuse
 from hedloom_exec.durability import Durability, execute
 from hedloom_exec.identity import try_name
 from hedloom_exec.journal import AttemptJournal
-from hedloom_exec.reuse import attempts_for, scan_attempts
+from hedloom_exec.reuse import scan_attempts
 from hedloom_exec.transport import InProcessTransport, Observation
 
 BUNDLE = {"operation": "simulate", "inputs": {"model": "sha256:aaa"}}
-COMMON = {
-    "durability": Durability.RECORDED,
-    "plan_id": "p",
-    "invocation_id": "point-tt",
-}
+COMMON = {"durability": Durability.RECORDED}
 
 
 def flaky(failures):
@@ -141,7 +137,7 @@ def test_there_is_no_cap_on_retained_tries(tmp_path):
     transport, state = flaky(30)
     for _ in range(25):
         execute(transport, BUNDLE, root=str(tmp_path), **COMMON)
-    record = attempts_for(tmp_path, plan_id="p", invocation_id="point-tt")
-    assert len(record) == 1
-    assert len(AttemptJournal(tmp_path, record[0].identity).fold().tries) == 25
+    records = scan_attempts(tmp_path)
+    assert len(records) == 1
+    assert len(AttemptJournal(tmp_path, records[0].identity).fold().tries) == 25
     assert state["calls"] == 25

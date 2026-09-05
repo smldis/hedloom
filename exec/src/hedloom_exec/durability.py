@@ -25,10 +25,9 @@ from hedloom_exec.attempt import (
     launch_or_attach,
     reconcile,
 )
-from hedloom_exec.identity import attempt_identity, try_name
+from hedloom_exec.identity import attempt_identity
 from hedloom_exec.journal import AttemptJournal
-from hedloom_exec.lineage import why_reran
-from hedloom_exec.reuse import attempts_for, input_digest, input_digests
+from hedloom_exec.reuse import input_digest
 from hedloom_exec.transport import Transport
 
 __all__ = ["Durability", "ExecutionResult", "execute"]
@@ -52,7 +51,15 @@ def _artifacts_of(result: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionResult:
-    """The outcome of one invocation, whatever its durability."""
+    """The outcome of one invocation, whatever its durability.
+
+    ``record`` and ``try_number`` name the execution this call actually
+    selected — the try whose evidence was published or reused. They are the
+    reference a caller pins, prunes around, or reads back, and they are stated
+    here rather than inferred later by scanning for a name or resolving a
+    mutable pointer. A call that selected no try leaves both ``None`` rather
+    than inventing one; ephemeral work has neither.
+    """
 
     outcome: str
     value: Any = None
@@ -61,7 +68,8 @@ class ExecutionResult:
     disposition: str | None = None
     journal: AttemptJournal | None = None
     artifacts: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
-    changed_keys: tuple[str, ...] = ()
+    record: str | None = None
+    try_number: int | None = None
 
     def address(self, name: str) -> str | None:
         """Where one declared output landed, for a downstream invocation."""
@@ -74,12 +82,7 @@ def execute(
     bundle: Mapping[str, Any],
     *,
     durability: Durability = Durability.EPHEMERAL,
-    identity: str | None = None,
     root: str | None = None,
-    plan_id: str | None = None,
-    invocation_id: str | None = None,
-    authored_key: str | None = None,
-    unchecked_identity: bool = False,
     workspace_root: str | None = None,
 ) -> ExecutionResult:
     """Run one invocation at the declared durability level.
@@ -89,21 +92,21 @@ def execute(
     full attempt protocol and can complete from an existing manifest without
     rerunning the payload.
 
-    Pass ``plan_id`` and ``invocation_id``: the identity is then derived from
-    the bundle's declared inputs, and reuse cannot return a result computed
-    from different ones, because different inputs land on a different identity.
+    The bundle is the whole request. Its declared computation digest selects
+    the record, so there is nothing to pass about who is asking: two callers
+    declaring the same work reach the same record, and the second finds the
+    first's evidence instead of recomputing it. Reuse cannot be stale by
+    construction, because a changed declaration lands on a different record.
 
-    A bare ``identity`` is refused for recorded execution. Such an identity
-    says nothing about what produced the result under it, so reuse against it
-    can silently return stale work — the defect this argument exists to
-    prevent. Tests that deliberately construct crash states may opt out with
-    ``unchecked_identity=True``; production callers should not.
+    The returned :class:`ExecutionResult` names the record and the try it
+    selected, which is the reference to use for anything that must talk about
+    *this* execution afterwards.
     """
 
     if durability is Durability.EPHEMERAL:
         # A per-call key. A shared constant let two concurrent ephemeral calls
         # read each other's results back out of the transport.
-        key = identity or f"ephemeral-{uuid4().hex}"
+        key = f"ephemeral-{uuid4().hex}"
         handle = transport.submit(key, bundle)
         observation = transport.poll(handle)
         detail = dict(observation.detail or {})
@@ -120,62 +123,7 @@ def execute(
     if root is None:
         raise ValueError("recorded execution requires a root")
 
-    changed_keys: tuple[str, ...] = ()
-    if plan_id and invocation_id:
-        # Attribution only. Neither key participates in the input digest, so
-        # recording where an attempt came from cannot change what it reuses.
-        bundle = {**bundle, "plan": plan_id, "invocation": invocation_id}
-        if authored_key is not None:
-            bundle["authored_key"] = authored_key
-        if identity is None:
-            selected = attempt_identity(
-                plan_id=plan_id,
-                invocation_id=invocation_id,
-                input_digest=input_digest(bundle),
-            )
-            identity = selected.rendered
-
-            # A changed digest starts a new record. Same-digest retries are
-            # tries inside that one record and never supersede one another.
-            known = attempts_for(
-                root, plan_id=plan_id, invocation_id=invocation_id
-            )
-            if not any(
-                record.identity == selected.rendered for record in known
-            ):
-                prior = [
-                    record
-                    for record in known
-                    if record.input_digest is not None
-                    and record.input_digest != selected.input_digest
-                ]
-                if prior:
-                    latest = max(
-                        prior,
-                        key=lambda record: (record.created_at or "", record.identity),
-                    )
-                    bundle["supersedes"] = latest.identity
-                    if latest.input_digests:
-                        changed_keys = why_reran(
-                            latest.input_digests,
-                            input_digests(bundle),
-                        )
-
-    if identity is None:
-        raise ValueError(
-            "recorded execution requires both plan_id and invocation_id so the "
-            "identity can be derived from declared inputs"
-        )
-    if not (plan_id and invocation_id) and not unchecked_identity:
-        raise ValueError(
-            "a bare identity cannot make reuse sound: nothing ties it to the "
-            "inputs a stored result was computed from. Pass plan_id and "
-            "invocation_id, or unchecked_identity=True to construct a state "
-            "deliberately."
-        )
-    # Refuse a caller-supplied record name before creating any durable state.
-    try_name(identity, 0)
-
+    identity = attempt_identity(computation_digest=input_digest(bundle)).rendered
     journal = AttemptJournal(root, identity)
 
     declared_outputs = bundle.get("outputs")
@@ -196,7 +144,8 @@ def execute(
             disposition="completed",
             journal=journal,
             artifacts=_artifacts_of(result),
-            changed_keys=changed_keys,
+            record=identity,
+            try_number=manifest.get("try"),
         )
 
     state = reconcile(journal, transport, bundle_outputs=declared_outputs)
@@ -214,5 +163,6 @@ def execute(
         disposition=launched.disposition,
         journal=journal,
         artifacts=_artifacts_of(result),
-        changed_keys=changed_keys,
+        record=identity,
+        try_number=state.current_try,
     )

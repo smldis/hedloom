@@ -5,8 +5,8 @@ Usage:
     PYTHONPATH=exec/src python tools/attempt-census.py ROOT [WORKSPACE_ROOT]
 
 ``ROOT`` may be the attempts directory itself or a parent containing
-``attempts/``.  The reader creates nothing and ignores entries without an
-``events.jsonl`` journal, including the derived ``latest/`` alias tree.
+``attempts/``.  The reader creates nothing and ignores any entry without an
+``events.jsonl`` journal.
 """
 
 from __future__ import annotations
@@ -69,11 +69,8 @@ def census(root: Path, workspace_root: Path | None = None) -> str:
             (event.data for event in events if event.event == "created"),
             {},
         )
-        key = (
-            created.get("plan"),
-            created.get("invocation"),
-            created.get("input_digest"),
-        )
+        # A record is a declaration, so the record directory is the group.
+        key = (directory.name, created.get("input_digest"))
         for item in state.tries:
             outcome = item.outcome or item.phase
             outcomes[outcome] += 1
@@ -98,7 +95,7 @@ def census(root: Path, workspace_root: Path | None = None) -> str:
         f"record directories   {len(attempt_directories)}",
         f"try outcomes         {dict(outcomes)}",
         "",
-        f"(invocation,digest) groups   {len(groups)}",
+        f"records                      {len(groups)}",
         "  tries per record     "
         f"max {max(depths, default=0)}  p95 {_percentile(depths, 0.95)}  "
         f"median {_percentile(depths, 0.5)}",

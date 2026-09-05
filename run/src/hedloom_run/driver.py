@@ -53,7 +53,16 @@ class InvocationOutcome:
     placement: str | None = None
     value: Any = None
     artifacts: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
-    changed_keys: tuple[str, ...] = ()
+    record: str | None = None
+    """The record this invocation selected, or None if it never reached one."""
+    try_number: int | None = None
+    """The try whose evidence was published or reused, if one was selected.
+
+    With ``record`` this is the exact execution, stated by the run rather than
+    guessed at afterwards: it is what to pin, prune around, or read back. An
+    invocation that was blocked, refused, or skipped selected nothing and
+    leaves both None instead of naming a plausible neighbour.
+    """
     error: str | None = None
 
     @property
@@ -100,7 +109,6 @@ def run_plan(
     transport: Transport | None = None,
     *,
     transports: Mapping[str, Transport] | None = None,
-    plan_id: str,
     root: str,
     workspace_root: str | None = None,
     commands: Mapping[str, Sequence[str]] | None = None,
@@ -213,9 +221,6 @@ def run_plan(
                 durability=Durability.RECORDED,
                 root=root,
                 workspace_root=workspace_root,
-                plan_id=plan_id,
-                invocation_id=item.invocation_id,
-                authored_key=item.authored_key,
             )
         except (AttemptError, TransportError) as error:
             stopped = True
@@ -251,7 +256,8 @@ def run_plan(
             placement=placement_name,
             value=result.value,
             artifacts=dict(result.artifacts),
-            changed_keys=result.changed_keys,
+            record=result.record,
+            try_number=result.try_number,
             error=(result.detail or {}).get("error"),
         )
         outcomes.append(outcome)

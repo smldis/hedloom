@@ -4,7 +4,6 @@ Each test names the failure it prevents, because several of these were hidden
 by fakes that agreed with the code's own misunderstandings.
 """
 
-import json
 import threading
 
 import pytest
@@ -31,7 +30,7 @@ BUNDLE = {"command": ["simulate"], "operation": "simulate"}
 
 
 def identity(label):
-    return attempt_identity(plan_id="review", invocation_id=label).rendered
+    return attempt_identity(computation_digest=f"review/{label}").rendered
 
 
 JOB = try_name(identity("x"), 0)
@@ -108,8 +107,8 @@ def test_a_rejected_submission_leaves_nothing_cached(tmp_path):
             BUNDLE,
             durability=Durability.RECORDED,
             root=str(tmp_path),
-            plan_id="p",
-            invocation_id="i",
+
+
         )
 
     journals = [item for item in tmp_path.iterdir() if item.is_dir()]
@@ -313,25 +312,31 @@ def test_ephemeral_results_are_not_retained():
 # --- scan reuse -------------------------------------------------------------
 
 
-def test_staleness_can_be_asked_from_one_scan(tmp_path):
-    from hedloom_exec.reuse import scan_attempts, stale_attempts
+def test_two_declarations_coexist_as_two_records(tmp_path):
+    """A changed declaration adds a record; it does not obsolete the old one.
+
+    Which record is "current" is a property of the plan a caller holds, so it
+    is answered by comparing declarations, not by asking the store whose work
+    replaced whose.
+    """
+
+    from hedloom_exec.reuse import input_digest, scan_attempts
 
     transport = InProcessTransport({"simulate": lambda **kw: "ran"})
-    common = {
-        "durability": Durability.RECORDED,
-        "root": str(tmp_path),
-        "plan_id": "p",
-        "invocation_id": "i",
-    }
-    execute(transport, {"operation": "simulate", "inputs": {"a": 1}}, **common)
-    execute(transport, {"operation": "simulate", "inputs": {"a": 2}}, **common)
+    common = {"durability": Durability.RECORDED, "root": str(tmp_path)}
+    first_bundle = {"operation": "simulate", "inputs": {"a": 1}}
+    second_bundle = {"operation": "simulate", "inputs": {"a": 2}}
+    first = execute(transport, first_bundle, **common)
+    second = execute(transport, second_bundle, **common)
 
     known = scan_attempts(tmp_path)
-    stale = stale_attempts(
-        tmp_path,
-        plan_id="p",
-        invocation_id="i",
-        current_digest=json.loads("null") or "unmatched",
-        records=known,
-    )
-    assert len(stale) == 2
+    assert len(known) == 2
+    assert {item.identity for item in known} == {first.record, second.record}
+
+    wanted = input_digest(second_bundle)
+    assert [item.identity for item in known if item.input_digest == wanted] == [
+        second.record
+    ]
+    assert [item.identity for item in known if item.input_digest != wanted] == [
+        first.record
+    ]

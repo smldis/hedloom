@@ -36,7 +36,7 @@ behind the invariant this unit exists to hold:
 from hedloom_run.driver import run_plan
 
 report = run_plan(
-    document, transports=transports, plan_id="refinement",
+    document, transports=transports,
     root=str(work / "attempts"), workspace_root=str(work / "work"),
     source_addresses=site.source_addresses(document, fingerprints),
     source_fingerprints=fingerprints,

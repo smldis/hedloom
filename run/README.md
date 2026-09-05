@@ -9,7 +9,6 @@ from hedloom_run import run_plan
 report = run_plan(
     plan_document,
     transport,
-    plan_id="refinement",
     root="attempts",
     workspace_root="/nfs/studies/refinement",
     commands={"solve": ["awk", "-f", "rule.awk", "point.in"]},
@@ -59,10 +58,10 @@ with Client(cluster) as client:
         plan_document,
         client=client,
         transports={"local": local, "lsf-direct": lsf},
-        plan_id="refinement",
         root="attempts",
         on_event=lambda outcome: print(
-            outcome.authored_key, outcome.outcome, outcome.changed_keys
+            outcome.authored_key, outcome.outcome,
+            outcome.record, outcome.try_number,
         ),
     )
 ```

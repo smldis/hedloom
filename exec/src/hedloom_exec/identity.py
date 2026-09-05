@@ -5,6 +5,23 @@ record-local try number and must exist *before* a transport is asked to accept
 work, so that a submission whose receipt is lost can still be discovered.
 Neither name depends on a transport handle, a process, or a wall-clock reading.
 
+    A record is selected by what the work declares it computes, and by
+    nothing else.
+
+The requester is not part of that.  A study name, an authored key, a Plan ID,
+a placement and a try number all describe *who asked* or *where it ran*, and
+two requesters that declare the same computation are asking for the same
+record.  Folding any of them into the rendering would silently turn one shared
+computation into several, which is the defect this module exists to prevent.
+
+What the identity therefore promises is exactly what the declaration says:
+equal declared computational dependencies, under the author's existing
+responsibility to declare them faithfully.  It does not prove semantic
+equivalence, source immutability, or determinism.  An intentional independent
+repetition must declare a computational distinction -- a seed, a repetition
+index -- because merely naming a second invocation differently does not request
+a second execution.
+
 The rendered form is deliberately restricted to characters that survive use as
 a batch job name, a filesystem directory, and an environment value.
 """
@@ -36,70 +53,69 @@ class IdentityError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class AttemptIdentity:
-    """One content-addressed record for one planned invocation."""
+    """One content-addressed record for one declared computation.
 
-    plan_id: str
-    invocation_id: str
+    Equality is the record: two identities compare equal exactly when they
+    name the same record.  No requester metadata is carried here, so no
+    requester can make one shared record compare as two identities.
+    """
+
+    computation_digest: str
     rendered: str
-    input_digest: str | None = None
 
     def __str__(self) -> str:
         return self.rendered
 
 
-def _require_component(value: object, label: str) -> str:
-    """Components must be unambiguous, not printable-safe.
+def _require_digest(value: object) -> str:
+    """The digest must be unambiguous, not printable-safe.
 
     Only the *rendered* identity is used as a job name and directory, and that
-    is a generated hash. Components merely have to hash unambiguously, so
-    ordinary planner IDs like ``invoke:key:9f2c...`` are welcome. The one real
-    requirement is that no component can contain the field separator, which
-    would let two different pairs collide.
+    is a generated hash.  The declared digest merely has to hash unambiguously,
+    so an ordinary hex digest is welcome and so is any other unambiguous
+    declaration a caller derives.
     """
 
     if not isinstance(value, str) or not value:
-        raise IdentityError(f"{label} must be a non-empty string")
+        raise IdentityError(
+            "computation_digest must be a non-empty string: a record is "
+            "selected by the computation it declares, and an absent digest "
+            "would collapse every declaration onto one record"
+        )
     if _SEPARATOR in value:
-        raise IdentityError(f"{label} must not contain the field separator")
+        raise IdentityError("computation_digest must not contain the field separator")
     if any(character.isspace() and character != " " for character in value):
-        raise IdentityError(f"{label} must not contain control whitespace")
+        raise IdentityError("computation_digest must not contain control whitespace")
     return value
 
 
-def attempt_identity(
-    *,
-    plan_id: str,
-    invocation_id: str,
-    input_digest: str | None = None,
-) -> AttemptIdentity:
-    """Derive the stable record identity of one planned invocation.
+def attempt_identity(*, computation_digest: str) -> AttemptIdentity:
+    """Derive the stable record identity of one declared computation.
 
-    The identity is a pure function of its arguments: the same planning facts
-    always render the same value, in this process or a later one. That is what
-    lets a restarted controller ask a transport whether *this* attempt was
-    already accepted.
+    The identity is a pure function of its argument: the same declaration
+    always renders the same value, in this process or a later one, in this
+    study or another one.  That is what lets a restarted controller ask a
+    transport whether *this* record was already accepted, and what lets a
+    second study that declares the same work reuse the first study's evidence
+    instead of recomputing it.
 
-    Including ``input_digest`` makes the identity content-addressed, so changed
-    inputs produce a different attempt rather than colliding with an existing
-    result. Reuse then cannot be stale by construction: finding a manifest at
-    this identity means the work was done with exactly these inputs.
+    ``computation_digest`` is the digest of the declared computational
+    dependencies -- normally :func:`hedloom_exec.reuse.input_digest` of the
+    execution bundle.  Because nothing else participates, changed declarations
+    produce a different record rather than colliding with an existing result,
+    and reuse cannot be stale by construction: finding a manifest at this
+    identity means the work was done under exactly this declaration.
+
+    There is no fallback for a missing digest.  A request that cannot say what
+    it computes cannot select a record, and is refused rather than being given
+    a requester-derived name that would look content-addressed and not be.
     """
 
-    _require_component(plan_id, "plan_id")
-    _require_component(invocation_id, "invocation_id")
-    if input_digest is not None:
-        _require_component(input_digest, "input_digest")
-
-    material = _SEPARATOR.join((plan_id, invocation_id, input_digest or "")).encode()
-    digest = blake2b(material, digest_size=_DIGEST_BYTES).hexdigest()
-    rendered = f"hedloom-{digest}"
+    digest = _require_digest(computation_digest)
+    material = _SEPARATOR.join(("computation", digest)).encode()
+    rendered = f"hedloom-{blake2b(material, digest_size=_DIGEST_BYTES).hexdigest()}"
     assert _SAFE.match(rendered)  # the generated form is what must be safe
-    return AttemptIdentity(
-        plan_id=plan_id,
-        invocation_id=invocation_id,
-        rendered=rendered,
-        input_digest=input_digest,
-    )
+    return AttemptIdentity(computation_digest=digest, rendered=rendered)
 
 
 def try_name(identity: str, try_number: int) -> str:
