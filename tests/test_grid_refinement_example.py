@@ -23,6 +23,7 @@ def site_for(tmp_path: Path) -> Site:
         root=str(tmp_path / "attempts"),
         workspace_root=str(tmp_path / "work"),
         address_spaces={"repository-relative": str(ROOT / "examples")},
+        history_root=str(tmp_path / "attempts") + "-history",
     )
 
 
@@ -36,7 +37,7 @@ def test_the_integral_is_right_and_converges_at_second_order(tmp_path: Path) -> 
     but disagrees with calculus still fails here.
     """
 
-    run = grid_refinement.grid_refinement().submit(site=site_for(tmp_path))
+    run = grid_refinement.grid_refinement().submit(site=site_for(tmp_path), name="test-run")
     assert run.succeeded, run.summary()
 
     verdict = run.outputs["verdict"].value
@@ -69,11 +70,11 @@ def test_a_second_submission_recomputes_nothing(tmp_path: Path) -> None:
     site = site_for(tmp_path)
     subject = grid_refinement.grid_refinement()
 
-    first = subject.submit(site=site)
+    first = subject.submit(site=site, name="test-run")
     assert first.succeeded, first.summary()
     assert not first.report.reused, "nothing can be reused on a first run"
 
-    second = subject.submit(site=site)
+    second = subject.submit(site=site, name="test-run")
     assert second.succeeded, second.summary()
     assert len(second.report.reused) == len(second.report.outcomes)
     assert second.outputs["verdict"].value == first.outputs["verdict"].value

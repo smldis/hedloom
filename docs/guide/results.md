@@ -27,7 +27,7 @@ def characterise():
     measured = measure.named("measure")(write_grid.named("grid")(steps=64))
     return {"measurements": measured, "verdict": evaluate.named("evaluate")(measured)}
 
-run = characterise().submit(site=site)
+run = characterise().submit(name="characterise", site=site)
 
 run.outputs["measurements"].value       # 6
 run.outputs["verdict"].value            # {"passes": False, "measured": 6}
@@ -67,7 +67,7 @@ and its recorded error. `None` returned by a succeeded body is a result and
 stays one; the two are never the same answer.
 
 ```python
-run = characterise().submit(site=site, stop_on_failure=False)
+run = characterise().submit(name="characterise", site=site, stop_on_failure=False)
 verdict = run.outputs["verdict"]
 if verdict.available:
     decide(verdict.value)

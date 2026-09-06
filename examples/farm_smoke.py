@@ -138,7 +138,7 @@ def run(subject, farm) -> int:
     """
 
     print("first submission (must launch eight LSF jobs):")
-    first = farm.submit(subject)
+    first = farm.submit(subject, name="farm-smoke")
     if not first.succeeded:
         print(first.summary())
         return 1
@@ -150,7 +150,7 @@ def run(subject, farm) -> int:
         print(summary.read_text(), end="")
 
     print("\nsecond submission (must reuse all eight; no new LSF jobs):")
-    second = farm.submit(subject)
+    second = farm.submit(subject, name="farm-smoke")
     if not second.succeeded or len(second.report.reused) != 8:
         print(second.summary())
         return 1

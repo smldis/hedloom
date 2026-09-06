@@ -145,12 +145,13 @@ def main() -> int:
         root=str(work / "attempts"),
         workspace_root=str(work / "work"),
         address_spaces={"repository-relative": str(here)},
+        history_root=str(work / "attempts") + "-history",
     )
 
     subject = grid_refinement()
     print(subject.summary(), "\n")
 
-    run = subject.submit(site=site, watch=True)
+    run = subject.submit(site=site, watch=True, name="grid-refinement")
     print("\nconclusion:", run.outputs["verdict"].value)
     print("coarse grid estimated", run["coarse:estimate"].value)
     return 0 if run.succeeded else 1

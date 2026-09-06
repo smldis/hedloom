@@ -9,7 +9,7 @@ about how a run executes.
 ## `Study.submit(...)` — the one-run form
 
 ```python
-run = subject.submit(site=site, watch=True)
+run = subject.submit(name="investigate-start", site=site, watch=True)
 ```
 
 | Argument | Default | What it does |
@@ -36,8 +36,8 @@ watcher:
 
 ```python
 with session(site, watch=True) as farm:
-    first  = farm.submit(subject)
-    second = farm.submit(subject)      # reuse, same cluster, same watcher
+    first  = farm.submit(subject, name="investigate-start")
+    second = farm.submit(subject, name="investigate-start")      # reuse, same cluster, same watcher
 ```
 
 (`examples/farm_smoke.py`)
@@ -80,8 +80,8 @@ running this one.
 ## Debugging: `sequential` and `locally`
 
 ```python
-subject.submit(site=site, sequential=True)   # one at a time, no scheduler
-subject.submit(site=site, locally=True)      # ...and every placement served here
+subject.submit(name="investigate-start", site=site, sequential=True)   # one at a time, no scheduler
+subject.submit(name="investigate-start", site=site, locally=True)      # ...and every placement served here
 ```
 
 Say `sequential=True` rather than leaving it to be inferred from a missing

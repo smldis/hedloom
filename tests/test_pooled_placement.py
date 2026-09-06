@@ -87,13 +87,14 @@ def site_with_pool(tmp_path, **extra):
             },
             **extra,
         },
+        history_root=str(tmp_path / "attempts") + "-history",
     )
 
 
 def test_a_study_runs_entirely_on_a_pool(tmp_path, farm):
     """The plain case: every point routed to `pool`, one run, real workers."""
 
-    run = all_pooled().submit(site=site_with_pool(tmp_path))
+    run = all_pooled().submit(site=site_with_pool(tmp_path), name="test-run")
 
     assert run.succeeded, run.summary()
     assert {item.placement for item in run.report.outcomes} == {"pool"}
@@ -139,7 +140,7 @@ def test_a_mixed_plan_places_some_points_directly_and_some_on_the_pool(
     def build(words=("ab", "cd")):
         return mixed.named("mixed")(words)
 
-    run = build().submit(site=site)
+    run = build().submit(site=site, name="test-run")
 
     assert run.succeeded, run.summary()
     placements = {item.authored_key: item.placement for item in run.report.outcomes}
@@ -171,7 +172,7 @@ def test_placement_does_not_reach_the_attempt_identity(tmp_path, farm):
 
     site = site_with_pool(tmp_path)
 
-    on_pool = all_pooled(("ab",)).submit(site=site)
+    on_pool = all_pooled(("ab",)).submit(site=site, name="test-run")
     assert on_pool.succeeded, on_pool.summary()
 
     # Same work, same inputs, placed directly instead of on the pool.
@@ -179,7 +180,7 @@ def test_placement_does_not_reach_the_attempt_identity(tmp_path, farm):
     def directly(words=("ab",)):
         return notes.named("notes")(words)
 
-    placed_directly = directly().submit(site=site)
+    placed_directly = directly().submit(site=site, name="test-run")
     assert placed_directly.succeeded, placed_directly.summary()
 
     # Guards the comparison below: two empty lists are equal for the wrong
@@ -211,12 +212,13 @@ def test_an_overridden_run_reuses_what_the_plain_run_produced(tmp_path, farm):
 
     site = site_with_pool(tmp_path)
 
-    first = all_pooled(("ab",)).submit(site=site)
+    first = all_pooled(("ab",)).submit(site=site, name="test-run")
     assert first.succeeded, first.summary()
 
     second = all_pooled(("ab",)).submit(
         site=site,
         override={"placement": {"pool": {"cores": 2, "walltime": "1:00"}}},
+        name="test-run",
     )
 
     assert second.succeeded, second.summary()
@@ -238,7 +240,7 @@ def test_a_pooled_placement_refuses_the_sequential_kernel_by_name(tmp_path, farm
     that `sequential=True` means what it does not.
     """
 
-    run = all_pooled(("ab",)).submit(site=site_with_pool(tmp_path), sequential=True)
+    run = all_pooled(("ab",)).submit(site=site_with_pool(tmp_path), sequential=True, name="test-run")
 
     assert not run.succeeded
     failure = run.report.outcomes[0]

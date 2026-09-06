@@ -81,7 +81,7 @@ def build(words=("ab", "cde")):
 @pytest.fixture
 def site(tmp_path):
     return Site(root=str(tmp_path / "attempts"),
-                workspace_root=str(tmp_path / "work"))
+                workspace_root=str(tmp_path / "work"), history_root=str(tmp_path / "attempts") + "-history")
 
 
 def test_the_plan_is_complete_before_anything_is_spent(tmp_path):
@@ -96,7 +96,7 @@ def test_the_plan_is_complete_before_anything_is_spent(tmp_path):
 
 
 def test_the_body_that_runs_is_the_one_the_plan_names(site):
-    run = build().submit(site=site)
+    run = build().submit(site=site, name="test-run")
 
     assert run.study_name == f"{__name__}.build"
     assert run.succeeded, run.summary()
@@ -129,8 +129,11 @@ def test_stop_on_failure_defaults_true_and_reaches_both_kernels(
     monkeypatch.setattr(study_module, "run_plan", fake_run)
     monkeypatch.setattr(graph_module, "run_plan_graph", fake_graph)
     subject = build()
-    subject.submit(site=site, sequential=True, stop_on_failure=False)
-    subject.submit(site=site, client=object(), stop_on_failure=False)
+    subject.submit(site=site, sequential=True, stop_on_failure=False, name="test-run")
+    class EmptyClient:
+        def run(self, *args):
+            return {}
+    subject.submit(site=site, client=EmptyClient(), stop_on_failure=False, name="test-run")
 
     assert calls == [("sequential", False), ("graph", False)]
     assert inspect.signature(study_module.Study.submit).parameters[
@@ -151,13 +154,13 @@ def test_the_module_submit_threads_stop_on_failure(site):
 
     study_module = importlib.import_module("hedloom.study")
     assert (
-        study_module.submit(Subject(), site=site, stop_on_failure=False) == "run"
+        study_module.submit(Subject(), site=site, stop_on_failure=False, name="test-run") == "run"
     )
     assert seen["stop_on_failure"] is False
 
 
 def test_a_declared_file_lands_where_the_operation_said(site):
-    run = build().submit(site=site)
+    run = build().submit(site=site, name="test-run")
 
     address = run["ab:write_note"].artifacts["note"]["address"]
     assert Path(address).name == "note.txt"
@@ -179,15 +182,15 @@ def test_the_plan_carries_what_implements_each_operation(tmp_path):
 
 
 def test_a_second_run_reuses_everything(site):
-    build().submit(site=site)
-    again = build().submit(site=site)
+    build().submit(site=site, name="test-run")
+    again = build().submit(site=site, name="test-run")
 
     assert all(item.reused for item in again.report.outcomes), again.summary()
 
 
 def test_one_edited_point_reruns_only_its_own_branch(site):
-    build().submit(site=site)
-    edited = build(words=("ab", "xyz")).submit(site=site)
+    build().submit(site=site, name="test-run")
+    edited = build(words=("ab", "xyz")).submit(site=site, name="test-run")
 
     outcomes = {item.authored_key: item for item in edited.report.outcomes}
     assert outcomes["ab:write_note"].reused
@@ -208,7 +211,7 @@ def test_a_body_may_ask_for_a_command_to_be_run(site):
     def copies():
         return {"copy": copy_via_shell.named("copy")(word="hello").copy}
 
-    run = copies().submit(site=site)
+    run = copies().submit(site=site, name="test-run")
 
     assert run.succeeded, run.summary()
     address = run["copy"].artifacts["copy"]["address"]
@@ -228,7 +231,7 @@ def test_a_study_captures_a_declared_directory_output(site):
     def bundles():
         return write_bundle.named("bundle")()
 
-    run = bundles().submit(site=site, sequential=True)
+    run = bundles().submit(site=site, sequential=True, name="test-run")
 
     assert run.succeeded, run.summary()
     captured = run["bundle"].artifacts["bundle"]
@@ -300,6 +303,7 @@ def reading_site(tmp_path, fixtures):
         root=str(tmp_path / "attempts"),
         workspace_root=str(tmp_path / "work"),
         address_spaces={"fixtures": str(fixtures)},
+        history_root=str(tmp_path / "attempts") + "-history",
     )
 
 
@@ -311,7 +315,7 @@ def test_a_declared_source_reaches_the_body_that_asked_for_it(reading_site):
     to read an external file was to write its path into a second file by hand.
     """
 
-    run = _reads_a_source().submit(site=reading_site)
+    run = _reads_a_source().submit(site=reading_site, name="test-run")
 
     assert run.succeeded, run.summary()
     assert run["read"].value == 5
@@ -320,19 +324,19 @@ def test_a_declared_source_reaches_the_body_that_asked_for_it(reading_site):
 def test_editing_a_source_reruns_the_work_that_read_it(reading_site, fixtures):
     """Delivery and staleness read the same file, so they cannot disagree."""
 
-    first = _reads_a_source().submit(site=reading_site)
+    first = _reads_a_source().submit(site=reading_site, name="test-run")
     assert first["read"].value == 5
 
     (fixtures / "given.txt").write_text("abcdefgh")
-    again = _reads_a_source().submit(site=reading_site)
+    again = _reads_a_source().submit(site=reading_site, name="test-run")
 
     assert not again.report.outcomes[0].reused, again.summary()
     assert again["read"].value == 8
 
 
 def test_an_unedited_source_reuses_what_read_it(reading_site):
-    _reads_a_source().submit(site=reading_site)
-    again = _reads_a_source().submit(site=reading_site)
+    _reads_a_source().submit(site=reading_site, name="test-run")
+    again = _reads_a_source().submit(site=reading_site, name="test-run")
 
     assert all(item.reused for item in again.report.outcomes), again.summary()
 
@@ -352,8 +356,8 @@ def test_an_overridden_run_lands_on_the_same_attempts(site):
 
     thrifty = build().submit(
         site=site, override={"kernel": {"threads": 1}}
-    )
-    plain = build().submit(site=site)
+    , name="test-run")
+    plain = build().submit(site=site, name="test-run")
 
     assert thrifty.succeeded, thrifty.summary()
     assert all(item.reused for item in plain.report.outcomes), plain.summary()
@@ -368,11 +372,12 @@ def test_locally_runs_a_farm_study_here_and_needs_no_scheduler(tmp_path):
         placements={
             "lsf": {"kind": "lsf-interactive", "walltime": "1", "max_jobs": 4}
         },
+        history_root=str(tmp_path / "attempts") + "-history",
     )
     subject = build(("ab",))
 
     # No `bsub` on PATH and no cluster: if either were reached this would fail.
-    debugged = subject.submit(site=farm_site, locally=True)
+    debugged = subject.submit(site=farm_site, locally=True, name="test-run")
 
     assert debugged.succeeded, debugged.summary()
     assert debugged["ab:measure"].value == 6
@@ -383,8 +388,8 @@ def test_a_session_holds_one_cluster_for_several_runs(site):
 
     subject = build()
     with session(site) as farm:
-        first = farm.submit(subject)
-        second = farm.submit(subject)
+        first = farm.submit(subject, name="test-run")
+        second = farm.submit(subject, name="test-run")
         assert farm.client is not None, "a non-sequential session holds a client"
 
     assert first.succeeded, first.summary()
@@ -419,7 +424,7 @@ def test_dask_globals_survive_a_session(site):
 
     before = dask.config.get("scheduler", None)
     with session(site) as farm:
-        farm.submit(build())
+        farm.submit(build(), name="test-run")
     assert dask.config.get("scheduler", None) == before
 
 
@@ -458,10 +463,11 @@ def test_both_kernels_block_a_dependent_and_let_others_finish(tmp_path, kernel):
     site = Site(
         root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}"),
         workspace_root=str(tmp_path / f"work-{'seq' if kernel else 'graph'}"),
+        history_root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}") + "-history",
     )
     run = _one_failing_branch().submit(
         site=site, stop_on_failure=False, **kernel
-    )
+    , name="test-run")
 
     outcomes = {item.authored_key: item for item in run.report.outcomes}
     assert outcomes["bad:refuses_one_word"].outcome == "failed"
@@ -515,7 +521,7 @@ def test_an_explicit_study_name_is_the_record_and_cli_namespace(site, capsys):
         return write_note.named("write")(word="named")
 
     subject = explicitly_named()
-    run = subject.submit(site=site, sequential=True)
+    run = subject.submit(site=site, sequential=True, name="test-run")
     records = scan_attempts(site.root)
 
     assert subject.name == "short-study"
@@ -534,8 +540,8 @@ def test_exported_output_names_do_not_rename_or_invalidate_a_study(site):
         note = write_note.named("write")(word="same").note
         return {output_name: note}
 
-    first = renamed_output("first").submit(site=site, sequential=True)
-    second = renamed_output("second").submit(site=site, sequential=True)
+    first = renamed_output("first").submit(site=site, sequential=True, name="test-run")
+    second = renamed_output("second").submit(site=site, sequential=True, name="test-run")
 
     assert first.study_name == second.study_name == "stable-study"
     assert second.report.outcomes[0].reused
@@ -558,8 +564,8 @@ def test_different_declarations_get_their_own_records(site):
     def second():
         return {"note": write_note.named("write")(word="two").note}
 
-    one = first().submit(site=site, sequential=True)
-    two = second().submit(site=site, sequential=True)
+    one = first().submit(site=site, sequential=True, name="test-run")
+    two = second().submit(site=site, sequential=True, name="test-run")
 
     records = {item.identity for item in scan_attempts(site.root)}
     assert records == {one["write"].record, two["write"].record}

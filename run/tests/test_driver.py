@@ -214,3 +214,20 @@ def test_a_failed_point_is_retried_on_the_next_run(tmp_path):
     by_key = {item.authored_key: item for item in second.outcomes}
     assert by_key["coarse"].reused, "the point that worked must not rerun"
     assert by_key["medium"].ran
+
+
+def test_sequential_execution_honours_cancelled_entry_gate(tmp_path):
+    from hedloom_run.execution import ExecutionOwner
+    runs = []
+    handles = []
+    def cancel_before_admission(identifier, handle):
+        handles.append(handle)
+        assert handle.cancel_before_start()
+    report = run_plan(document(), transport(runs), root=str(tmp_path / 'records'),
+        execution_owner=ExecutionOwner(tmp_path / 'executions'),
+        on_execution=cancel_before_admission)
+    assert not runs
+    assert len(report.blocked) == len(report.outcomes) == 3
+    assert all(row.record is None and row.try_number is None for row in report.outcomes)
+    assert all(handle.state() == 'cancelled' for handle in handles)
+    assert not (tmp_path / 'records').exists()

@@ -112,7 +112,7 @@ def test_recorded_execution_needs_only_a_bundle_and_a_root(tmp_path):
 
     parameters = inspect.signature(execute).parameters
     assert set(parameters) == {
-        "transport", "bundle", "durability", "root", "workspace_root"
+        "transport", "bundle", "durability", "root", "workspace_root", "publish_selection"
     }
 
     result = execute(

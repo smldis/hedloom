@@ -99,12 +99,11 @@ what precedes it.
 | --- | --- | --- |
 | `.named("compare")` | `invoke:key:<sha256(kind, scope, key)>` | yes |
 | inside `sweep(..., key="key")` | same, key = `"<point>:<operation>"` | yes |
-| plain call | `invoke:0001` — a positional counter | **no** |
+| plain call | keyed ID from `function_name.N` within its boundary | unrelated calls only |
 
-The positional form is the trap. Insert one operation earlier in the file and
-every later invocation renumbers, so every downstream result silently fails to
-match and is recomputed — or worse, matches the wrong one. `sweep` exists to
-make that unrepresentable without the author writing a key at every call.
+Automatic names preserve readable scoped addresses; explicit keys are stable
+across insertion of calls of the same function. Computation identity derives
+from declarations independently of these Plan IDs.
 
 **2. `sweep` itself** is eight lines (`authoring.py:454`):
 
@@ -166,7 +165,7 @@ the work declares it computes, so two studies — or two authored keys, or one
 invocation renamed — that declare the same computation reach one shared record,
 and the second finds the first's evidence instead of recomputing it.
 
-`execute(transport, bundle, *, durability, root, workspace_root)` takes no
+`execute(transport, bundle, *, durability, root, workspace_root, publish_selection=None)` takes no
 requester at all, and the `created` event carries only the try, the operation
 and the declaration digest. A record has **no owner**: recording the first
 caller's name would have been ownership by arrival order, and every question
@@ -176,8 +175,8 @@ that belongs to none of them.
 
 What a run hands back instead is the exact execution it selected:
 `InvocationOutcome.record` and `.try_number`. Keeping that reference is how a
-caller returns to an execution; there is no way to find one without it, because
-discovery is not built.
+caller returns to an execution. [Run history](../guide/discovery.md) records that
+join before blocking launch and discovers it from a chosen run name.
 
 A missing digest is refused rather than defaulted, because a requester-derived
 fallback would look content-addressed without being it.
@@ -186,10 +185,12 @@ What equal identity asserts is equal *declared* computational dependencies,
 under the author's existing responsibility to declare them faithfully — not
 semantic equivalence, source immutability, or determinism. An intentional
 independent repetition has to declare a distinction such as a seed; renaming
-does not request one. Two limitations follow and are not fixed here: there is
-no discovery from a study or a date to a record, and two *simultaneous*
-requesters of one record are not coalesced — the claim refuses the loser by
-name (see [the claim protocol](attempt-claim-protocol.md)).
+does not request one. Exec itself does not coalesce simultaneous calls: its
+claim refuses the loser by name (see [the claim protocol](attempt-claim-protocol.md)).
+A Session can share one call among consumers of compatible active bound graphs
+through Run-owned execution handles. Independent Sessions retain Exec's claim
+behavior. The shared handle records the selected try once; each consumer's
+history records its own durable binding to that handle.
 
 The record identity is chosen from planning facts and names the record
 directory. Under its claim, `begin_try()` durably allocates a non-negative

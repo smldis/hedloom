@@ -72,7 +72,9 @@ def measure(note) -> int:
 @pytest.fixture
 def site(tmp_path):
     return Site(
-        root=str(tmp_path / "attempts"), workspace_root=str(tmp_path / "work")
+        root=str(tmp_path / "attempts"), workspace_root=str(tmp_path / "work"),
+            history_root=str(tmp_path / "attempts",
+        ) + "-history",
     )
 
 
@@ -119,8 +121,8 @@ def test_two_studies_declaring_the_same_work_share_one_record(site, records):
     def second():
         return notes.named("notes")()
 
-    ran = first().submit(site=site)
-    reran = second().submit(site=site)
+    ran = first().submit(site=site, name="test-run")
+    reran = second().submit(site=site, name="test-run")
 
     assert ran.succeeded and reran.succeeded, reran.summary()
     assert len(scan_attempts(records)) == 1
@@ -140,8 +142,8 @@ def test_a_renamed_authored_key_selects_the_same_record(site, records):
     def after():
         return one_note("renamed").named("notes")()
 
-    first = before().submit(site=site)
-    second = after().submit(site=site)
+    first = before().submit(site=site, name="test-run")
+    second = after().submit(site=site, name="test-run")
 
     assert first.succeeded and second.succeeded, second.summary()
     assert len(scan_attempts(records)) == 1
@@ -166,7 +168,7 @@ def test_two_equal_invocations_in_one_plan_share_one_record(site, records):
     # Sequential on purpose: two equal declarations are one record, and this
     # pass answers two simultaneous requesters with the claim refusal rather
     # than by coalescing them. The refusal is asserted separately, below.
-    run = build().submit(site=site, sequential=True)
+    run = build().submit(site=site, sequential=True, name="test-run")
 
     assert run.succeeded, run.summary()
     assert len(scan_attempts(records)) == 1
@@ -203,8 +205,8 @@ def test_a_renamed_producer_leaves_downstream_identity_unchanged(site, records):
     def after():
         return chain("renamed-producer").named("linked")()
 
-    first = before().submit(site=site)
-    second = after().submit(site=site)
+    first = before().submit(site=site, name="test-run")
+    second = after().submit(site=site, name="test-run")
 
     assert first.succeeded and second.succeeded, second.summary()
 
@@ -232,9 +234,9 @@ def test_an_intentional_repetition_must_declare_a_distinction(site, records):
     def build(seed=1):
         return seeded.named("seeded")(seed)
 
-    first = build(1).submit(site=site)
-    second = build(2).submit(site=site)
-    again = build(1).submit(site=site)
+    first = build(1).submit(site=site, name="test-run")
+    second = build(2).submit(site=site, name="test-run")
+    again = build(1).submit(site=site, name="test-run")
 
     assert first.succeeded and second.succeeded and again.succeeded
     assert len(scan_attempts(records)) == 2, "a declared seed is a distinction"
@@ -259,8 +261,8 @@ def test_a_second_caller_keeps_its_own_name_and_reads_the_same_execution(
     def beta():
         return notes.named("notes")()
 
-    first = alpha().submit(site=site)
-    second = beta().submit(site=site)
+    first = alpha().submit(site=site, name="test-run")
+    second = beta().submit(site=site, name="test-run")
 
     assert first["point:write_note"].outcome == "succeeded"
     assert second["point:write_note"].outcome == "succeeded"
@@ -285,7 +287,7 @@ def test_a_record_carries_no_requester_names(site, records):
     def build():
         return one_note("point").named("notes")()
 
-    assert build().submit(site=site).succeeded
+    assert build().submit(site=site, name="test-run").succeeded
     (record,) = scan_attempts(records)
 
     assert not hasattr(record, "plan_id")
@@ -321,13 +323,13 @@ def test_a_competing_claim_reaches_the_same_record_and_is_refused(site, records)
     def contender():
         return notes.named("notes")()
 
-    made = creator().submit(site=site)
+    made = creator().submit(site=site, name="test-run")
     assert made.succeeded, made.summary()
     (record,) = scan_attempts(records)
 
     journal = AttemptJournal(records, record.identity)
     with journal.claim():
-        run = contender().submit(site=site)
+        run = contender().submit(site=site, name="test-run")
 
     refused = [
         outcome
@@ -353,7 +355,7 @@ def test_the_operator_cli_addresses_records_and_tries(site, records, capsys):
     def build():
         return one_note("point").named("notes")()
 
-    run = build().submit(site=site)
+    run = build().submit(site=site, name="test-run")
     assert run.succeeded, run.summary()
     outcome = run["point:write_note"]
     reference = f"{outcome.record}#{outcome.try_number}"

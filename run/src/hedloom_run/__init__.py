@@ -15,4 +15,6 @@ enough to walk in one thread need not install a scheduler.
 from hedloom_run import driver as _driver
 from hedloom_run.driver import *  # noqa: F401,F403
 
-__all__ = [*_driver.__all__]
+from hedloom_run.execution import ExecutionHandle, ExecutionOwner
+
+__all__ = [*_driver.__all__, "ExecutionHandle", "ExecutionOwner"]

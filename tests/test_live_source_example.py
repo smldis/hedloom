@@ -21,6 +21,7 @@ def site_for(tmp_path: Path) -> Site:
         # The waiter holds one unit of `local` for the whole inner run, so the
         # inner plan needs units the waiter is not sitting on.
         placements={"local": 4},
+        history_root=str(tmp_path / "attempts") + "-history",
     )
 
 
@@ -46,11 +47,11 @@ def test_an_unchanged_document_reuses_the_inner_plan(tmp_path, monkeypatch) -> N
     with session(site) as farm:
         monkeypatch.setattr(live_source.state, "SESSION", farm)
 
-        first = farm.submit(live_source.live_source(uuid.uuid4().hex))
+        first = farm.submit(live_source.live_source(uuid.uuid4().hex), name="test-run")
         assert first.succeeded, first.summary()
         assert outcomes_of(first) == {"tally": False, "summarise": False}
 
-        second = farm.submit(live_source.live_source(uuid.uuid4().hex))
+        second = farm.submit(live_source.live_source(uuid.uuid4().hex), name="test-run")
         assert second.succeeded, second.summary()
         assert outcomes_of(second) == {"tally": True, "summarise": True}
         assert (
@@ -70,13 +71,13 @@ def test_a_changed_document_invalidates_everything_below_it(
     with session(site) as farm:
         monkeypatch.setattr(live_source.state, "SESSION", farm)
 
-        first = farm.submit(live_source.live_source(uuid.uuid4().hex))
+        first = farm.submit(live_source.live_source(uuid.uuid4().hex), name="test-run")
         assert first.succeeded, first.summary()
 
         monkeypatch.setitem(
             live_source.SERVICE, "document", "alpha beta gamma delta delta\n"
         )
-        second = farm.submit(live_source.live_source(uuid.uuid4().hex))
+        second = farm.submit(live_source.live_source(uuid.uuid4().hex), name="test-run")
         assert second.succeeded, second.summary()
 
         assert outcomes_of(second) == {"tally": False, "summarise": False}

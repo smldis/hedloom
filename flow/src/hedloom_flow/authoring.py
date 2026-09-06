@@ -599,10 +599,9 @@ class PlanDraft:
         self._boundary_stack: list[str] = []
         self._scoped_keys: set[tuple[str | None, str]] = set()
         self._keyed_invocation_ids: set[str] = set()
+        self._automatic_names: dict[tuple[str | None, str], tuple[object, int]] = {}
         self._next_source = 1
-        self._next_invocation = 1
         self._next_edge = 1
-        self._next_boundary = 1
         self._entered = False
         self._exited = False
         self._failed = False
@@ -758,14 +757,10 @@ class PlanDraft:
                         f"{sweeping}:{authored.__name__}"
                     )
             if authored_key is None:
-                invocation_id = f"invoke:{self._next_invocation:04d}"
-                self._next_invocation += 1
-            else:
-                self._reserve_key(boundary_id, authored_key)
-                invocation_id = _keyed_plan_id(
-                    "invoke", boundary_id, authored_key
-                )
-                self._keyed_invocation_ids.add(invocation_id)
+                authored_key = self._automatic_key(boundary_id, authored)
+            self._reserve_key(boundary_id, authored_key)
+            invocation_id = _keyed_plan_id("invoke", boundary_id, authored_key)
+            self._keyed_invocation_ids.add(invocation_id)
             self._register_operation(definition)
             invocation = Invocation(
                 id=invocation_id,
@@ -855,11 +850,9 @@ class PlanDraft:
         boundary_id: str | None = None
         try:
             if authored_key is None:
-                boundary_id = f"flow:{self._next_boundary:04d}"
-                self._next_boundary += 1
-            else:
-                self._reserve_key(parent_id, authored_key)
-                boundary_id = _keyed_plan_id("flow", parent_id, authored_key)
+                authored_key = self._automatic_key(parent_id, authored)
+            self._reserve_key(parent_id, authored_key)
+            boundary_id = _keyed_plan_id("flow", parent_id, authored_key)
             self._register_flow(authored.definition)
             self._boundary_parents[boundary_id] = parent_id
             self._boundary_stack.append(boundary_id)
@@ -1014,6 +1007,22 @@ class PlanDraft:
             )
         self._flows.setdefault(definition.identity, definition)
 
+    def _automatic_key(self, scope_id: str | None, authored: Operation | Flow) -> str:
+        base = authored.__name__
+        try:
+            _require_authored_key(base)
+        except AuthoringError as error:
+            raise AuthoringError(f"{base!r} needs an explicit authored key") from error
+        slot = (scope_id, base)
+        identity = (type(authored), authored.identity)
+        owner, count = self._automatic_names.get(slot, (identity, 0))
+        if owner != identity:
+            raise AuthoringError(
+                f"distinct definitions named {base!r} need explicit authored keys"
+            )
+        self._automatic_names[slot] = (identity, count + 1)
+        return f"{base}.{count + 1}"
+
     def _reserve_key(self, scope_id: str | None, authored_key: str) -> None:
         scoped_key = (scope_id, authored_key)
         if scoped_key in self._scoped_keys:
@@ -1034,12 +1043,11 @@ class PlanDraft:
             list(self._edges),
             list(self._boundaries),
             dict(self._boundary_parents),
+            dict(self._automatic_names),
             set(self._scoped_keys),
             set(self._keyed_invocation_ids),
             self._next_source,
-            self._next_invocation,
             self._next_edge,
-            self._next_boundary,
         )
 
     def _restore(self, checkpoint: tuple[Any, ...]) -> None:
@@ -1052,12 +1060,11 @@ class PlanDraft:
             self._edges,
             self._boundaries,
             self._boundary_parents,
+            self._automatic_names,
             self._scoped_keys,
             self._keyed_invocation_ids,
             self._next_source,
-            self._next_invocation,
             self._next_edge,
-            self._next_boundary,
         ) = checkpoint
 
 

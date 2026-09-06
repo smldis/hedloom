@@ -191,14 +191,13 @@ def test_nested_flow_failure_rolls_back_graph_and_all_id_counters():
         )
     normalized = draft.finish(outputs={"summary": result})
 
-    assert [item.id for item in normalized.invocations] == [
-        "invoke:0001",
-        "invoke:0002",
+    assert [item.authored_key for item in normalized.invocations] == [
+        "estimate.1", "summarize.1",
     ]
-    assert [item.id for item in normalized.edges] == ["edge:0001"]
-    assert {item.id for item in normalized.boundaries} == {
-        "flow:0001",
-        "flow:0002",
+    assert len(normalized.edges) == 1
+    assert normalized.edges[0].id.startswith("edge:key:")
+    assert {item.authored_key for item in normalized.boundaries} == {
+        "rollback_study.1", "successful_nested.1",
     }
     assert {item.identity.name for item in normalized.flows} == {
         "acceptance.rollback_study",
@@ -242,7 +241,7 @@ def test_foreign_source_only_and_incompatible_values_fail_before_finish_returns(
 
     normalized = local_draft.finish(outputs={"metrics": local_result})
     assert len(normalized.invocations) == 1
-    assert normalized.invocations[0].id == "invoke:0001"
+    assert normalized.invocations[0].authored_key == "estimate.1"
 
 
 def test_no_run_or_ambient_execution_surface_and_submit_is_explicit():

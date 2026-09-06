@@ -59,11 +59,12 @@ class InvocationOutcome:
     """The try whose evidence was published or reused, if one was selected.
 
     With ``record`` this is the exact execution, stated by the run rather than
-    guessed at afterwards: it is what to pin, prune around, or read back. An
-    invocation that was blocked, refused, or skipped selected nothing and
-    leaves both None instead of naming a plausible neighbour.
+    guessed at afterwards: it is what to pin, prune around, or read back. A preselection refusal or blocked invocation leaves both None. A transport
+    refusal after allocation retains the selected try.
     """
     error: str | None = None
+    observation_errors: tuple[str, ...] = ()
+    block_reason: str | None = None
 
     @property
     def reused(self) -> bool:
@@ -118,6 +119,8 @@ def run_plan(
     source_addresses: Mapping[str, str] | None = None,
     stop_on_failure: bool = True,
     on_event: Callable[[InvocationOutcome], None] | None = None,
+    execution_owner: Any = None,
+    on_execution: Any = None,
 ) -> RunReport:
     """Execute every invocation in a Plan, in dependency order.
 
@@ -163,15 +166,28 @@ def run_plan(
     unmet: set[str] = set()
     stopped = False
 
-    for item in plan_bundles(
+    items = plan_bundles(
         document,
         commands=commands,
         identity_env=identity_env,
         source_fingerprints=source_fingerprints,
-    ):
+    )
+    handles = {}
+    if execution_owner is not None:
+        from hedloom_run.execution import ExecutionHandle
+        if on_execution is None:
+            raise ValueError('owned execution requires bindings rather than consumer selection callbacks')
+        for item in items:
+            handle = ExecutionHandle.create(execution_owner.root)
+            on_execution(item.invocation_id, handle)
+            handles[item.invocation_id] = handle
+
+    for item in items:
         if any(dependency in unmet for dependency in item.depends_on) or (
             stopped and stop_on_failure
         ):
+            if item.invocation_id in handles:
+                handles[item.invocation_id].cancel_before_start()
             outcome = InvocationOutcome(
                 invocation_id=item.invocation_id,
                 authored_key=item.authored_key,
@@ -179,6 +195,10 @@ def run_plan(
                 input_digest=item.input_digest,
                 disposition="skipped",
                 outcome="blocked",
+                block_reason=("dependency failure: " + ", ".join(
+                    dependency for dependency in item.depends_on if dependency in unmet
+                )) if any(dependency in unmet for dependency in item.depends_on)
+                else "stopped by stop_on_failure",
             )
             unmet.add(item.invocation_id)
             outcomes.append(outcome)
@@ -189,6 +209,8 @@ def run_plan(
         try:
             placement_name, chosen = _select_transport(item, available)
         except UnsupportedPlacement as error:
+            if item.invocation_id in handles:
+                handles[item.invocation_id].cancel_before_start()
             stopped = True
             unmet.add(item.invocation_id)
             outcome = InvocationOutcome(
@@ -214,14 +236,40 @@ def run_plan(
             outputs=outputs,
         )
 
-        try:
-            result = execute(
-                chosen,
-                bundle,
-                durability=Durability.RECORDED,
-                root=root,
-                workspace_root=workspace_root,
+        handle = handles.get(item.invocation_id)
+        if handle is not None and not handle.enter():
+            unmet.add(item.invocation_id)
+            stopped = True
+            outcome = InvocationOutcome(
+                invocation_id=item.invocation_id,
+                authored_key=item.authored_key,
+                operation=item.operation,
+                input_digest=item.input_digest,
+                disposition="skipped",
+                outcome="blocked",
+                block_reason="cancelled before execution entry",
             )
+            outcomes.append(outcome)
+            if on_event:
+                on_event(outcome)
+            continue
+        accounting_errors = []
+        try:
+            try:
+                result = execute(
+                    chosen,
+                    bundle,
+                    durability=Durability.RECORDED,
+                    root=root,
+                    workspace_root=workspace_root,
+                    publish_selection=handle.publish_selection if handle is not None else None,
+                )
+            finally:
+                if handle is not None:
+                    try:
+                        handle.finish()
+                    except Exception as error:
+                        accounting_errors.append(f'execution accounting failed: {error}')
         except (AttemptError, TransportError) as error:
             stopped = True
             unmet.add(item.invocation_id)
@@ -234,6 +282,9 @@ def run_plan(
                 outcome="failed",
                 placement=placement_name,
                 error=f"{type(error).__name__}: {error}",
+                record=error.selection.record if error.selection else None,
+                try_number=error.selection.try_number if error.selection else None,
+                observation_errors=(*error.publication_errors, *accounting_errors),
             )
             outcomes.append(outcome)
             if on_event:
@@ -259,6 +310,7 @@ def run_plan(
             record=result.record,
             try_number=result.try_number,
             error=(result.detail or {}).get("error"),
+            observation_errors=(*result.publication_errors, *accounting_errors),
         )
         outcomes.append(outcome)
         if on_event:

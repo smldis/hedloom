@@ -9,6 +9,7 @@ through, and how much local concurrency the submit host should offer.
 site = Site(
     root=str(work / "attempts"),
     workspace_root=str(work / "work"),
+    history_root=str(work / "history"),
     address_spaces={"repository-relative": str(here)},
 )
 ```
@@ -26,6 +27,7 @@ study run from elsewhere still means the same thing:
 [study]
 root = "_runs/farm-smoke/attempts"
 workspace_root = "_runs/farm-smoke/work"
+history_root = "_runs/farm-smoke/history"
 
 [placement.lsf]
 kind = "lsf-interactive"

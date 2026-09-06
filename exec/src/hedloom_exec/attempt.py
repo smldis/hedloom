@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Callable
+import warnings
 
 from hedloom_exec.artifacts import (
     MissingOutput,
@@ -31,7 +32,7 @@ from hedloom_exec.artifacts import (
     workspace_path,
     write_diagnostics,
 )
-from hedloom_exec.errors import AttemptError
+from hedloom_exec.errors import AttemptError, ExecutionFailure
 from hedloom_exec.identity import try_name
 from hedloom_exec.journal import AttemptJournal, AttemptState, TryState
 from hedloom_exec.reuse import input_digest
@@ -42,6 +43,7 @@ __all__ = [
     "AttemptError",
     "StaleIdentity",
     "LaunchResult",
+    "Selection",
     "REUSABLE_OUTCOMES",
     "ReconciliationError",
     "UnrecoverableAttempt",
@@ -155,6 +157,18 @@ class LaunchResult:
     disposition: str
     state: AttemptState
     manifest: Mapping[str, Any] | None = None
+    selection: Selection | None = None
+    publication_errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Selection:
+    """An actually selected try; workspace knowledge arrives separately."""
+    record: str
+    try_number: int
+    disposition: str
+    workspace_known: bool = False
+    workspace: str | None = None
 
 
 def launch_or_attach(
@@ -163,6 +177,7 @@ def launch_or_attach(
     bundle: Mapping[str, Any],
     *,
     workspace_root: str | Path | None = None,
+    publish_selection: Callable[[Selection], None] | None = None,
 ) -> LaunchResult:
     """Resolve the current record try to one of three durable dispositions.
 
@@ -173,7 +188,7 @@ def launch_or_attach(
 
     with journal.claim():
         return _launch_or_attach_locked(
-            journal, transport, bundle, workspace_root=workspace_root
+            journal, transport, bundle, workspace_root=workspace_root, publish_selection=publish_selection
         )
 
 
@@ -183,165 +198,209 @@ def _launch_or_attach_locked(
     bundle: Mapping[str, Any],
     *,
     workspace_root: str | Path | None = None,
+    publish_selection: Callable[[Selection], None] | None = None,
 ) -> LaunchResult:
-    state = journal.fold()
-    _require_matching_inputs(journal, state, bundle)
+    selection = None
+    publication_errors = []
 
-    standing = journal.read_manifest()
-    if standing is not None:
-        standing_try = standing.get("try")
-        selected = next(
-            (item for item in state.tries if item.number == standing_try), None
-        )
-        if selected is None:
-            raise ReconciliationError(
-                f"attempt {journal.identity} has a standing result for unknown "
-                f"try {standing_try!r}"
-            )
-        if not selected.is_terminal:
-            journal.append(
-                "terminal",
-                **{
-                    "try": selected.number,
-                    "outcome": standing.get("outcome"),
-                    "manifest": str(journal.manifest_path(selected.number)),
-                    "repaired": True,
-                },
-            )
-            state = journal.fold()
-        if not is_reusable(state, standing):
-            raise ReconciliationError(
-                f"attempt {journal.identity} has a non-reusable standing result"
-            )
-        _bundle_for_try(
-            journal,
-            bundle,
-            selected.number,
-            workspace_root=workspace_root,
-            create_workspace=False,
-        )
-        return LaunchResult("completed", state, standing)
+    def select(number, disposition, *, bound=False, prepared=None):
+        nonlocal selection
+        # Selection is protocol state. Publishing it cannot decide or erase it.
+        selection = Selection(journal.identity, number, disposition,
+                              bound, (prepared or {}).get("workdir"))
+        if publish_selection is not None:
+            try:
+                publish_selection(selection)
+            except Exception as error:
+                publication_errors.append(f"{type(error).__name__}: {error}")
+                try:
+                    warnings.warn(f"selection publication failed: {error}", RuntimeWarning)
+                except Exception:
+                    pass
 
-    current = state.current
-    if current is not None:
-        published = journal.read_manifest(current.number)
-        if published is not None:
-            if not current.is_terminal:
+    def result(disposition, state, manifest=None):
+        return LaunchResult(disposition, state, manifest, selection,
+                            tuple(publication_errors))
+
+    def existing(number, disposition):
+        select(number, disposition)
+        chosen = next(item for item in journal.fold().tries if item.number == number)
+        # Reuse/attachment must retain the established workspace, even when
+        # this caller supplies a different workspace_root. No receipt means
+        # workspace knowledge remains incomplete rather than guessed.
+        if chosen.handle is not None and "workdir" in chosen.handle:
+            select(number, disposition, bound=True, prepared=chosen.handle)
+
+    try:
+        state = journal.fold()
+        _require_matching_inputs(journal, state, bundle)
+
+        standing = journal.read_manifest()
+        if standing is not None:
+            standing_try = standing.get("try")
+            selected = next(
+                (item for item in state.tries if item.number == standing_try), None
+            )
+            if selected is None:
+                raise ReconciliationError(
+                    f"attempt {journal.identity} has a standing result for unknown "
+                    f"try {standing_try!r}"
+                )
+            if not selected.is_terminal:
                 journal.append(
                     "terminal",
                     **{
-                        "try": current.number,
-                        "outcome": published.get("outcome"),
-                        "manifest": str(journal.manifest_path(current.number)),
+                        "try": selected.number,
+                        "outcome": standing.get("outcome"),
+                        "manifest": str(journal.manifest_path(selected.number)),
                         "repaired": True,
                     },
                 )
                 state = journal.fold()
-                current = state.current
-            assert current is not None
-            if is_reusable(current, published):
-                journal.make_standing(current.number)
-                _bundle_for_try(
-                    journal,
-                    bundle,
-                    current.number,
-                    workspace_root=workspace_root,
-                    create_workspace=False,
+            if not is_reusable(state, standing):
+                raise ReconciliationError(
+                    f"attempt {journal.identity} has a non-reusable standing result"
                 )
-                return LaunchResult("completed", state, published)
-            # A retained, non-reusable terminal try is followed by a new one.
-        elif current.is_terminal:
-            raise ReconciliationError(
-                f"attempt {journal.identity} try {current.number} claims a "
-                f"terminal outcome but no manifest is visible at "
-                f"{journal.manifest_path(current.number)}"
+            _bundle_for_try(
+                journal,
+                bundle,
+                selected.number,
+                workspace_root=workspace_root,
+                create_workspace=False,
             )
-        elif current.cancel_requested:
-            raise AttemptCancelled(
-                f"attempt {journal.identity} try {current.number} has a recorded "
-                f"cancellation ({current.cancel_reason!r}) and will not be launched"
-            )
-        elif current.phase == "submitted":
-            return LaunchResult("attached", state)
-        elif current.phase == "intended":
-            job_name = try_name(journal.identity, current.number)
-            handle = transport.discover(job_name)
-            if handle is not None:
+            existing(selected.number, "completed")
+            return result("completed", state, standing)
+
+        current = state.current
+        if current is not None:
+            published = journal.read_manifest(current.number)
+            if published is not None:
+                if not current.is_terminal:
+                    journal.append(
+                        "terminal",
+                        **{
+                            "try": current.number,
+                            "outcome": published.get("outcome"),
+                            "manifest": str(journal.manifest_path(current.number)),
+                            "repaired": True,
+                        },
+                    )
+                    state = journal.fold()
+                    current = state.current
+                assert current is not None
+                if is_reusable(current, published):
+                    journal.make_standing(current.number)
+                    _bundle_for_try(
+                        journal,
+                        bundle,
+                        current.number,
+                        workspace_root=workspace_root,
+                        create_workspace=False,
+                    )
+                    existing(current.number, "completed")
+                    return result("completed", state, published)
+                # A retained, non-reusable terminal try is followed by a new one.
+            elif current.is_terminal:
+                raise ReconciliationError(
+                    f"attempt {journal.identity} try {current.number} claims a "
+                    f"terminal outcome but no manifest is visible at "
+                    f"{journal.manifest_path(current.number)}"
+                )
+            elif current.cancel_requested:
+                raise AttemptCancelled(
+                    f"attempt {journal.identity} try {current.number} has a recorded "
+                    f"cancellation ({current.cancel_reason!r}) and will not be launched"
+                )
+            elif current.phase == "submitted":
+                existing(current.number, "attached")
+                return result("attached", state)
+            elif current.phase == "intended":
+                job_name = try_name(journal.identity, current.number)
+                handle = transport.discover(job_name)
+                if handle is not None:
+                    journal.append(
+                        "submit_receipt",
+                        **{
+                            "try": current.number,
+                            "handle": dict(handle),
+                            "recovered": True,
+                        },
+                    )
+                    existing(current.number, "attached")
+                    return result("attached", journal.fold())
+                if not transport.discovery_is_authoritative:
+                    raise UnrecoverableAttempt(
+                        f"attempt {journal.identity} try {current.number} recorded "
+                        f"submission intent to transport {transport.name!r}, which "
+                        "cannot authoritatively confirm or deny acceptance; "
+                        "recoverable execution is unsupported here"
+                    )
                 journal.append(
-                    "submit_receipt",
+                    "submit_lost",
                     **{
                         "try": current.number,
-                        "handle": dict(handle),
-                        "recovered": True,
+                        "transport": transport.name,
+                        "substrate": substrate_of(transport),
                     },
                 )
-                return LaunchResult("attached", journal.fold())
-            if not transport.discovery_is_authoritative:
-                raise UnrecoverableAttempt(
-                    f"attempt {journal.identity} try {current.number} recorded "
-                    f"submission intent to transport {transport.name!r}, which "
-                    "cannot authoritatively confirm or deny acceptance; "
-                    "recoverable execution is unsupported here"
-                )
+
+        number = journal.begin_try()
+        select(number, "claimed")
+        state = journal.fold()
+        job_name = try_name(journal.identity, number)
+
+        if not any(event.event == "created" for event in state.events):
             journal.append(
-                "submit_lost",
+                "created",
                 **{
-                    "try": current.number,
-                    "transport": transport.name,
-                    "substrate": substrate_of(transport),
+                    "try": number,
+                    "operation": bundle.get("operation"),
+                    "input_digest": input_digest(bundle),
                 },
             )
 
-    number = journal.begin_try()
-    state = journal.fold()
-    job_name = try_name(journal.identity, number)
+        submitted_bundle = _bundle_for_try(
+            journal,
+            bundle,
+            number,
+            workspace_root=workspace_root,
+            create_workspace=True,
+        )
 
-    if not any(event.event == "created" for event in state.events):
+        select(number, "claimed", bound=True, prepared=submitted_bundle)
+
+        placement = bundle.get("placement")
+        if placement:
+            journal.append("placement", **{"try": number, **placement})
+
         journal.append(
-            "created",
+            "submit_intent",
             **{
                 "try": number,
-                "operation": bundle.get("operation"),
-                "input_digest": input_digest(bundle),
+                "transport": transport.name,
+                "substrate": substrate_of(transport),
             },
         )
-
-    submitted_bundle = _bundle_for_try(
-        journal,
-        bundle,
-        number,
-        workspace_root=workspace_root,
-        create_workspace=True,
-    )
-
-    placement = bundle.get("placement")
-    if placement:
-        journal.append("placement", **{"try": number, **placement})
-
-    journal.append(
-        "submit_intent",
-        **{
-            "try": number,
-            "transport": transport.name,
-            "substrate": substrate_of(transport),
-        },
-    )
-    try:
-        handle = transport.submit(job_name, submitted_bundle)
-    except SubmissionRefused as error:
-        journal.append(
-            "submit_refused",
-            **{"try": number, "error": f"{type(error).__name__}: {error}"},
-        )
+        try:
+            handle = transport.submit(job_name, submitted_bundle)
+        except SubmissionRefused as error:
+            journal.append(
+                "submit_refused",
+                **{"try": number, "error": f"{type(error).__name__}: {error}"},
+            )
+            raise
+        except Exception as error:
+            journal.append(
+                "submit_indeterminate",
+                **{"try": number, "error": f"{type(error).__name__}: {error}"},
+            )
+            raise
+        journal.append("submit_receipt", **{"try": number, "handle": dict(handle)})
+        return result("claimed", journal.fold())
+    except ExecutionFailure as error:
+        error.selection = selection
+        error.publication_errors = tuple(publication_errors)
         raise
-    except Exception as error:
-        journal.append(
-            "submit_indeterminate",
-            **{"try": number, "error": f"{type(error).__name__}: {error}"},
-        )
-        raise
-    journal.append("submit_receipt", **{"try": number, "handle": dict(handle)})
-    return LaunchResult("claimed", journal.fold())
 
 
 def _bundle_for_try(

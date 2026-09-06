@@ -40,6 +40,15 @@ open hypothesis, not settled by retaining the instrument inside this unit.
 
 ## Current contracts
 
+Authored operations and flow boundaries always resolve readable keys: explicit,
+then existing operation sweep spelling, then `function_name.N` per boundary and
+function name. Explicit/generated collisions refuse in either order; distinct
+definitions cannot share one automatic name base. Counters and ownership roll
+back after failed authoring. Automatic keys are deterministic for unchanged
+construction. Same-name insertions can renumber them; unrelated functions do
+not. Low-level unkeyed Plans remain representable. Keys carry no computation
+or execution identity.
+
 - Distribution: `hedloom-flow`, independently installable on Python 3.10 or newer;
   the base package has no dependencies, and the optional `dask` extra pins
   `dask==2026.7.1` for the experimental instrument.
@@ -86,11 +95,12 @@ open hypothesis, not settled by retaining the instrument inside this unit.
   keyed invocations, derive from that scoped authored identity.
 - Keys are Plan identity only. They are never cache keys, scheduler keys,
   attempt identities, runtime identities, or sequential slots.
-- Cross-edit stability is conditional: a keyed call beneath an unkeyed
-  enclosing boundary inherits that counter-derived boundary's instability.
-  External source IDs, unkeyed sources/invocations/boundaries, and fallback
-  edges involving an external source or unkeyed endpoint remain deterministic
-  authored-order identities and can change after earlier insertions.
+- Cross-edit stability is scoped: automatic keys and their descendants may
+  change after earlier calls of the same function are inserted. Unrelated
+  function calls do not renumber them. Explicit keys provide stable meaning
+  across edits only when enclosing boundaries are also stable. External source
+  IDs and fallback edges involving sources remain authored-order identities.
+  The low-level model still permits manually constructed unkeyed Plans.
 - Explicit module `hedloom_flow.experimental.local_dask` consumes a validated Plan,
   exact `OperationIdentity`-keyed callables, and a complete source-ID mapping of
   already-decoded values. Each lowering has a fresh Dask-key namespace and

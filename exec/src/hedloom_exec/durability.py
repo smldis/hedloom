@@ -17,15 +17,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, Callable
 from uuid import uuid4
 
 from hedloom_exec.attempt import (
     LaunchResult,
-    launch_or_attach,
-    reconcile,
+    Selection,
+    _launch_or_attach_locked,
+    _reconcile_locked,
 )
 from hedloom_exec.identity import attempt_identity
+from hedloom_exec.errors import ExecutionFailure
 from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.reuse import input_digest
 from hedloom_exec.transport import Transport
@@ -70,6 +72,8 @@ class ExecutionResult:
     artifacts: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     record: str | None = None
     try_number: int | None = None
+    selection: Selection | None = None
+    publication_errors: tuple[str, ...] = ()
 
     def address(self, name: str) -> str | None:
         """Where one declared output landed, for a downstream invocation."""
@@ -84,6 +88,7 @@ def execute(
     durability: Durability = Durability.EPHEMERAL,
     root: str | None = None,
     workspace_root: str | None = None,
+    publish_selection: Callable[[Selection], None] | None = None,
 ) -> ExecutionResult:
     """Run one invocation at the declared durability level.
 
@@ -100,7 +105,10 @@ def execute(
 
     The returned :class:`ExecutionResult` names the record and the try it
     selected, which is the reference to use for anything that must talk about
-    *this* execution afterwards.
+    *this* execution afterwards. ``publish_selection`` writes the actual
+    selection before blocking launch, then its workspace binding. Publication
+    errors are retained in the result or handled failure without changing the
+    computation; neither an invocation ID nor a consumer observer belongs here.
     """
 
     if durability is Durability.EPHEMERAL:
@@ -126,43 +134,59 @@ def execute(
     identity = attempt_identity(computation_digest=input_digest(bundle)).rendered
     journal = AttemptJournal(root, identity)
 
-    declared_outputs = bundle.get("outputs")
-    launched: LaunchResult = launch_or_attach(
-        journal,
-        transport,
-        bundle,
-        workspace_root=workspace_root,
-    )
-    if launched.disposition == "completed":
-        manifest = launched.manifest or {}
-        result = dict(manifest.get("result", {}))
-        return ExecutionResult(
-            outcome=manifest.get("outcome", "unreconciled"),
-            value=result.get("value"),
-            detail=result,
-            durability=durability,
-            disposition="completed",
-            journal=journal,
-            artifacts=_artifacts_of(result),
-            record=identity,
-            try_number=manifest.get("try"),
-        )
+    # Selection and reconciliation are one claimed operation. Releasing the
+    # claim between them could let another caller advance a failed record and
+    # redirect this result to its successor try.
+    launched = None
+    try:
+        with journal.claim():
+            declared_outputs = bundle.get("outputs")
+            launched: LaunchResult = _launch_or_attach_locked(
+                journal,
+                transport,
+                bundle,
+                workspace_root=workspace_root,
+                publish_selection=publish_selection,
+            )
+            if launched.disposition == "completed":
+                manifest = launched.manifest or {}
+                result = dict(manifest.get("result", {}))
+                return ExecutionResult(
+                    outcome=manifest.get("outcome", "unreconciled"),
+                    value=result.get("value"),
+                    detail=result,
+                    durability=durability,
+                    disposition="completed",
+                    journal=journal,
+                    artifacts=_artifacts_of(result),
+                    record=identity,
+                    try_number=manifest.get("try"),
+                    selection=launched.selection,
+                    publication_errors=launched.publication_errors,
+                )
 
-    state = reconcile(journal, transport, bundle_outputs=declared_outputs)
-    published = (
-        journal.read_manifest(state.current_try)
-        if state.current_try is not None
-        else None
-    ) or {}
-    result = dict(published.get("result", {}))
-    return ExecutionResult(
-        outcome=state.outcome or state.phase,
-        value=result.get("value"),
-        detail=result,
-        durability=durability,
-        disposition=launched.disposition,
-        journal=journal,
-        artifacts=_artifacts_of(result),
-        record=identity,
-        try_number=state.current_try,
-    )
+            state = _reconcile_locked(journal, transport, bundle_outputs=declared_outputs)
+            published = (
+                journal.read_manifest(state.current_try)
+                if state.current_try is not None
+                else None
+            ) or {}
+            result = dict(published.get("result", {}))
+            return ExecutionResult(
+                outcome=state.outcome or state.phase,
+                value=result.get("value"),
+                detail=result,
+                durability=durability,
+                disposition=launched.disposition,
+                journal=journal,
+                artifacts=_artifacts_of(result),
+                record=identity,
+                try_number=state.current_try,
+                selection=launched.selection,
+                publication_errors=launched.publication_errors,
+            )
+    except ExecutionFailure as error:
+        if launched is not None:
+            error.selection = launched.selection
+            error.publication_errors = launched.publication_errors
+        raise

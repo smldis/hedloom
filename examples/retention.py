@@ -169,12 +169,12 @@ def main(work: Path | None = None) -> int:
     shutil.rmtree(work, ignore_errors=True)
     records = work / "attempts"
     workspaces = work / "work"
-    site = Site(root=str(records), workspace_root=str(workspaces))
+    site = Site(root=str(records), workspace_root=str(workspaces), history_root=str(records) + "-history")
 
     print("=== first pass: two points diverge")
     run = spending_study(POINTS).submit(
         site=site, watch=True, stop_on_failure=False
-    )
+    , name="retention")
     outcomes = [item.outcome for item in run.report.outcomes]
     print(f"\n    invocations: {outcomes.count('succeeded')} succeeded, "
           f"{outcomes.count('failed')} failed")
@@ -197,7 +197,7 @@ def main(work: Path | None = None) -> int:
     print("\n=== second pass: the corrected points are different computations")
     fixed = spending_study(CORRECTED).submit(
         site=site, watch=True, stop_on_failure=False
-    )
+    , name="retention")
     settled_now = [item.outcome for item in fixed.report.outcomes]
     print(f"\n    invocations: {settled_now.count('succeeded')} succeeded, "
           f"{settled_now.count('failed')} failed")

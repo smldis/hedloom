@@ -54,6 +54,7 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
     profile.write_text(
         "[study]\n"
         'root = "attempts"\n'
+        'history_root = "history"\n'
         'workspace_root = "work"\n'
         "\n[placement.lsf]\n"
         'kind = "lsf-interactive"\n'
@@ -90,6 +91,7 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
                     on_event=lambda outcome: completion_order.append(
                         outcome.authored_key
                     ),
+                    name="test-run",
                 )
 
             assert first.succeeded, first.summary()
@@ -102,7 +104,7 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
             before_reuse = {
                 item.name: item.read_bytes() for item in fake_state.glob("*.json")
             }
-            second = subject.submit(site=site, client=client)
+            second = subject.submit(site=site, client=client, name="test-run")
     finally:
         cluster.close()
 

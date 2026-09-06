@@ -202,7 +202,7 @@ def pool_jobs() -> set[str] | None:
 
 def run(subject, moved, farm) -> int:
     print("first submission (pooled producers, direct consumers):")
-    first = farm.submit(subject)
+    first = farm.submit(subject, name="farm-smoke-pooled")
     if not first.succeeded:
         print(first.summary())
         return 1
@@ -222,13 +222,13 @@ def run(subject, moved, farm) -> int:
     print(sample.read_text(), end="")
 
     print("\nsecond submission (identical; must reuse all sixteen):")
-    second = farm.submit(subject)
+    second = farm.submit(subject, name="farm-smoke-pooled")
     if not second.succeeded or len(second.report.reused) != len(POINTS) * 2:
         print(second.summary())
         return 1
 
     print("\nthird submission (same work, moved off the pool onto bsub -I):")
-    third = farm.submit(moved)
+    third = farm.submit(moved, name="farm-smoke-pooled")
     if not third.succeeded:
         print(third.summary())
         return 1

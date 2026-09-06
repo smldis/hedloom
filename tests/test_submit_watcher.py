@@ -133,9 +133,9 @@ def test_a_local_study_never_calls_the_status_reader_and_keeps_completion_output
     """A local run has no scheduler to ask and must retain today's reporter."""
 
     reader = ReplayReader(AssertionError("local work called bjobs"))
-    site = Site(root=str(tmp_path / "attempts"))
+    site = Site(root=str(tmp_path / "attempts"), history_root=str(tmp_path / "attempts") + "-history")
 
-    run = local_study().submit(site=site, watch=True, _watch_reader=reader)
+    run = local_study().submit(site=site, watch=True, _watch_reader=reader, name="test-run")
 
     output = capsys.readouterr().out
     assert run.succeeded
@@ -170,9 +170,10 @@ def test_a_wedged_reader_leaves_only_a_daemon_and_cannot_hold_submit(tmp_path):
     started = time.monotonic()
 
     run = local_study().submit(
-        site=Site(root=str(root)),
+        site=Site(root=str(root), history_root=str(root) + "-history"),
         watch=True,
         _watch_reader=reader,
+        name="test-run",
     )
 
     elapsed = time.monotonic() - started
@@ -234,9 +235,10 @@ def test_a_status_reader_failure_prints_once_and_cannot_fail_the_run(
     reader = RefusingReader()
 
     run = waiting_study().submit(
-        site=Site(root=str(root)),
+        site=Site(root=str(root), history_root=str(root) + "-history"),
         watch=True,
         _watch_reader=reader,
+        name="test-run",
     )
 
     output = capsys.readouterr().out
@@ -260,10 +262,11 @@ def test_a_raised_run_still_stops_and_joins_its_poller(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="kernel escaped"):
         local_study().submit(
-            site=Site(root=str(tmp_path / "attempts")),
+            site=Site(root=str(tmp_path / "attempts"), history_root=str(tmp_path / "attempts") + "-history"),
             sequential=True,
             watch=True,
             _watch_reader=ReplayReader(AssertionError("local work called bjobs")),
+            name="test-run",
         )
 
     assert not any(

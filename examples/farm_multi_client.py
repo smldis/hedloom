@@ -115,6 +115,7 @@ def site_for(root: Path, *, queue: str, cap: int) -> Site:
         # clusters at once and a dashboard on a fixed port would collide.
         threads=2,
         dashboard="loopback",
+        history_root=str(root / "attempts") + "-history",
     )
 
 
@@ -258,14 +259,7 @@ def shared_budget(site: Site, cap: int) -> bool:
 
 
 def same_work_twice(site: Site) -> bool:
-    """One session, the same study submitted twice at once.
-
-    Dask's key namespace belongs to the scheduler, not to a submission. Both
-    graphs carry identical task keys, so the second resolves to the first's
-    tasks: the work runs once and both reports describe it. Worth knowing
-    because it means the attempt claim is never even consulted here — there is
-    only ever one caller — so this is Dask's idempotence, not hedloom's.
-    """
+    """One active bound graph serves two exact consumer histories."""
 
     print("\n=== one session, the same study twice")
     print("    four jobs wanted, submitted twice")
@@ -273,22 +267,19 @@ def same_work_twice(site: Site) -> bool:
     subject = sweep_for("shared")
     with session(site) as farm:
         runs = farm.submit_all(
-            {"first": subject, "second": subject}, on_event=announce()
+            {"first": subject, "second": subject}, on_event=announce(), stop_on_failure=False
         )
 
     spans = farm_spans(site.root, since)
     print(f"    farm jobs: {len(spans)} (eight would mean the work ran twice)")
-    for label, run in runs.items():
-        for problem in failures(run):
-            print(f"    {label} failed: {problem}")
-    if any(failures(run) for run in runs.values()):
-        return False
+    # A Session owns shared handles; both consumers must receive the result.
+    for run in runs.values():
+        if not run.succeeded or run.history.status != 'complete':
+            return False
     if len(spans) != 4:
         print(f"    FAILED: expected four farm jobs, the record shows {len(spans)}")
         return False
-    print("    four jobs for two submissions: identical task keys are one task.")
-    print("    Note both reports say 'claimed' — a submission is told the outcome")
-    print("    of the work, not whether it was the one that caused it to run.")
+    print("    four jobs for two successful submissions, each with exact execution history.")
     return True
 
 
@@ -322,6 +313,7 @@ def two_controllers(site: Site) -> bool:
                 # refusals are the evidence.
                 stop_on_failure=False,
                 on_event=announce(label),
+                name="farm-multi-client",
             )
 
     threads = [threading.Thread(target=controller, args=(name,))

@@ -188,7 +188,7 @@ scheduler owns the count.
 ### Sequential kernel
 
 ```python
-subject.submit(site=site, sequential=True)
+subject.submit(name="investigate-start", site=site, sequential=True)
 ```
 
 Walks the Plan one invocation at a time, waits for each `bsub -I`, records its
@@ -202,7 +202,7 @@ This is the kernel that has [reached a real farm](../guide/first-farm-run.md#wha
 ### Graph kernel
 
 ```python
-subject.submit(site=site)          # a site declaring capacity opens a cluster
+subject.submit(name="investigate-start", site=site)          # a site declaring capacity opens a cluster
 ```
 
 One Dask task per invocation, with edges where one invocation's output feeds

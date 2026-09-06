@@ -65,7 +65,7 @@ from __future__ import annotations
 import sys
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
 from hedloom_exec.attempt import AttemptError
@@ -161,6 +161,7 @@ class _RunConfig:
 
     root: str
     workspace_root: str | None = None
+    publish_selection: Any = None
     outputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None
     sources: Mapping[str, str] = field(default_factory=dict)
     """Declared sources, already located, keyed as input bindings name them.
@@ -189,6 +190,7 @@ def _outcome(
     outcome: str,
     placement: str | None = None,
     error: str | None = None,
+    **observation,
 ) -> InvocationOutcome:
     return InvocationOutcome(
         invocation_id=item.invocation_id,
@@ -199,6 +201,7 @@ def _outcome(
         outcome=outcome,
         placement=placement,
         error=error,
+        **observation,
     )
 
 
@@ -238,7 +241,8 @@ def _run_one_here(
         # Deliberately not an exception. A dependent of failed work has not
         # failed; it never ran, and the report should say so. Independent
         # branches of the plan are unaffected.
-        return _Step(_outcome(item, disposition="skipped", outcome="blocked"))
+        return _Step(_outcome(item, disposition="skipped", outcome="blocked",
+            block_reason="dependency failure: " + ", ".join(step.outcome.invocation_id for step in unmet)))
 
     # Sources first: they are produced before anything runs, so they are the
     # floor every upstream output is laid on top of.
@@ -274,6 +278,7 @@ def _run_one_here(
             durability=Durability.RECORDED,
             root=config.root,
             workspace_root=config.workspace_root,
+            publish_selection=config.publish_selection,
         )
     except (AttemptError, TransportError) as error:
         return _Step(
@@ -283,6 +288,9 @@ def _run_one_here(
                 outcome="failed",
                 placement=placement_name,
                 error=f"{type(error).__name__}: {error}",
+                record=error.selection.record if error.selection else None,
+                try_number=error.selection.try_number if error.selection else None,
+                observation_errors=error.publication_errors,
             )
         )
 
@@ -301,6 +309,7 @@ def _run_one_here(
             record=result.record,
             try_number=result.try_number,
             error=(result.detail or {}).get("error"),
+            observation_errors=result.publication_errors,
         ),
         contributed,
     )
@@ -504,7 +513,8 @@ class _Stop:
 
 
 def _blocked(item: PlannedInvocation) -> _Step:
-    return _Step(_outcome(item, disposition="skipped", outcome="blocked"))
+    return _Step(_outcome(item, disposition="skipped", outcome="blocked",
+        block_reason="stopped before admission"))
 
 
 def _abnormal(item: PlannedInvocation, error: BaseException) -> _Step:
@@ -649,6 +659,136 @@ def _collect_preserved(
         raise deferred
 
 
+def _run_handle(handle, item, available, config, *upstream):
+    if not handle.enter():
+        return _blocked(item)
+    try:
+        step = _run_one(item, available, replace(config, publish_selection=handle.publish_selection), *upstream)
+    except BaseException:
+        # An entered handle cannot replay, even when the task has no result.
+        # Keep the original exception if storage is also failing.
+        try:
+            handle.finish()
+        except Exception:
+            pass
+        raise
+    try:
+        handle.finish()
+    except Exception as error:
+        step = replace(step, outcome=replace(step.outcome,
+            observation_errors=(*step.outcome.observation_errors,
+                                f'execution accounting failed: {error}')))
+    return step
+
+
+def _graph_contract(items, available, config):
+    """Conservative whole-bound-graph equality, independent of consumer names."""
+    import cloudpickle
+    from hashlib import sha256
+
+    positions = {item.invocation_id: index for index, item in enumerate(items)}
+    declarations = [(item.operation, item.input_digest, dict(item.bundle),
+                     dict(item.policy), item.output_names,
+                     tuple(positions[dep] for dep in item.depends_on)) for item in items]
+    # A serialization mismatch only prevents sharing. Never fall back to a
+    # computation digest: equal computations can have incompatible bindings.
+    return sha256(cloudpickle.dumps((declarations, available, config.root,
+        config.workspace_root, config.outputs, dict(config.sources)))).digest()
+
+
+def _run_owned_graph(items, available, config, client, owner, bind, on_event, stop_on_failure):
+    from distributed import as_completed
+    from uuid import uuid4
+
+    if bind is None:
+        raise ValueError('owned execution requires a durable consumer binding callback')
+    token = uuid4().hex
+    completed = {}
+    by_id = {item.invocation_id: index for index, item in enumerate(items)}
+    group = []
+    normal = False
+
+    def save(index, step, notify=True):
+        item = items[index]
+        outcome = replace(step.outcome, invocation_id=item.invocation_id,
+                          authored_key=item.authored_key)
+        if outcome.outcome == 'blocked' and outcome.block_reason and outcome.block_reason.startswith('dependency failure:'):
+            outcome = replace(outcome, block_reason='dependency failure')
+        completed[item.invocation_id] = replace(step, outcome=outcome)
+        if notify and on_event:
+            on_event(outcome)
+
+    def collect(index, notify=True, suppress=False):
+        try:
+            step = group[index].future.result()
+        except BaseException as error:
+            save(index, _abnormal(items[index], error), notify=notify)
+            if not suppress:
+                raise
+        else:
+            save(index, step, notify=notify)
+
+    def stop(notify):
+        preserved = []
+        for index, item in enumerate(items):
+            if item.invocation_id in completed:
+                continue
+            entry = group[index]
+            decision = owner.withdraw(entry, token)
+            if decision == 'preserve' and entry.future is not None:
+                preserved.append(index)
+            elif decision == 'withdrawn':
+                save(index, _Step(_outcome(item, disposition='withdrawn', outcome='cancelled',
+                    block_reason='consumer withdrew; shared execution belongs to remaining consumers')),
+                    notify=notify)
+            else:
+                save(index, _blocked(item), notify=notify)
+        return preserved
+
+    try:
+        with owner.lock:
+            group = owner.group(_graph_contract(items, available, config), len(items), client)
+            # All consumer bindings are durable before this submission admits
+            # any new task. No partial initialization starts a partial graph.
+            for item, entry in zip(items, group):
+                bind(item.invocation_id, entry.handle)
+            for entry in group:
+                entry.consumers.add(token)
+            for item, entry in zip(items, group):
+                if entry.future is None:
+                    entry.future = client.submit(_run_handle, entry.handle, item, available, config,
+                        *(group[by_id[dep]].future for dep in item.depends_on),
+                        key=f'{_task_key(item)}-{entry.handle.execution_id}',
+                        resources=_admission(item, available), pure=False, retries=0)
+        indices = {entry.future.key: index for index, entry in enumerate(group)}
+        for future in as_completed([entry.future for entry in group], loop=client.loop):
+            index = indices[future.key]
+            collect(index)
+            if stop_on_failure and completed[items[index].invocation_id].outcome.outcome != 'succeeded':
+                for pending in stop(True):
+                    collect(pending)
+                break
+        normal = True
+    finally:
+        if not normal and group:
+            error = sys.exc_info()[1]
+            try:
+                for pending in stop(False):
+                    collect(pending, notify=False, suppress=True)
+            except BaseException as cleanup_error:
+                if error is not None:
+                    error.cleanup_error = cleanup_error
+            if error is not None:
+                for item in items:
+                    completed.setdefault(item.invocation_id, _blocked(item))
+                error.report = _report(items, completed)
+                error.in_flight = tuple(items[index].authored_key for index, entry in enumerate(group)
+                    if entry.future is not None and not entry.future.done())
+        if group:
+            owner.release(group, token)
+    return _report(items, completed)
+
+
 def run_plan_graph(
     document: Mapping[str, Any],
     transport: Transport | None = None,
@@ -683,6 +823,8 @@ def _run_plan_graph(
     source_addresses: Mapping[str, str] | None = None,
     stop_on_failure: bool = True,
     on_event: Callable[[InvocationOutcome], None] | None = None,
+    execution_owner: Any = None,
+    on_execution: Any = None,
 ) -> RunReport:
     """Execute a Plan as a Dask graph and report in the Plan's own order.
 
@@ -727,12 +869,19 @@ def _run_plan_graph(
     )
     _require_admission(client, items, available)
     _require_nesting_headroom(client, items, available)
+    if execution_owner is not None:
+        return _run_owned_graph(items, available, config, client, execution_owner,
+                                on_execution, on_event, stop_on_failure)
     futures: dict[str, Any] = {}
     taken: set[str] = set()
+    from uuid import uuid4
+    # Sharing requires an explicit owner. A Client alone grants no common
+    # consumer lifetime, even when two readable task keys happen to coincide.
+    submission_namespace = uuid4().hex
     for item in items:
         # Two tasks sharing a key would be one task to Dask, and one of the two
         # invocations would never run. Readable first, unique always.
-        key = _task_key(item)
+        key = f"{_task_key(item)}-{submission_namespace}"
         while key in taken:
             key = f"{key}.{len(taken)}"
         taken.add(key)

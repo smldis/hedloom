@@ -55,6 +55,30 @@ equivalence claims.
 
 ## Current contracts
 
+Both kernels construct consumer outcomes from Exec-owned results and failures.
+There is no per-invocation selection observer: the execution handle publishes
+Exec's selected reference, and report construction supplies the consumer's
+invocation identity. Publication and handle-accounting diagnostics return as
+`InvocationOutcome.observation_errors` without deciding execution. Post-selection
+handled failures retain exact references, including without a publisher.
+Blocked work reports `block_reason` separately from computation errors.
+Optional `Site.history_root` survives Site transformations. Run owns a durable dispatch-handle format, separate from
+the facade's consumer history and Exec's computation records. An explicit
+`ExecutionOwner`, held by the facade Session, shares compatible active bound
+graphs; durable consumer bindings point to selections published once per handle.
+Compatibility includes dependencies, transport configuration, roots and bindings,
+not only computation identity. A completed predecessor stays with its active
+graph for staggered consumers; a fully terminal graph is not cached.
+
+Entry and cancellation use the same short durable gate. An entered handle never
+re-enters Exec, including on Dask replay. A withdrawing consumer cannot cancel a
+future another consumer needs. With no remaining consumer, unentered work is
+prevented at the gate; entered work is awaited and reported from its result.
+This closes the facade's start/cancel classification race without treating a
+Dask stack snapshot as evidence that execution never happened. Unowned low-level
+graph calls retain their legacy cancellation path and use isolated task keys.
+Cross-Session joining and automatic recovery remain outside this prototype.
+
 - Distribution: `hedloom-run`, Python 3.10 or newer, depending on `hedloom-exec`. It
   does not import `hedloom_flow`: the Plan arrives as a document.
 - `run_plan(document, transport, ...)` executes every invocation in dependency
