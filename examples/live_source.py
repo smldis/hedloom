@@ -110,6 +110,7 @@ SITE = Site(
     # `NestedCapacityExhausted` rather than hung — but refused is not run, so
     # the headroom is what makes this example work rather than explain itself.
     placements={"local": 4},
+    history_root=str(_WORK / "attempts") + "-history",
 )
 
 def live_session() -> Session:
@@ -222,7 +223,7 @@ def refresh(*, nonce: str) -> dict:
     """
 
     fetch(SERVED_DIR / SERVED_FILE)
-    run = live_session().submit(reading_study())
+    run = live_session().submit(reading_study(), name="live-source")
     if not run.succeeded:
         raise RuntimeError(f"the reading study failed:\n{run.summary()}")
     return {
@@ -261,7 +262,7 @@ def main() -> int:
                 if served is not None:
                     SERVICE["document"] = served
                 # A fresh nonce each time, which is what "every run" means.
-                run = farm.submit(live_source(uuid.uuid4().hex))
+                run = farm.submit(live_source(uuid.uuid4().hex), name="live-source")
                 if not run.succeeded:
                     print(run.summary())
                     return 1

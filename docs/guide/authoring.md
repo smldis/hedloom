@@ -173,7 +173,7 @@ Calling `.submit` on the decorated *name* rather than on a study is the mistake
 this shape invites, so it is answered with the call to make instead:
 
 ```python
-grid_refinement.submit(site)
+grid_refinement.submit(site=site, name="grid-refinement")
 # AttributeError: 'grid_refinement' is a family of studies, not one:
 #                 call it first, as grid_refinement(...).submit
 ```
@@ -203,10 +203,10 @@ for point in sweep(points, key="key"):
 `key=` may name a field on each item, or be a callable
 (`key=lambda item: item.key`, used in `../../studies/ota_pvt.py`).
 
-This is not only ergonomics. **An unkeyed call's identity depends on authored
-order**, so inserting an unrelated call earlier renumbers it — and a renumbered
-invocation silently loses its reuse. `sweep` is what keeps that from depending
-on an author remembering to key every call by hand.
+An otherwise unnamed call gets `function_name.N` within its containing boundary.
+Adding a different operation does not renumber it; adding the same operation
+can. Sweep and explicit keys preserve semantic labels across edits. These are
+Plan addresses, not computation identities: equal declarations still reuse.
 
 The eight lines that do it, and why the same trap is live in other DAG builders,
 are in [how `@study`, `@flow` and `sweep` work, and how that

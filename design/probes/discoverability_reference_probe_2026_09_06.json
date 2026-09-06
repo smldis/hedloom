@@ -1,0 +1,12 @@
+{
+  "staggered_live_consumers": "same exact try readable from fresh process before completion",
+  "shared_execution": "one actual Exec body call; both results match early selection",
+  "released_graph_then_resubmission": "fresh receipt identity; Exec reuses completed try",
+  "allocation_recomputation_counterexample": "same allocation task key can produce a different reference; must be fenced or made durable",
+  "same_client_cancellation_counterexample": "cancelling A also cancels B future; consumer ownership needs explicit policy",
+  "execution_recomputation_counterexample": "observer-only immutable receipt retains old try while reexecuted task returns a new try; cannot ship without a guard",
+  "owned_handle_staggered_consumers": "exact live reference, one body, no extra Dask task; withdrawing A leaves B intact",
+  "owned_handle_replay_guard": "replay refused before Exec; old exact reference unchanged; no second body",
+  "owned_handle_later_success": "new dispatch after completion; Exec reuses the original successful try",
+  "owned_handle_later_failure": "new submission after failure gets a new try; both historical selections stay exact"
+}

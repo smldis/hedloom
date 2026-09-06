@@ -211,19 +211,17 @@ def test_repeated_planning_has_stable_source_invocation_edge_and_boundary_ids():
 
     assert first.to_data() == second.to_data()
     assert [item.id for item in first.sources] == ["source:0001"]
-    assert [item.id for item in first.invocations] == [
-        "invoke:0001",
-        "invoke:0002",
-    ]
-    assert [item.id for item in first.edges] == ["edge:0001"]
-    assert [item.id for item in first.boundaries] == ["flow:0001"]
+    assert [item.authored_key for item in first.invocations] == ["simulate.1", "measure.1"]
+    assert len(first.edges) == 1
+    assert first.edges[0].id.startswith("edge:key:")
+    assert [item.authored_key for item in first.boundaries] == ["study.1"]
     assert isinstance(first.invocations[1].inputs[0], InputBinding)
     assert first.invocations[1].inputs[0].cardinality == "scalar"
     assert first.edges[0].target_member_index is None
     assert all(
-        item["authored_key"] is None for item in first.to_data()["invocations"]
+        item["authored_key"] is not None for item in first.to_data()["invocations"]
     )
-    assert first.to_data()["boundaries"][0]["authored_key"] is None
+    assert first.to_data()["boundaries"][0]["authored_key"] == "study.1"
 
 
 def test_collection_input_preserves_member_order_in_bindings_edges_and_json():
@@ -264,26 +262,18 @@ def test_collection_input_preserves_member_order_in_bindings_edges_and_json():
     assert first.operations[-1].inputs[0].cardinality == "collection"
     assert isinstance(binding, CollectionInputBinding)
     assert binding.cardinality == "collection"
-    assert [reference.invocation_id for reference in binding.references] == [
-        "invoke:0001",
-        "invoke:0002",
-        "invoke:0003",
-    ]
-    assert [edge.source.invocation_id for edge in first.edges] == [
-        "invoke:0001",
-        "invoke:0002",
-        "invoke:0003",
-    ]
+    assert [reference.invocation_id for reference in binding.references] == [item.id for item in first.invocations[:3]]
+    assert [edge.source.invocation_id for edge in first.edges] == [item.id for item in first.invocations[:3]]
     assert [edge.target_member_index for edge in first.edges] == [0, 1, 2]
 
     data = json.loads(first.to_json())
-    serialized_binding = data["invocations"][-1]["inputs"][0]
+    serialized_binding = next(item for item in data["invocations"] if item["authored_key"] == "summarize.1")["inputs"][0]
     assert serialized_binding["cardinality"] == "collection"
     assert [
         reference["invocation_id"]
         for reference in serialized_binding["references"]
-    ] == ["invoke:0001", "invoke:0002", "invoke:0003"]
-    assert [edge["target_member_index"] for edge in data["edges"]] == [0, 1, 2]
+    ] == [item.id for item in first.invocations[:3]]
+    assert [edge["target_member_index"] for edge in sorted(data["edges"], key=lambda item: item["target_member_index"])] == [0, 1, 2]
     assert "value" not in serialized_binding
 
 
@@ -315,7 +305,7 @@ def test_external_source_collection_member_gets_an_edge_without_scalar_regressio
     first = build()
     second = build()
     data = json.loads(first.to_json())
-    binding = data["invocations"][-1]["inputs"][0]
+    binding = next(item for item in data["invocations"] if item["authored_key"] == "summarize.1")["inputs"][0]
 
     assert first.to_data() == second.to_data()
     assert first.to_json() == second.to_json()
@@ -328,15 +318,15 @@ def test_external_source_collection_member_gets_an_edge_without_scalar_regressio
         "artifact",
         "ephemeral",
     ]
-    assert [edge["source"]["type"] for edge in data["edges"]] == [
+    assert [edge["source"]["type"] for edge in sorted(data["edges"], key=lambda item: item["target_member_index"])] == [
         "source",
         "output",
     ]
-    assert [edge["source"]["value_class"] for edge in data["edges"]] == [
+    assert [edge["source"]["value_class"] for edge in sorted(data["edges"], key=lambda item: item["target_member_index"])] == [
         "artifact",
         "ephemeral",
     ]
-    assert [edge["target_member_index"] for edge in data["edges"]] == [0, 1]
+    assert [edge["target_member_index"] for edge in sorted(data["edges"], key=lambda item: item["target_member_index"])] == [0, 1]
 
 
 def test_collection_inputs_reject_invalid_authored_values_early():
@@ -387,7 +377,7 @@ def test_collection_inputs_reject_invalid_authored_values_early():
 
     assert len(normalized.invocations) == 3
     assert [edge.target_member_index for edge in normalized.edges] == [0, 1]
-    assert normalized.to_data()["edges"][1]["source"]["type"] == "source"
+    assert next(edge for edge in normalized.to_data()["edges"] if edge["target_member_index"] == 1)["source"]["type"] == "source"
 
 
 def test_name_keyed_declaration_order_does_not_change_normalized_plan():
@@ -434,7 +424,8 @@ def test_name_keyed_declaration_order_does_not_change_normalized_plan():
     reverse = build(reversed_declarations=True)
 
     assert forward.to_data() == reverse.to_data()
-    assert [edge.id for edge in forward.edges] == ["edge:0001", "edge:0002"]
+    assert len(forward.edges) == 2
+    assert all(edge.id.startswith("edge:key:") for edge in forward.edges)
     combine = next(
         definition
         for definition in forward.operations
@@ -542,7 +533,7 @@ def test_invalid_bindings_and_flow_outputs_fail_during_planning():
         good = simulate(model, point="tt")
     normalized = draft.finish(outputs={"raw": good})
     assert len(normalized.invocations) == 1
-    assert normalized.invocations[0].id == "invoke:0001"
+    assert normalized.invocations[0].authored_key == "simulate.1"
 
 
 def test_foreign_references_and_finished_or_reused_sessions_are_rejected():
@@ -687,26 +678,26 @@ def test_keyed_nested_flows_repeat_and_survive_an_unkeyed_sibling_insertion():
     assert {
         item.authored_key: item.id
         for item in baseline.invocations
-        if item.authored_key is not None
+        if item.authored_key not in {"noise.1", "noise_flow.1"}
     } == {
         item.authored_key: item.id
         for item in inserted.invocations
-        if item.authored_key is not None
+        if item.authored_key not in {"noise.1", "noise_flow.1"}
     }
     assert {
         item.authored_key: item.id
         for item in baseline.boundaries
-        if item.authored_key is not None
+        if item.authored_key not in {"noise.1", "noise_flow.1"}
     } == {
         item.authored_key: item.id
         for item in inserted.boundaries
-        if item.authored_key is not None
+        if item.authored_key not in {"noise.1", "noise_flow.1"}
     }
     assert [item.id for item in baseline.edges] == [item.id for item in inserted.edges]
     assert all(item.id.startswith("edge:key:") for item in baseline.edges)
     assert [item.target_member_index for item in baseline.edges] == [0, 1]
-    assert inserted.invocations[0].id == "invoke:0001"
-    assert inserted.boundaries[0].id == "flow:0001"
+    assert inserted.invocations[0].authored_key == "noise.1"
+    assert inserted.boundaries[0].authored_key == "noise_flow.1"
     assert {
         item["authored_key"] for item in baseline.to_data()["boundaries"]
     } == {"outer", "inner"}
@@ -767,10 +758,10 @@ def test_duplicate_keys_share_one_operation_and_flow_namespace_per_scope():
     assert reused[0].boundary_id != reused[1].boundary_id
     assert reused[0].id != reused[1].id
     assert [
-        boundary.id
+        boundary.authored_key
         for boundary in normalized.boundaries
-        if boundary.authored_key is None
-    ] == ["flow:0001"]
+        if boundary.authored_key == "leaf.1"
+    ] == ["leaf.1"]
     assert normalized.validate() is normalized
 
 
@@ -792,20 +783,17 @@ def test_keyed_calls_and_edges_do_not_consume_unkeyed_counters():
     normalized = draft.finish(outputs={"report": unkeyed_report})
 
     unkeyed_invocation_ids = [
-        item.id for item in normalized.invocations if item.authored_key is None
+        item.authored_key for item in normalized.invocations if item.authored_key != "reserved" and item.authored_key != "step" and not item.authored_key.startswith("keyed-")
     ]
-    assert unkeyed_invocation_ids == [
-        "invoke:0001",
-        "invoke:0002",
-    ]
+    assert unkeyed_invocation_ids == ["produce.1", "consume.1"]
     stable_edges = [
         item for item in normalized.edges if item.id.startswith("edge:key:")
     ]
     counter_edges = [
         item.id for item in normalized.edges if item.id.startswith("edge:0")
     ]
-    assert len(stable_edges) == 1
-    assert counter_edges == ["edge:0001"]
+    assert len(stable_edges) == 2
+    assert counter_edges == []
 
 
 def test_duplicate_operation_rollback_does_not_leak_or_consume_counters():
@@ -835,12 +823,9 @@ def test_duplicate_operation_rollback_does_not_leak_or_consume_counters():
     normalized = draft.finish(outputs={})
 
     unkeyed_invocation_ids = [
-        item.id for item in normalized.invocations if item.authored_key is None
+        item.authored_key for item in normalized.invocations if item.authored_key != "reserved" and item.authored_key != "step" and not item.authored_key.startswith("keyed-")
     ]
-    assert unkeyed_invocation_ids == [
-        "invoke:0001",
-        "invoke:0002",
-    ]
+    assert unkeyed_invocation_ids == ["accepted.1", "accepted.2"]
     assert {item.identity.name for item in normalized.operations} == {
         "authoring.rollback.accepted"
     }
@@ -883,22 +868,17 @@ def test_failing_keyed_flow_restores_keys_graph_and_every_unkeyed_counter():
     )
 
     unkeyed_invocation_ids = [
-        item.id for item in normalized.invocations if item.authored_key is None
+        item.authored_key for item in normalized.invocations if item.authored_key != "reserved" and item.authored_key != "step" and not item.authored_key.startswith("keyed-")
     ]
-    assert unkeyed_invocation_ids == [
-        "invoke:0001",
-        "invoke:0002",
-        "invoke:0003",
-    ]
-    assert [item.id for item in normalized.edges] == ["edge:0001"]
-    assert [item.id for item in normalized.boundaries if item.authored_key is None] == [
-        "flow:0001"
-    ]
+    assert unkeyed_invocation_ids == ["produce.1", "consume.1", "produce.1"]
+    assert len(normalized.edges) == 1
+    assert normalized.edges[0].id.startswith("edge:key:")
+    assert {item.authored_key for item in normalized.boundaries} == {"boundary", "unkeyed.1"}
     assert {item.identity.name for item in normalized.flows} == {
         "authoring.rollback.success",
         "authoring.rollback.unkeyed",
     }
-    assert {item.authored_key for item in normalized.invocations} == {None, "step"}
+    assert {item.authored_key for item in normalized.invocations} == {"produce.1", "consume.1", "step"}
 
 
 @pytest.mark.parametrize(
@@ -923,7 +903,7 @@ def test_invalid_authored_key_syntax_fails_before_graph_mutation(invalid_key):
         result = produce(model)
     normalized = draft.finish(outputs={"raw": result})
 
-    assert [item.id for item in normalized.invocations] == ["invoke:0001"]
+    assert [item.authored_key for item in normalized.invocations] == ["produce.1"]
     assert normalized.boundaries == ()
 
 

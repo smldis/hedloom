@@ -106,6 +106,7 @@ class Session:
         self._client: Any = None
         self._pools: dict[str, Any] = {}
         self._watcher: Any = None
+        self._execution_owner: Any = None
 
     @property
     def client(self) -> Any:
@@ -121,6 +122,10 @@ class Session:
         from hedloom.study import start_watcher
 
         try:
+            if self.site.history_root is not None:
+                from pathlib import Path
+                from hedloom_run.execution import ExecutionOwner
+                self._execution_owner = ExecutionOwner(Path(self.site.history_root) / 'executions')
             if self.watch:
                 # One watcher for the root, not one per run: two concurrent runs
                 # sharing a root would otherwise report every attempt twice.
@@ -182,6 +187,9 @@ class Session:
                 close_pools(self._pools)
                 self._pools = {}
         finally:
+            if self._execution_owner is not None:
+                self._execution_owner.close()
+                self._execution_owner = None
             if self._watcher is not None:
                 stop, thread = self._watcher
                 stop.set()
@@ -194,15 +202,27 @@ class Session:
         self,
         study: Any,
         *,
+        name: str,
+        on_started: Callable | None = None,
         stop_on_failure: bool = True,
         on_event: Callable[[InvocationOutcome], None] | None = None,
         label: str | None = None,
     ) -> Any:
         """Run one study on this session's compute."""
 
+        if self.watch:
+            import sys
+            started = on_started
+            def on_started(reference):
+                print(f"run {reference.run_id}", file=sys.stderr)
+                if started is not None:
+                    started(reference)
         return study._run(
             site=self.site,
+            name=name,
+            on_started=on_started,
             client=self._client,
+            execution_owner=self._execution_owner,
             stop_on_failure=stop_on_failure,
             on_event=on_event or (_printer(label) if self.watch else None),
         )
@@ -211,6 +231,7 @@ class Session:
         self,
         studies: Mapping[str, Any],
         *,
+        on_started: Callable | None = None,
         stop_on_failure: bool = True,
         on_event: Callable[[InvocationOutcome], None] | None = None,
     ) -> dict[str, Any]:
@@ -239,6 +260,8 @@ class Session:
                     stop_on_failure=stop_on_failure,
                     on_event=on_event,
                     label=label,
+                    name=label,
+                    on_started=on_started,
                 )
             return runs
 
@@ -253,6 +276,8 @@ class Session:
                     stop_on_failure=stop_on_failure,
                     on_event=on_event,
                     label=label,
+                    name=label,
+                    on_started=on_started,
                 )
             except BaseException as error:  # noqa: BLE001 - re-raised below
                 failures[label] = error

@@ -27,6 +27,8 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Any, Callable, Mapping
 import warnings
+import sys
+from hedloom.history import HistoryWriter, HistoryPersistence, RunReference
 
 from hedloom_exec.prune import RetentionPolicy, survey
 from hedloom_exec.transport import Transport, TransportError
@@ -189,12 +191,16 @@ class StudyRun:
     report: RunReport
     document: Mapping[str, Any]
     study_name: str
+    run_id: str
+    history: HistoryPersistence
 
     def __getitem__(self, authored_key: str) -> InvocationOutcome:
+        from hedloom.addresses import invocation_addresses, resolve_invocation
+        identifier = resolve_invocation(invocation_addresses(self.document), authored_key)
         for outcome in self.report.outcomes:
-            if outcome.authored_key == authored_key:
+            if outcome.invocation_id == identifier:
                 return outcome
-        raise KeyError(f"no invocation was authored with key {authored_key!r}")
+        raise KeyError(f"invocation {authored_key!r} has no reported outcome")
 
     @property
     def outputs(self) -> Mapping[str, StudyOutput]:
@@ -293,6 +299,8 @@ class Study:
         self,
         *,
         site: Site,
+        name: str,
+        on_started: Callable[[RunReference], None] | None = None,
         client: Any = None,
         override: Mapping[str, Mapping[str, Any]] | None = None,
         sequential: bool = False,
@@ -338,11 +346,13 @@ class Study:
                 _watch_reader=_watch_reader,
             ) as live:
                 return live.submit(
-                    self, stop_on_failure=stop_on_failure, on_event=on_event
+                    self, name=name, on_started=on_started, stop_on_failure=stop_on_failure, on_event=on_event
                 )
 
         return self._run(
             site=site,
+            name=name,
+            on_started=on_started,
             client=client,
             watch=watch,
             stop_on_failure=stop_on_failure,
@@ -354,7 +364,10 @@ class Study:
         self,
         *,
         site: Site,
+        name: str,
+        on_started: Callable[[RunReference], None] | None = None,
         client: Any = None,
+        execution_owner: Any = None,
         watch: bool = False,
         stop_on_failure: bool = True,
         on_event: Callable[[InvocationOutcome], None] | None = None,
@@ -378,22 +391,48 @@ class Study:
         # `local` work on a profile that only ever mentions a farm queue —
         # every operation that declares no policy resolves to `local`, so a run
         # that cannot provide it refuses the commonest plan there is.
-        for name in site.placements:
-            transports.setdefault(name, BoundTransport(self.implementations))
+        for placement in site.placements:
+            transports.setdefault(placement, BoundTransport(self.implementations))
 
-        report_to = _reporter(on_event, watch)
         # One reading of every declared source serves both: its content decides
         # whether work is stale, and its location is what the body receives.
         # They are computed together because the second is keyed by the first.
         fingerprints = site.fingerprints(document)
+        source_addresses = site.source_addresses(document, fingerprints)
+        writer = HistoryWriter(site, name, self.name, document,
+                               {"stop_on_failure": stop_on_failure,
+                                "kernel": "sequential" if client is None else "graph",
+                                "placements": dict(site.placements)}, client)
+        if execution_owner is None:
+            from hedloom_run.execution import ExecutionOwner
+            execution_owner = ExecutionOwner(Path(site.history_root) / 'executions')
+        user_report = _reporter(on_event, watch)
+        def report_to(outcome):
+            try:
+                writer.observe(outcome)
+            except Exception as error:
+                writer.degrade(error)
+            if user_report is not None:
+                user_report(outcome)
+        if watch:
+            print(f"run {writer.run_id}", file=sys.stderr)
+        try:
+            if on_started is not None:
+                on_started(writer.reference)
+        except BaseException as error:
+            writer.interrupted(error)
+            error.history = writer.descriptor
+            raise
         common = dict(
             transports=transports,
             root=site.root,
             workspace_root=site.workspace_root,
             source_fingerprints=fingerprints,
-            source_addresses=site.source_addresses(document, fingerprints),
+            source_addresses=source_addresses,
             stop_on_failure=stop_on_failure,
             on_event=report_to,
+            execution_owner=execution_owner,
+            on_execution=writer.bind_execution,
         )
 
         watcher = start_watcher(site.root, _watch_reader) if watch else None
@@ -404,6 +443,10 @@ class Study:
                 from hedloom_run.graph import run_plan_graph
 
                 report = run_plan_graph(document, client=client, **common)
+        except BaseException as error:
+            writer.interrupted(error)
+            error.history = writer.descriptor
+            raise
         finally:
             if watcher is not None:
                 stop, thread = watcher
@@ -412,11 +455,14 @@ class Study:
                 # scheduler query therefore cannot keep the caller here or
                 # change an otherwise completed outcome.
                 thread.join(timeout=_WATCH_JOIN_SECONDS)
+        writer.finish(report)
         _apply_automatic_retention(site)
         return StudyRun(
             report=report,
             document=document,
             study_name=self.name,
+            run_id=writer.run_id,
+            history=writer.descriptor,
         )
 
 
@@ -530,6 +576,9 @@ def submit(
     study: Study,
     *,
     site: Site,
+    name: str,
+    on_started: Callable[[RunReference], None] | None = None,
+    on_event: Callable[[InvocationOutcome], None] | None = None,
     client: Any = None,
     override: Mapping[str, Mapping[str, Any]] | None = None,
     sequential: bool = False,
@@ -541,6 +590,9 @@ def submit(
 
     return study.submit(
         site=site,
+        name=name,
+        on_started=on_started,
+        on_event=on_event,
         client=client,
         override=override,
         sequential=sequential,

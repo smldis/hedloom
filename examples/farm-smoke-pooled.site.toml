@@ -6,6 +6,7 @@
 # stands should not be edited to make room for a new feature.
 [study]
 root = "_runs/farm-smoke-pooled/attempts"
+history_root = "_runs/farm-smoke-pooled/attempts-history"
 workspace_root = "_runs/farm-smoke-pooled/work"
 
 [placement.pool]

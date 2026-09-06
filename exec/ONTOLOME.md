@@ -62,6 +62,18 @@ its siblings are reused and the earlier results keep their own records.
 
 ## Current contracts
 
+`execute` and `launch_or_attach` accept `publish_selection(Selection)`. Exec
+owns the selected reference and publication diagnostics in `LaunchResult`,
+`ExecutionResult`, and handled `ExecutionFailure` exceptions; accounting does
+not depend on installing a publisher. Publication carries no consumer metadata
+and precedes blocking launch. Workspace knowledge arrives separately; reuse and
+attachment retain the selected try's recorded receipt, even after profile edits.
+Publication failure is diagnostic and leaves computation unchanged. `execute`
+holds one claim from selection through reconciliation so a competing caller
+cannot redirect its result to a newer try. `AttemptJournal.snapshot()` reads
+complete live journal lines without a claim or repair, reporting a torn tail
+separately; strict mutation/recovery readers retain their existing behavior.
+
 - Distribution: `hedloom-exec`, independently installable on Python 3.10 or newer,
   with no dependencies. It does not import `hedloom_flow`.
 - `attempt_identity(computation_digest)` is a pure stable record identity, and

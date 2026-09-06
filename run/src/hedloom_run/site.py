@@ -191,6 +191,9 @@ class Site:
     retention: Mapping[str, Any] = field(default_factory=dict)
     """Operator-owned workspace retention policy from ``[retention]``."""
 
+    history_root: str | None = None
+    """Optional consumer-history location; persistence belongs to the facade."""
+
     def __post_init__(self) -> None:
         """Anchor every root, because a relative one is silently wrong.
 
@@ -206,6 +209,8 @@ class Site:
         """
 
         object.__setattr__(self, "root", str(Path(self.root).resolve()))
+        if self.history_root is not None:
+            object.__setattr__(self, "history_root", str(Path(self.history_root).resolve()))
         if self.workspace_root is not None:
             object.__setattr__(
                 self, "workspace_root", str(Path(self.workspace_root).resolve())
@@ -281,6 +286,7 @@ class Site:
             root=self.root,
             transports={**self.transports, **transports},
             workspace_root=self.workspace_root,
+            history_root=self.history_root,
             address_spaces=self.address_spaces,
             placements=self.placements,
             threads=self.threads,
@@ -353,6 +359,7 @@ class Site:
                 if name not in described
             },
             workspace_root=self.workspace_root,
+            history_root=self.history_root,
             address_spaces=self.address_spaces,
             placements=placements,
             threads=kernel.get("threads", self.threads),
@@ -376,6 +383,7 @@ class Site:
             root=self.root,
             transports={},
             workspace_root=self.workspace_root,
+            history_root=self.history_root,
             address_spaces=self.address_spaces,
             placements={
                 name: {**options, "kind": "in-process"}
@@ -480,6 +488,7 @@ class Site:
 
         return cls(
             root=anchored(study["root"]),
+            history_root=anchored(study["history_root"]) if study.get("history_root") else None,
             workspace_root=(
                 anchored(study["workspace_root"])
                 if study.get("workspace_root")

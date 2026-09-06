@@ -283,3 +283,28 @@ observation belongs to a watcher over the attempt records
 
 api
 ```
+
+## Execution bindings and publication
+
+Both kernels accept `execution_owner` and `on_execution(invocation_id, handle)`.
+Consumer bindings are completed before the submission admits new work. The
+handle's `publish_selection` method receives Exec's selected reference directly;
+there is no per-consumer selection adapter. Exec results and handled failures
+carry that reference even without a publisher. Run adds the consumer identity
+when building its report; publication and handle-accounting errors appear in
+`observation_errors` without changing computation. `Site.history_root` is
+anchored and propagated with existing roots; its history format belongs to
+Hedloom.
+
+The owner is scoped to one Session and one Dask
+client. It shares compatible active bound graphs and supplies durable dispatch
+addresses before admission. Workers publish selection notices at those addresses;
+consumer queries need no live owner. Sequential execution uses the same handle
+contract without Dask. Unowned low-level graph submissions use isolated task
+keys; passing a Client alone does not opt into shared ownership.
+
+Handles arbitrate entry versus cancellation under a short advisory file lock.
+Cancelled work returns blocked without entering Exec. An entered handle refuses
+replay; `retries=0` alone would not prevent Dask's worker-loss recomputation.
+Consumers may withdraw independently, while a last consumer waits for already
+entered work. Neither publication errors nor cancelled futures decide what ran.

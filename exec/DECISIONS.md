@@ -9,6 +9,16 @@ per-phase work orders, the premise correction that inverted the lifetime
 argument, and what an adversarial review found — is in the unpublished
 `design/development-process-2026-08-03.md`. That is history; this is not.
 
+## Selection publication and accounting
+
+Exec owns selection accounting. Results and handled failures retain the selected
+reference and publication errors, with or without a publisher. The publisher
+receives an actual try before blocking launch, then its workspace binding; it
+has no computation identity, claim or lifecycle authority. Publication failures
+are diagnostic. A single claim covers `execute` selection and reconciliation.
+Local tests verify before-submit visibility, failure attribution without a
+publisher, and stable results when a rival advances the record after release.
+
 ## Settled by evidence in this unit
 
 | Question | Answer | Evidence |
@@ -186,6 +196,11 @@ mode's design premise is wrong and needs revisiting.
   cancellation/retry policy under sharing are deferred together with the
   nested-study redesign. Until then this prototype does not promise that every
   simultaneous equivalent requester receives a successful shared result.
+  The containing Session now shares one Exec call across compatible active
+  bound graphs using Run-owned execution handles. This does not change the
+  record claim or add joining between independent Exec callers. Selection
+  publication remains diagnostic; Run enforces dispatch replay refusal before
+  calling Exec, rather than relying on a publication exception to stop execution.
 - ~~**Who has used a record.**~~ **Closed as a question this unit answers,
   2026-09-05.** It was answered by creator attribution, which was wrong once
   records became shared: it named whichever requester arrived first and called

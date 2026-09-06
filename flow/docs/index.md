@@ -12,10 +12,11 @@ share one namespace within each containing boundary. A fully keyed subgraph has
 stable scoped invocation, boundary, and connecting-edge IDs across unrelated
 earlier insertions.
 
-That stability is deliberately precise rather than global. A keyed call inside
-an unkeyed boundary depends on the boundary's authored-order ID. External
-sources, unkeyed calls and boundaries, and fallback edges involving an external
-source or unkeyed endpoint can likewise be renumbered by earlier authored work.
+That stability is scoped. Automatic operation and flow keys use
+`function_name.N` per boundary. Earlier calls of the same function may renumber
+them and their descendants; unrelated function insertions do not. External
+sources and fallback edges involving them remain authored-order identities.
+The low-level model still permits manually constructed unkeyed Plans.
 Keys are Plan identity only, never cache keys, scheduler keys, attempts, runtime
 identity, or sequential slots.
 

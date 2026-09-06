@@ -33,10 +33,11 @@ a plan assembled across several strategies; it must be closed before `finish`
 freezes it, which is the ordering `@planned` exists to remove.
 
 Names identify Plan nodes only. They are not cache or scheduler keys, attempt or
-runtime identities, or sequential slots. Cross-edit stability requires every
-relevant enclosing boundary and endpoint to be keyed: unkeyed boundaries and
-calls, external sources, and fallback edges retain deterministic authored-order
-IDs that can change when earlier work is inserted.
+runtime identities, or sequential slots. Automatic operation and flow names
+are `function_name.N` within each boundary. Earlier calls of the same function
+can renumber them; unrelated functions cannot. Explicit keys provide stable
+meaning across edits when their enclosing boundaries are also stable. External
+sources and fallback edges retain authored-order IDs.
 
 Install the base planning package and run its planning-only evidence from this
 directory with:

@@ -1,24 +1,14 @@
-"""Operator commands over attempt records: pinning and reclamation.
-
-Everything here addresses a record or one of its tries. There is no
-name-shaped selector and no current-output view, because a record holds a
-computation rather than belonging to a study: two studies declaring the same
-work reach the same record, so a `<study>:<key>` address could only have named
-whichever of them arrived first. A caller that has just run something already
-holds the exact reference — `InvocationOutcome.record` and `.try_number`.
-
-Finding a record without one is discovery, and discovery is not built yet.
-"""
+"""Operator commands for run discovery, computation evidence, pins and retention."""
 
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import replace, asdict
 import json
 import sys
 from typing import Sequence
 
-from hedloom_exec.journal import AttemptJournal
+from hedloom_exec.journal import AttemptJournal, JournalError
 from hedloom_exec.pins import (
     PinError,
     PinSelectionError,
@@ -91,6 +81,31 @@ def _parser() -> argparse.ArgumentParser:
     prune.add_argument("--apply", action="store_true")
     prune.add_argument("--json", action="store_true")
     prune.add_argument("--limit-bytes")
+    for group in ("runs", "attempts"):
+        parent = commands.add_parser(group, help="inspect durable history" if group == "runs" else "inspect all computation tries")
+        actions = parent.add_subparsers(dest="action", required=True)
+        for action in (("list", "show", "path") if group == "runs" else ("list", "show")):
+            leaf = actions.add_parser(action)
+            leaf.add_argument("--site", required=True)
+            if action != "path":
+                leaf.add_argument("--json", action="store_true")
+            if action == "list":
+                leaf.add_argument("--since")
+                if group == "runs":
+                    leaf.add_argument("--name")
+                    leaf.add_argument("--study")
+                else:
+                    leaf.add_argument("--outcome")
+            elif group == "runs":
+                leaf.add_argument("run_id")
+                leaf.add_argument("--invocation", required=action == "path")
+                if action == "path":
+                    target = leaf.add_mutually_exclusive_group(required=True)
+                    target.add_argument("--workspace", action="store_true")
+                    target.add_argument("--journal-dir", action="store_true")
+            else:
+                leaf.add_argument("--record", required=True)
+                leaf.add_argument("--try", dest="try_number", type=int, required=True)
     return parser
 
 
@@ -272,10 +287,78 @@ def _prune(arguments: argparse.Namespace) -> int:
         return 2
 
 
+def _discover(arguments):
+    from hedloom.discovery import RunHistory, list_attempts
+    try:
+        site = Site.from_file(arguments.site)
+        if arguments.command == "attempts":
+            options = ({"since": arguments.since, "outcome": arguments.outcome}
+                       if arguments.action == "list" else
+                       {"record": arguments.record, "try_number": arguments.try_number})
+            data = list_attempts(site.root, workspace_root=site.workspace_root, **options)
+            if arguments.action == "show" and not data:
+                raise ValueError("selected record/try is unavailable")
+        else:
+            history = RunHistory(site.history_root)
+            if arguments.action == "path":
+                print(history.resolve_path(arguments.run_id, arguments.invocation,
+                      workspace=arguments.workspace, journal_dir=arguments.journal_dir))
+                return 0
+            if arguments.action == "list":
+                data = {"runs": [asdict(row) for row in history.list_runs(
+                        name=arguments.name, study=arguments.study, since=arguments.since)],
+                        "preparations": history.preparations()}
+            elif arguments.invocation:
+                data = asdict(history.invocation(arguments.run_id, arguments.invocation))
+            else:
+                data = asdict(history.read_run(arguments.run_id))
+                data["outputs"] = history.outputs(arguments.run_id)
+        if arguments.json:
+            print(json.dumps(data, sort_keys=True))
+        elif arguments.command == "runs" and arguments.action == "list":
+            for row in data["runs"]:
+                print(f"{row['run_id']}  {row['study_name']}  {row['run_reported_outcome']}  history:{row['history_status']}")
+            for preparation in data["preparations"]:
+                print(f"incomplete preparation: {preparation}")
+        elif arguments.command == "runs":
+            if "run_id" in data:
+                print(f"{data['run_id']}  study:{data['study_name']}  "
+                      f"reported:{data['run_reported_outcome']}  history:{data['history_status']}")
+                print(f"last observation: {data['last_observation']}")
+                rows = data["invocations"]
+                for diagnostic in data["diagnostics"]:
+                    print(f"history diagnostic: {diagnostic}")
+            else:
+                rows = [data]
+            print("invocation  reported  execution  record#try  workspace")
+            for row in rows:
+                reference = f"{row['record']}#{row['try_number']}" if row['record'] else "none"
+                print(f"{row['address']}  {row['run_reported_outcome']}  "
+                      f"{row['selected_execution_state'] or 'unreported'}  {reference}  "
+                      f"{row['workspace_status']}: {row['workspace'] or '-'}")
+                if row['block_reason']:
+                    print(f"  blocked: {row['block_reason']}")
+                if row['error']:
+                    print(f"  error: {row['error']}")
+                for diagnostic in row['diagnostics']:
+                    print(f"  diagnostic: {diagnostic}")
+        else:
+            print("record#try  operation  state  standing  payload")
+            for row in data:
+                print(f"{row['record']}#{row['try_number']}  {row['operation']}  "
+                      f"{row['state']}  {row['standing']}  {row['payload']}")
+        return 0
+    except (ValueError, KeyError, OSError, JournalError) as error:
+        print(f"hedloom {arguments.command}: {error}", file=sys.stderr)
+        return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the operator CLI, returning a process exit status."""
 
     arguments = _parser().parse_args(argv)
+    if arguments.command in ("runs", "attempts"):
+        return _discover(arguments)
     if arguments.command == "pin":
         return _pin(arguments)
     if arguments.command == "unpin":

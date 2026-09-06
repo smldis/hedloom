@@ -543,7 +543,27 @@ class AttemptJournal:
 
     def fold(self) -> AttemptState:
         """Derive current state from the durable record alone."""
-        events = self.events()
+        return self._fold_events(self.events())
+
+    def snapshot(self) -> tuple[AttemptState, tuple[str, ...]]:
+        """Read a live journal prefix without a claim, repair, or scheduler I/O."""
+        self._require_layout()
+        raw = self.log_path.read_bytes()
+        complete = b"\n".join(raw.split(b"\n")[:-1]) if raw and not raw.endswith(b"\n") else raw
+        diagnostics = ("incomplete event tail",) if complete != raw else ()
+        events = []
+        for index, line in enumerate(complete.splitlines()):
+            try:
+                row = json.loads(line)
+                if row["seq"] != index or row["event"] not in _EVENTS:
+                    raise ValueError("sequence gap or unknown event")
+                events.append(JournalEvent(seq=row["seq"], at=row["at"],
+                    event=row["event"], data=row.get("data") or {}))
+            except (ValueError, KeyError, TypeError) as error:
+                raise JournalError(f"malformed journal line {index}") from error
+        return self._fold_events(tuple(events)), diagnostics
+
+    def _fold_events(self, events) -> AttemptState:
         tries: dict[int, dict[str, Any]] = {}
         pins: dict[str, Pin] = {}
         for item in events:

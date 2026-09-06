@@ -47,6 +47,7 @@ def site(tmp_path):
     return Site(
         root=str(tmp_path / "attempts"),
         workspace_root=str(tmp_path / "work"),
+        history_root=str(tmp_path / "attempts") + "-history",
     )
 
 
@@ -102,7 +103,7 @@ def _with_a_later_step():
 def test_an_exported_output_is_addressed_by_name_and_by_its_producer(site):
     """The author says what a study produced, and which invocation produced it."""
 
-    run = _measured_and_evaluated().submit(site=site)
+    run = _measured_and_evaluated().submit(site=site, name="test-run")
     assert run.succeeded, run.summary()
 
     assert set(run.outputs) == {"measurements", "verdict"}
@@ -119,8 +120,8 @@ def test_a_later_invocation_changes_no_exported_result(site):
     rather than by chance — and the exported conclusion is still `evaluate`'s.
     """
 
-    plain = _measured_and_evaluated().submit(site=site)
-    extended = _with_a_later_step().submit(site=site)
+    plain = _measured_and_evaluated().submit(site=site, name="test-run")
+    extended = _with_a_later_step().submit(site=site, name="test-run")
 
     assert extended.succeeded, extended.summary()
     assert extended.report.outcomes[-1].authored_key == "record"
@@ -138,7 +139,7 @@ def test_a_later_invocation_changes_no_exported_result(site):
 def test_several_exports_stay_several(site):
     """No unwrapping, no preferred entry, no verdict-shaped magic."""
 
-    run = _measured_and_evaluated().submit(site=site)
+    run = _measured_and_evaluated().submit(site=site, name="test-run")
 
     assert len(run.outputs) == 2
     assert sorted(run.outputs) == ["measurements", "verdict"]
@@ -158,7 +159,7 @@ def _exports_none():
 def test_a_successful_none_is_a_value_and_not_an_absence(site):
     """The distinction the old aggregate could not make."""
 
-    run = _exports_none().submit(site=site)
+    run = _exports_none().submit(site=site, name="test-run")
 
     assert run.succeeded, run.summary()
     assert run.outputs["nothing"].available
@@ -174,7 +175,7 @@ def _exports_nothing():
 
 
 def test_a_study_that_exports_nothing_has_an_empty_mapping(site):
-    run = _exports_nothing().submit(site=site)
+    run = _exports_nothing().submit(site=site, name="test-run")
 
     assert run.succeeded, run.summary()
     assert dict(run.outputs) == {}
@@ -182,7 +183,7 @@ def test_a_study_that_exports_nothing_has_an_empty_mapping(site):
 
 
 def test_a_name_the_study_never_exported_raises_key_error(site):
-    run = _measured_and_evaluated().submit(site=site)
+    run = _measured_and_evaluated().submit(site=site, name="test-run")
 
     with pytest.raises(KeyError) as raised:
         run.outputs["conclusion"]
@@ -208,7 +209,7 @@ def _exports_a_failing_branch():
 def test_a_failed_producer_refuses_rather_than_answering_none(site):
     """An output nobody produced is not `None`; it is not there."""
 
-    run = _exports_a_failing_branch().submit(site=site, stop_on_failure=False)
+    run = _exports_a_failing_branch().submit(site=site, stop_on_failure=False, name="test-run")
 
     assert not run.succeeded
     note = run.outputs["note"]
@@ -221,7 +222,7 @@ def test_a_failed_producer_refuses_rather_than_answering_none(site):
 
 
 def test_a_blocked_producer_refuses_and_says_which_invocation(site):
-    run = _exports_a_failing_branch().submit(site=site, stop_on_failure=False)
+    run = _exports_a_failing_branch().submit(site=site, stop_on_failure=False, name="test-run")
 
     size = run.outputs["size"]
     assert not size.available
@@ -259,7 +260,7 @@ def test_each_exported_port_resolves_to_its_own_output(site):
     a number.
     """
 
-    run = _exports_both_ports().submit(site=site)
+    run = _exports_both_ports().submit(site=site, name="test-run")
     assert run.succeeded, run.summary()
 
     note = run.outputs["note"]
@@ -277,7 +278,7 @@ def test_each_exported_port_resolves_to_its_own_output(site):
 def test_a_file_output_exposes_its_reference_and_not_its_bytes(site):
     """Reading the artifact is the caller's decision, never an implied one."""
 
-    run = _exports_both_ports().submit(site=site)
+    run = _exports_both_ports().submit(site=site, name="test-run")
     note = run.outputs["note"]
 
     assert isinstance(note.value, str)
@@ -299,7 +300,7 @@ def _exports_a_directory():
 
 
 def test_a_directory_output_exposes_its_recorded_tree(site):
-    run = _exports_a_directory().submit(site=site)
+    run = _exports_a_directory().submit(site=site, name="test-run")
     assert run.succeeded, run.summary()
 
     pages = run.outputs["pages"]
@@ -356,8 +357,8 @@ def test_a_reference_the_run_cannot_resolve_is_kept_and_refused():
 def test_reused_outputs_are_the_recorded_ones_and_say_they_were_reused(site):
     """A second submission answers from the record, not from a fresh number."""
 
-    first = _measured_and_evaluated().submit(site=site)
-    second = _measured_and_evaluated().submit(site=site)
+    first = _measured_and_evaluated().submit(site=site, name="test-run")
+    second = _measured_and_evaluated().submit(site=site, name="test-run")
 
     assert len(second.report.reused) == len(second.report.outcomes)
     assert second.outputs["verdict"].value == first.outputs["verdict"].value
@@ -372,9 +373,10 @@ def test_both_kernels_export_the_same_outputs(tmp_path, kernel):
     site = Site(
         root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}"),
         workspace_root=str(tmp_path / f"work-{'seq' if kernel else 'graph'}"),
+        history_root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}") + "-history",
     )
 
-    run = _measured_and_evaluated().submit(site=site, **kernel)
+    run = _measured_and_evaluated().submit(site=site, **kernel, name="test-run")
 
     assert run.succeeded, run.summary()
     assert {name: item.value for name, item in run.outputs.items()} == {
@@ -394,7 +396,7 @@ def test_a_run_has_no_aggregate_value(site):
     coincidence, for plans whose conclusion happened to be authored last.
     """
 
-    run = _measured_and_evaluated().submit(site=site)
+    run = _measured_and_evaluated().submit(site=site, name="test-run")
 
     assert not hasattr(run, "value")
     assert not hasattr(StudyRun, "value")
@@ -404,7 +406,7 @@ def test_a_run_has_no_aggregate_value(site):
 def test_execution_success_is_not_the_verdict_it_carried(site):
     """A successful computation returning a failing verdict stays successful."""
 
-    run = _measured_and_evaluated().submit(site=site)
+    run = _measured_and_evaluated().submit(site=site, name="test-run")
 
     assert run.succeeded, run.summary()
     assert run.outputs["verdict"].value["passes"] is False

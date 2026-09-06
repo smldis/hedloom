@@ -421,7 +421,8 @@ def test_stopping_cancels_the_unstarted_and_waits_for_the_in_flight(tmp_path):
             thread = threading.Thread(target=run)
             thread.start()
             _wait_until(
-                lambda: {keys["first"], keys["bad"]} <= _call_stack_keys(connected),
+                lambda: all(any(actual.startswith(keys[name] + '-') for actual in _call_stack_keys(connected))
+                            for name in ('first', 'bad')),
                 "the first two invocations did not acquire the two worker threads",
             )
             (marker_dir / "fail-now").write_text("fail")
@@ -448,7 +449,7 @@ def test_stopping_cancels_the_unstarted_and_waits_for_the_in_flight(tmp_path):
             report = result["report"]
             by_key = {item.authored_key: item for item in report.outcomes}
             cancelled_name = next(
-                name for name, key in keys.items() if key == cancelled_key
+                name for name, key in keys.items() if cancelled_key.startswith(key + '-')
             )
             assert len(report.outcomes) == 4
             assert by_key["bad"].outcome == "failed"
@@ -611,7 +612,7 @@ def test_an_escaping_exception_cancels_before_it_propagates(tmp_path):
                 if outcome.authored_key == "root":
                     _wait_until(
                         lambda: any(
-                            keys[name] in _call_stack_keys(connected)
+                            any(actual.startswith(keys[name] + '-') for actual in _call_stack_keys(connected))
                             for name in ("one", "two", "three")
                         ),
                         "no dependent acquired a worker before observer failure",
@@ -660,7 +661,7 @@ def test_an_escaping_exception_cancels_before_it_propagates(tmp_path):
             assert len(error.report.outcomes) == 4
             assert error.in_flight
             cancelled_name = next(
-                name for name, key in keys.items() if key == cancelled_key
+                name for name, key in keys.items() if cancelled_key.startswith(key + '-')
             )
             by_key = {item.authored_key: item for item in error.report.outcomes}
             assert by_key[cancelled_name].outcome == "blocked"

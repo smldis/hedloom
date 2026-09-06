@@ -44,18 +44,24 @@ below provide bounded evidence for that benefit. They do not settle whether
 every current convenience belongs in this facade: a convenience that repeatedly
 restates a child's rules would challenge the present boundary, even if it works.
 
-Operator experience exposes a further limit of the join: retained evidence can
-be difficult to find after execution. An operator reported struggling to
-discover earlier attempts for inspection and debugging. The name-based
-resolution that used to stand in for this has been removed rather than kept as
-a partial answer: it resolved a shared record to whichever study created it,
-which was wrong once records became shared. A run now hands back the exact
-record and try it used, and that reference provides direct access to
-an execution. The facade does not persist a study-run history or provide a
-study-to-execution discovery surface; retained records alone do not supply it.
-Discovery from a study or attempt root through to tries, diagnostics, and
-results is a concrete need for this operator-facing join. Its eventual surface
-remains to be developed; this observation does not settle wider inquiry ownership.
+Run history implements the operator-facing join between named submissions and
+shared execution evidence. Every submission requires a chosen name and separate
+Site history root. Permanent occurrences, saved Plans and readable scoped
+addresses preserve each consumer independently. Actual selection and workspace
+binding are published before blocking launch. A Session owns execution handles
+for compatible overlapping bound graphs; each consumer records its binding to
+the handle and the worker publishes the selected try once. Exec owns selection
+accounting even when publication fails; Run adds consumer identity at reporting,
+without a per-invocation selection observer. Fresh-process readers
+follow durable references without callbacks or a live scheduler. Queries separate consumer outcome,
+execution state and persistence completeness. Initial persistence failure refuses;
+later failure continues computation with degraded history. Local subprocess
+barrier tests exercise both kernels. This does not establish real-farm or remote
+storage behavior, or settle wider inquiry ownership. Sharing is scoped to one
+Session and conservative whole-graph compatibility, including execution bindings
+and dependencies. A completed graph is not a result cache; later submissions
+re-enter Exec. This experience exposes execution ownership as part of the
+Session's lifetime, rather than an incidental consequence of equal Dask keys.
 
 The unit studies whether one authoring file can connect a Plan to its execution
 while retaining inspection before submission. Its evidence is
@@ -111,7 +117,7 @@ that would place each point on its own job as a comment rather than a claim.
   claiming the same operation name (the executable bundle binds by name); it
   introduces no second notion of what an operation is.
 - `@study(name=...)` gives every instance built by one decorated function the
-  same durable study name. Without `name=`, the definition's
+  same authored study-definition name. Without `name=`, the definition's
   `module.qualname` is inferred, following operation and flow identities. Two
   definitions in one process cannot claim one name. A finished Plan requires
   an explicit name because it has no defining function from which to infer

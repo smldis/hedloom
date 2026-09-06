@@ -33,7 +33,7 @@ def refinement(points):
 
 subject = refinement(POINTS)                      # planning, not spending
 print(subject.summary())                          # nothing spent yet
-run = subject.submit(site=Site.from_file("site.toml"), watch=True)
+run = subject.submit(name="investigate-start", site=Site.from_file("site.toml"), watch=True)
 print(run["coarse:integrate"].artifacts["result"]["address"])
 ```
 
@@ -76,8 +76,9 @@ Each try-named workspace is immutable evidence, and each invocation's outcome
 says which record and try it landed on — `run["point:solve"].record` and
 `.try_number` — so a caller keeps an exact reference to the execution it got,
 reused or fresh. Editing an input moves the record; retrying moves only the
-try. Finding a record you kept no reference to is discovery, and that is being
-designed separately rather than approximated.
+try. [Run discovery](docs/guide/discovery.md) preserves named submissions and
+reveals their selections before blocking launch. Configure a separate
+`Site.history_root` or `[study] history_root` before submitting.
 
 - **The body is the implementation.** `@operation` here is `hedloom_flow`'s,
   wrapped so the function it already kept is remembered as callable. The Plan
@@ -90,15 +91,16 @@ designed separately rather than approximated.
   `bsub -I` job with that invocation's queue, cores and licences.
 - **`@study` is the named execution envelope.** Calling the decorated function
   records its Plan and hands back something inspectable; `submit` is the only
-  thing that spends. Its name is the study's operator-facing name, for
-  authoring and run context; it does not reach storage at all. A record is
+  thing that spends. Its definition name and the chosen submission name are
+  recorded in consumer history. Neither names a computation record: a record is
   selected by the computation an invocation declares, so two studies declaring
   the same work share one record and neither owns it. A `@flow` is the same
   planning shape one level down, without an operator name or submission
   authority.
-- **`sweep(points, key=...)`** names every call inside the loop, so reuse cannot
-  be lost to renumbering — the trap that made unnamed invocations dangerous.
-  `.named("...")` does it by hand for a single call.
+- **`sweep(points, key=...)`** gives calls semantic point names.
+  `.named("...")` supplies a key for a single call; otherwise `function_name.N`
+  is generated within its boundary. Computation reuse is independent of these
+  readable Plan identities.
 - **`Site`** holds what is not the study: placements, roots, address spaces,
   threads, and retention. From TOML, with relative paths anchored to the profile.
 
@@ -144,8 +146,8 @@ author has to hold:
 
 ```python
 with session(site, watch=True) as farm:
-    first = farm.submit(subject)
-    second = farm.submit(subject)      # reuse, same cluster, same watcher
+    first = farm.submit(subject, name="investigate-start")
+    second = farm.submit(subject, name="investigate-start")      # reuse, same cluster, same watcher
 ```
 
 The session owns the cluster, the client and one queue watcher, and gives them
@@ -189,10 +191,9 @@ when `bsub -I` returns:
   budget belongs to that cluster's workers, so `submit_all` cannot put more on
   the farm than the site declared however many studies it is given. Eight jobs
   are wanted, `max_jobs` is two, and no more than two are ever in flight.
-* **One session, the same study twice.** Dask keys belong to the scheduler, so
-  identical work submitted twice is one task: four jobs, not eight. The attempt
-  claim is never consulted here — there is only ever one caller — so this is
-  Dask's idempotence, not hedloom's. Both reports say `claimed`.
+* **One session, the same study twice.** Compatible overlapping bound graphs
+  share Session-owned execution handles. Both submissions succeed and retain
+  exact live history; completed evidence is still reused through Exec on later runs.
 * **Two sessions, the same study.** Different key namespaces, so both callers
   really do reach the attempt protocol and the journal claim is what prevents
   the duplicate. The loser is refused by name rather than made to wait. This is

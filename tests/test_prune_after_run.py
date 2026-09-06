@@ -21,6 +21,7 @@ def _site(tmp_path):
             ],
             "automatic": {"after_run": ["failures"]},
         },
+        history_root=str(tmp_path / "records") + "-history",
     )
 
 
@@ -58,14 +59,14 @@ def test_a_completed_run_reaches_the_post_run_trigger(tmp_path, monkeypatch):
     monkeypatch.setattr(
         study_module, "_apply_automatic_retention", lambda selected: called.append(selected)
     )
-    run = subject().submit(site=site, sequential=True)
+    run = subject().submit(site=site, sequential=True, name="test-run")
     assert run.succeeded
     assert called == [site]
 
 
 def test_no_automatic_rules_means_no_post_run_pass(tmp_path, monkeypatch):
     site = Site(root=str(tmp_path / "records"),
-                workspace_root=str(tmp_path / "work"))
+                workspace_root=str(tmp_path / "work"), history_root=str(tmp_path / "records") + "-history")
     monkeypatch.setattr(
         study_module, "survey",
         lambda *args, **kwargs: pytest.fail("survey should not run"),

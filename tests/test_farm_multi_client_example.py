@@ -54,8 +54,8 @@ def test_two_studies_share_one_budget_one_keyspace_and_one_record(
         "two studies on one session must draw on one budget"
     )
 
-    # One session, the same study twice: Dask keys belong to the scheduler, so
-    # identical work submitted twice is one task.
+    # Both consumers succeed; Session-owned handles share the four executions
+    # while retaining exact history for each named submission.
     assert farm_multi_client.same_work_twice(site)
     assert len(jobs(state)) == 12, "the second submission must add four jobs, not eight"
 

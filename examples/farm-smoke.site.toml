@@ -2,6 +2,7 @@
 # Relative storage paths are anchored to this file's directory.
 [study]
 root = "_runs/farm-smoke/attempts"
+history_root = "_runs/farm-smoke/attempts-history"
 workspace_root = "_runs/farm-smoke/work"
 
 [placement.lsf]

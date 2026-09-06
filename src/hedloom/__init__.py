@@ -52,7 +52,11 @@ from hedloom.study import (  # noqa: F401
     submit,
 )
 
+from hedloom.discovery import RunHistory
+from hedloom.history import HistoryPersistence, RunReference
+
 __all__ = [
+    "RunHistory", "HistoryPersistence", "RunReference",
     "ArtifactContract",
     "OutputUnavailable",
     "Parameter",

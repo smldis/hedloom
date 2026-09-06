@@ -21,6 +21,8 @@ from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 import sys
 import traceback
 
+from hedloom_exec.errors import ExecutionFailure
+
 __all__ = [
     "RECORDED_TEXT_LIMIT",
     "Observation",
@@ -40,7 +42,7 @@ _OBSERVED_STATES = frozenset(
 )
 
 
-class TransportError(RuntimeError):
+class TransportError(ExecutionFailure):
     """The substrate could not be reached or answered incoherently.
 
     Raising this is an *indeterminate* result: the attempt may or may not have

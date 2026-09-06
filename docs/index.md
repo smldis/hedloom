@@ -34,7 +34,7 @@ def refinement(points):
 
 subject = refinement(POINTS)                      # planning, not spending
 print(subject.summary())                          # nothing spent yet
-run = subject.submit(site=Site.from_file("site.toml"), watch=True)
+run = subject.submit(name="investigate-start", site=Site.from_file("site.toml"), watch=True)
 print(run["coarse:integrate"].artifacts["result"]["address"])
 ```
 
@@ -53,6 +53,7 @@ Three ideas carry the rest of this documentation:
 | If you want to | Read |
 | --- | --- |
 | write your first study | [Authoring a study](guide/authoring.md) |
+| find a run or inspect its live workspace | [Run discovery](guide/discovery.md) |
 | run one, or several, or debug one | [Running a study](guide/running.md) |
 | point it at a farm, or tune concurrency | [Sites and placements](guide/sites.md) |
 | read results, or understand what gets reused | [Results, reuse, and looking before you run](guide/results.md) |
@@ -107,6 +108,7 @@ one level up from this package, and are where hedloom is exercised hardest.
 
 guide/authoring
 guide/running
+guide/discovery
 guide/sites
 guide/results
 guide/first-farm-run
