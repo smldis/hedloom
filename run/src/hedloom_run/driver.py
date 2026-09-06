@@ -22,19 +22,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
-from hedloom_exec.attempt import AttemptError
-from hedloom_exec.durability import Durability, execute
-from hedloom_exec.planned import plan_bundles
-from hedloom_exec.transport import Transport, TransportError
+from hedloom_exec.planned import prepare_invocations
+from hedloom_exec.transport import Transport
 
 # Binding rules are shared with the Dask kernel rather than restated, so that
 # changing which kernel decides readiness cannot change what a plan means.
 from hedloom_run.binding import (
     UnsupportedPlacement,
     available_transports,
-    build_bundle,
-    produced_by,
-    select_transport as _select_transport,
 )
 
 __all__ = ["InvocationOutcome", "RunReport", "UnsupportedPlacement", "run_plan"]
@@ -47,7 +42,7 @@ class InvocationOutcome:
     invocation_id: str
     authored_key: str | None
     operation: str
-    input_digest: str
+    input_digest: str | None
     disposition: str
     outcome: str
     placement: str | None = None
@@ -151,169 +146,11 @@ def run_plan(
     the graph kernel uses, so a study means the same thing under either.
     """
 
+    from hedloom_run.graph import _RunConfig, _run_ready
     available = available_transports(transport, transports)
-
-    # Sources are produced before anything runs, so seeding them is the whole
-    # of delivering a declared external file to the body that asked for it.
-    produced: dict[str, Any] = dict(source_addresses or {})
-    outcomes: list[InvocationOutcome] = []
-    # Invocations whose result never arrived, so nothing that named one as an
-    # input can run. Blocking a dependent is not a policy this shares with
-    # `stop_on_failure`: its inputs do not exist, and running it anyway spends
-    # an attempt to produce an error that blames the operation for an absent
-    # upstream artifact. The graph kernel has always refused that in
-    # `_run_one`; this is the same rule, and the two now agree.
-    unmet: set[str] = set()
-    stopped = False
-
-    items = plan_bundles(
-        document,
-        commands=commands,
-        identity_env=identity_env,
-        source_fingerprints=source_fingerprints,
-    )
-    handles = {}
-    if execution_owner is not None:
-        from hedloom_run.execution import ExecutionHandle
-        if on_execution is None:
-            raise ValueError('owned execution requires bindings rather than consumer selection callbacks')
-        for item in items:
-            handle = ExecutionHandle.create(execution_owner.root)
-            on_execution(item.invocation_id, handle)
-            handles[item.invocation_id] = handle
-
-    for item in items:
-        if any(dependency in unmet for dependency in item.depends_on) or (
-            stopped and stop_on_failure
-        ):
-            if item.invocation_id in handles:
-                handles[item.invocation_id].cancel_before_start()
-            outcome = InvocationOutcome(
-                invocation_id=item.invocation_id,
-                authored_key=item.authored_key,
-                operation=item.operation,
-                input_digest=item.input_digest,
-                disposition="skipped",
-                outcome="blocked",
-                block_reason=("dependency failure: " + ", ".join(
-                    dependency for dependency in item.depends_on if dependency in unmet
-                )) if any(dependency in unmet for dependency in item.depends_on)
-                else "stopped by stop_on_failure",
-            )
-            unmet.add(item.invocation_id)
-            outcomes.append(outcome)
-            if on_event:
-                on_event(outcome)
-            continue
-
-        try:
-            placement_name, chosen = _select_transport(item, available)
-        except UnsupportedPlacement as error:
-            if item.invocation_id in handles:
-                handles[item.invocation_id].cancel_before_start()
-            stopped = True
-            unmet.add(item.invocation_id)
-            outcome = InvocationOutcome(
-                invocation_id=item.invocation_id,
-                authored_key=item.authored_key,
-                operation=item.operation,
-                input_digest=item.input_digest,
-                disposition="refused",
-                outcome="failed",
-                placement=(item.policy or {}).get("name"),
-                error=str(error),
-            )
-            outcomes.append(outcome)
-            if on_event:
-                on_event(outcome)
-            continue
-
-        bundle = build_bundle(
-            item,
-            produced=produced,
-            placement_name=placement_name,
-            transport=chosen,
-            outputs=outputs,
-        )
-
-        handle = handles.get(item.invocation_id)
-        if handle is not None and not handle.enter():
-            unmet.add(item.invocation_id)
-            stopped = True
-            outcome = InvocationOutcome(
-                invocation_id=item.invocation_id,
-                authored_key=item.authored_key,
-                operation=item.operation,
-                input_digest=item.input_digest,
-                disposition="skipped",
-                outcome="blocked",
-                block_reason="cancelled before execution entry",
-            )
-            outcomes.append(outcome)
-            if on_event:
-                on_event(outcome)
-            continue
-        accounting_errors = []
-        try:
-            try:
-                result = execute(
-                    chosen,
-                    bundle,
-                    durability=Durability.RECORDED,
-                    root=root,
-                    workspace_root=workspace_root,
-                    publish_selection=handle.publish_selection if handle is not None else None,
-                )
-            finally:
-                if handle is not None:
-                    try:
-                        handle.finish()
-                    except Exception as error:
-                        accounting_errors.append(f'execution accounting failed: {error}')
-        except (AttemptError, TransportError) as error:
-            stopped = True
-            unmet.add(item.invocation_id)
-            outcome = InvocationOutcome(
-                invocation_id=item.invocation_id,
-                authored_key=item.authored_key,
-                operation=item.operation,
-                input_digest=item.input_digest,
-                disposition="refused",
-                outcome="failed",
-                placement=placement_name,
-                error=f"{type(error).__name__}: {error}",
-                record=error.selection.record if error.selection else None,
-                try_number=error.selection.try_number if error.selection else None,
-                observation_errors=(*error.publication_errors, *accounting_errors),
-            )
-            outcomes.append(outcome)
-            if on_event:
-                on_event(outcome)
-            continue
-
-        if result.outcome == "succeeded":
-            produced.update(produced_by(item, result))
-        else:
-            stopped = True
-            unmet.add(item.invocation_id)
-
-        outcome = InvocationOutcome(
-            invocation_id=item.invocation_id,
-            authored_key=item.authored_key,
-            operation=item.operation,
-            input_digest=item.input_digest,
-            disposition=result.disposition or "ran",
-            outcome=result.outcome,
-            placement=placement_name,
-            value=result.value,
-            artifacts=dict(result.artifacts),
-            record=result.record,
-            try_number=result.try_number,
-            error=(result.detail or {}).get("error"),
-            observation_errors=(*result.publication_errors, *accounting_errors),
-        )
-        outcomes.append(outcome)
-        if on_event:
-            on_event(outcome)
-
-    return RunReport(tuple(outcomes))
+    items = prepare_invocations(document, commands=commands, outputs=outputs, identity_env=identity_env,
+                                source_fingerprints=source_fingerprints)
+    config = _RunConfig(root=root, workspace_root=workspace_root, outputs=outputs,
+                        sources=dict(source_addresses or {}))
+    return _run_ready(items, available, config, None, execution_owner,
+                      on_execution, on_event, stop_on_failure)

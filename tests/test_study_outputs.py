@@ -59,14 +59,14 @@ def o_write(out, *, word: str) -> None:
 
 @operation(inputs={"note": TEXT}, outputs={"size": returned(kind="count")})
 def o_measure(note) -> int:
-    return len(Path(note).read_text())
+    return {'size': len(Path(note).read_text())}
 
 
 @operation(inputs={"size": COUNT}, outputs={"verdict": returned(kind="verdict")})
 def o_evaluate(size) -> dict:
     """An evaluation. Returning a failing verdict is a successful execution."""
 
-    return {"passes": size > 100, "measured": size}
+    return {'verdict': {"passes": size > 100, "measured": size}}
 
 
 @study(default_policy=local())
@@ -82,7 +82,7 @@ def _measured_and_evaluated():
 def o_record(verdict) -> str:
     """A step after the conclusion, which the study does not export."""
 
-    return "filed {} verdict".format("passing" if verdict["passes"] else "failing")
+    return {'note': "filed {} verdict".format("passing" if verdict["passes"] else "failing")}
 
 
 @study(default_policy=local())
@@ -125,7 +125,7 @@ def test_a_later_invocation_changes_no_exported_result(site):
 
     assert extended.succeeded, extended.summary()
     assert extended.report.outcomes[-1].authored_key == "record"
-    assert extended.report.outcomes[-1].value == "filed failing verdict"
+    assert extended.report.outcomes[-1].value == {"note": "filed failing verdict"}
     assert extended.outputs["verdict"].value == plain.outputs["verdict"].value
     assert (
         extended.outputs["measurements"].value
@@ -148,7 +148,7 @@ def test_several_exports_stay_several(site):
 
 @operation(outputs={"nothing": returned()})
 def o_returns_none() -> None:
-    return None
+    return {'nothing': None}
 
 
 @study(default_policy=local())
@@ -242,7 +242,7 @@ def test_a_blocked_producer_refuses_and_says_which_invocation(site):
 )
 def o_writes_and_returns(out, *, word: str) -> int:
     out.note.write_text(word * 3)
-    return len(word) * 3
+    return {'length': len(word) * 3}
 
 
 @study(default_policy=local())
@@ -316,7 +316,7 @@ def test_a_directory_output_exposes_its_recorded_tree(site):
 
 @operation(inputs={"given": TEXT}, outputs={"size": returned(kind="count")})
 def o_measure_source(given) -> int:
-    return len(Path(given).read_text())
+    return {'size': len(Path(given).read_text())}
 
 
 def test_exporting_a_declared_source_is_refused_where_it_is_authored():

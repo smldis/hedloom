@@ -39,7 +39,27 @@ from hedloom_exec.transport import (
     substrate_of,
 )
 
-__all__ = ["BoundTransport", "Shell", "Workspace", "shell"]
+__all__ = ["BoundTransport", "Shell", "Workspace", "shell", "located"]
+
+
+@dataclass(frozen=True, slots=True)
+class Located:
+    path: str
+    identity: Any
+
+
+def located(path, *, identity):
+    """Return a filesystem location with its author's explicit artifact identity."""
+    from hedloom_exec.artifacts import canonical_identity
+    return Located(str(Path(path).resolve()), canonical_identity(identity))
+
+
+def _named_data(produced):
+    if isinstance(produced, Mapping):
+        return {name: ({"location": value.path, "identity": value.identity}
+                       if isinstance(value, Located) else value)
+                for name, value in produced.items()}
+    return produced
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +151,9 @@ class BoundTransport:
         if delegate is not None:
             self.discovery_is_authoritative = delegate.discovery_is_authoritative
 
+    def execution_contract(self, operation):
+        return (self._implementations.get(operation), self._delegate)
+
     def _call(self, bundle: Mapping[str, Any]) -> Any:
         operation = bundle.get("operation")
         implementation = self._implementations.get(operation)
@@ -189,7 +212,7 @@ class BoundTransport:
             )
             return {**handle, "bound": True}
 
-        self._results[identity] = Observation("succeeded", {"value": produced})
+        self._results[identity] = Observation("succeeded", {"value": _named_data(produced)})
         return _local_handle(self.name, identity, bundle)
 
     def discover(self, identity: str) -> Mapping[str, Any] | None:

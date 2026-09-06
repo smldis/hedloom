@@ -49,7 +49,7 @@ def test_a_completed_run_reaches_the_post_run_trigger(tmp_path, monkeypatch):
 
     @operation(outputs={"answer": returned()})
     def answer():
-        return 42
+        return {'answer': 42}
 
     @study
     def subject():

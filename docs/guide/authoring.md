@@ -81,14 +81,15 @@ all.
 
 ### Returning a value, or returning a command
 
-A body that computes a value returns it:
+A body that computes values returns a mapping keyed by its declared output names.
+Missing required names fail the invocation; there is no whole-return fallback:
 
 ```python
 @operation(inputs={"result": QUADRATURE},
            outputs={"estimate": returned(kind="integral-estimate")})
 def estimate(result) -> float:
     ...
-    return value
+    return {"estimate": value}
 ```
 
 A body that wants a command run **at its placement** returns `shell(...)`
@@ -224,7 +225,7 @@ print(subject.summary())
 
 ```
 study grid-refinement
-plan schema 3: 10 invocations, 0 sources
+plan schema 4: 10 invocations, 0 sources
   coarse:estimate    grid_refinement.estimate    local
   coarse:integrate   grid_refinement.integrate   local
   coarse:write_grid  grid_refinement.write_grid  local

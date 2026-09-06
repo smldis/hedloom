@@ -58,8 +58,10 @@ def summary(members):
 
 def document():
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "sources": [SOURCE],
+        "operations": [{"identity": {"name": "sim"}, "outputs": [{"name": "metrics"}]},
+                       {"identity": {"name": "summarize"}, "outputs": []}],
         "invocations": [point("tt", 27), point("ss", 125), summary(["tt", "ss"])],
     }
 

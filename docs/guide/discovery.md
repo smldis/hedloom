@@ -92,7 +92,7 @@ late provenance, without claiming it was available during execution. After an
 append failure the controller stops writing its log and preserves outcomes in
 memory. Escaping exceptions carry `.history` alongside any partial `.report`.
 
-Within one Session, compatible overlapping bound graphs share execution handles.
+Within one Session, compatible ready invocations share execution handles.
 Each invocation has a durable binding to its handle before new work is scheduled;
 the worker publishes the actual selected try and workspace once beneath that
 handle. A later consumer can immediately read an existing selection. Queries
@@ -100,12 +100,13 @@ follow these references directly, without scanning for a candidate or waiting fo
 completion. `execution_id` in an invocation snapshot identifies that dispatch;
 it is separate from the computation record and try.
 
-Sharing requires the same bound graph, including dependencies, source bindings,
-roots, placement and transport configuration. Renaming invocations does not
-change this contract. Finished predecessors remain available while the graph is
-active, so staggered submissions can share downstream work too. After the graph
-finishes, a subsequent submission makes a new dispatch and Exec decides reuse or
-a new try. Independent Sessions share completed evidence through Exec; joining
+Sharing is decided when an invocation is ready, using its finalized computation
+identity and compatible implementation, roots, placement and transport bindings.
+Equivalent runtime artifact identities may refer to different suitable paths.
+Each consumer records its own candidate inputs; the shared try records the inputs
+actually used. Completed producer artifacts remain in each run's result map.
+A later lookup of a completed execution creates a dispatch and lets Exec decide
+reuse or a new try. Independent Sessions share completed evidence through Exec; joining
 their running work is unsupported and contention may still refuse.
 
 If a consumer stops while another needs the execution, its unfinished outcomes

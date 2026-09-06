@@ -1,30 +1,14 @@
-"""Derive execution bundles from an Hedloom Flow Plan document.
+"""Prepare symbolic invocations and finalize their identities from selected artifacts.
 
-The coupling here is to the *document*, not to the package: a schema-2 Plan in
-its plain-data form is a public, portable artifact, so this module reads
-ordinary dictionaries and never imports `hedloom_flow`. Another producer of the
-same document works equally well, and this unit's base distribution stays
-dependency-free.
-
-The invariant this module exists to hold:
-
-    An invocation's input digest changes exactly when its own declaration or
-    any ancestor's declaration changes.
-
-That makes reuse transitive. Editing a source locator or one point's
-configuration invalidates that invocation and everything downstream of it, while
-sibling branches keep their published results. It is a Merkle identity over the
-plan, and it is the reason a rerun can honestly skip work.
-
-Two things are deliberately absent. Nothing here runs, and nothing here decides
-*when* an invocation should run: the returned order is a property the Plan
-already has, not a scheduling decision. Choosing concurrency and readiness
-remains outside this unit.
+Exec reads the schema-4 document independently of Flow. Graph shape is fixed by
+that document; an invocation's identity is fixed before its own execution, once
+Run supplies its selected input artifacts. Producer identity remains economical;
+explicit content/declared identity can stop conservative invalidation upstream.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 from hedloom_exec.reuse import input_digest
@@ -33,10 +17,12 @@ __all__ = [
     "PlanDerivationError",
     "PlannedInvocation",
     "plan_bundles",
+    "prepare_invocations",
+    "finalize_invocation",
     "source_references",
 ]
 
-SUPPORTED_SCHEMA = frozenset({2, 3})
+SUPPORTED_SCHEMA = frozenset({4})
 
 
 class PlanDerivationError(ValueError):
@@ -45,14 +31,15 @@ class PlanDerivationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class PlannedInvocation:
-    """One invocation, ready to execute, with its content-addressed identity."""
+    """A specification with symbolic references, or its finalized execution bundle."""
 
     invocation_id: str
     operation: str
     authored_key: str | None
     depends_on: tuple[str, ...]
-    input_digest: str
+    input_digest: str | None
     bundle: Mapping[str, Any]
+    execution: str = "reuse"
     output_names: tuple[str, ...] = ()
     policy: Mapping[str, Any] = field(default_factory=dict)
     """The Plan's resolved placement for this invocation.
@@ -96,9 +83,9 @@ def _source_identity(
 def _reference_identity(
     reference: Mapping[str, Any],
     sources: Mapping[str, Mapping[str, Any]],
-    digests: Mapping[str, str],
+    invocation_ids: set[str],
     fingerprints: Mapping[str, str] | None = None,
-) -> str:
+) -> str | tuple[str, str]:
     kind = reference.get("type")
     if kind == "source":
         source_id = reference.get("source_id")
@@ -109,12 +96,11 @@ def _reference_identity(
         return f"source:{_source_identity(source, fingerprint)}"
     if kind == "output":
         producer = reference.get("invocation_id")
-        if producer not in digests:
+        if producer not in invocation_ids:
             raise PlanDerivationError(
-                f"input depends on invocation {producer!r} whose digest is not "
-                "yet known; the plan is not in dependency order"
+                f"input depends on unknown invocation {producer!r}"
             )
-        return f"output:{digests[producer]}:{reference.get('output_name')}"
+        return (producer, reference.get("output_name"))
     raise PlanDerivationError(f"unknown reference type {kind!r}")
 
 
@@ -188,14 +174,15 @@ def source_references(
     }
 
 
-def plan_bundles(
+def prepare_invocations(
     document: Mapping[str, Any],
     *,
     commands: Mapping[str, Sequence[str]] | None = None,
     identity_env: Mapping[str, str] | None = None,
+    outputs: Mapping[str, Mapping[str, Any]] | None = None,
     source_fingerprints: Mapping[str, str] | None = None,
 ) -> tuple[PlannedInvocation, ...]:
-    """Turn a validated Plan document into content-addressed bundles.
+    """Turn a validated Plan document into symbolic invocation specifications.
 
     ``commands`` maps an operation name to the command line that runs it, for
     invocations destined for an external substrate. Operations absent from it
@@ -228,14 +215,13 @@ def plan_bundles(
         name: tuple(item["name"] for item in definition.get("outputs", []))
         for name, definition in definitions.items()
     }
-    # Schema 3 declares where each output lands and what implements the
+    # The Plan declares where each output lands and what implements the
     # operation. Both are authored facts, so a run no longer supplies them and
     # a Plan can finally say what it will compute.
     bindings_by_operation = {
         name: {
-            item["name"]: dict(item["binding"])
+            item["name"]: {**dict(item.get("binding") or {"value": True}), "artifact": item.get("artifact", {"kind": "value"})}
             for item in definition.get("outputs", [])
-            if item.get("binding")
         }
         for name, definition in definitions.items()
     }
@@ -244,7 +230,8 @@ def plan_bundles(
         for name, definition in definitions.items()
         if definition.get("implementation")
     }
-    digests: dict[str, str] = {}
+    invocation_ids = {item["id"] for item in document.get("invocations", [])}
+    source_declarations = source_references(document, source_fingerprints)
     planned: list[PlannedInvocation] = []
 
     for invocation in _ordered(document.get("invocations", [])):
@@ -256,12 +243,12 @@ def plan_bundles(
             name = binding["name"]
             if "reference" in binding:
                 resolved[name] = _reference_identity(
-                    binding["reference"], sources, digests, source_fingerprints
+                    binding["reference"], sources, invocation_ids, source_fingerprints
                 )
             else:
                 resolved[name] = [
                     _reference_identity(
-                        reference, sources, digests, source_fingerprints
+                        reference, sources, invocation_ids, source_fingerprints
                     )
                     for reference in binding.get("references", [])
                 ]
@@ -276,7 +263,8 @@ def plan_bundles(
             "arguments": arguments,
             "inputs": resolved,
         }
-        declared_bindings = bindings_by_operation.get(operation)
+        bundle["source_declarations"] = source_declarations
+        declared_bindings = (outputs or {}).get(operation, bindings_by_operation.get(operation))
         if declared_bindings:
             bundle["outputs"] = dict(declared_bindings)
         implementation = implementations.get(operation)
@@ -292,15 +280,14 @@ def plan_bundles(
         if identity_env:
             bundle["identity_env"] = dict(identity_env)
 
-        digest = input_digest(bundle)
-        digests[invocation["id"]] = digest
         planned.append(
             PlannedInvocation(
                 invocation_id=invocation["id"],
                 operation=operation,
+                execution=definitions.get(operation, {}).get("execution", "reuse"),
                 authored_key=invocation.get("authored_key"),
                 depends_on=_dependencies(invocation),
-                input_digest=digest,
+                input_digest=None,
                 bundle=bundle,
                 output_names=outputs_by_operation.get(operation, ()),
                 policy=dict(invocation.get("policy") or {}),
@@ -308,3 +295,40 @@ def plan_bundles(
         )
 
     return tuple(planned)
+
+
+def finalize_invocation(item, resolved_artifacts, observation_id=None):
+    """Fix identity before this invocation enters Exec; never locate payloads."""
+    def identity(reference):
+        if isinstance(reference, list):
+            return [identity(member) for member in reference]
+        if isinstance(reference, str) and reference.startswith("source:"):
+            return reference
+        try:
+            return resolved_artifacts[reference]["identity"]
+        except KeyError as error:
+            raise PlanDerivationError(f"unresolved artifact {reference!r}") from error
+
+    bundle = dict(item.bundle)
+    bundle["input_references"] = dict(item.bundle["inputs"])
+    bundle["inputs"] = {name: identity(ref) for name, ref in item.bundle["inputs"].items()}
+    if item.execution == "each_submission":
+        if not observation_id:
+            raise PlanDerivationError("fresh execution requires a durable observation identifier")
+        bundle["observation_id"] = observation_id
+    return replace(item, bundle=bundle, input_digest=input_digest(bundle))
+
+
+def plan_bundles(document, **options):
+    """Derive producer-only identities without execution; runtime identities refuse."""
+    produced = {}
+    finalized = []
+    for spec in prepare_invocations(document, **options):
+        item = finalize_invocation(spec, produced)
+        finalized.append(item)
+        for name, declaration in item.bundle.get("outputs", {}).items():
+            if declaration.get("identity", "producer") != "producer":
+                raise PlanDerivationError("runtime output identity requires execution")
+            produced[(item.invocation_id, name)] = {
+                "identity": f"output:{item.input_digest}:{name}"}
+    return tuple(finalized)

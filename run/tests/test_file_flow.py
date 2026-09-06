@@ -35,7 +35,7 @@ def farm(tmp_path, monkeypatch):
 
 def document():
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "sources": [],
         "operations": [
             {"identity": {"name": "simulate", "version": "1"},

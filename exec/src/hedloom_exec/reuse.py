@@ -50,6 +50,7 @@ IDENTITY_KEYS = (
     "inputs",
     "outputs",
     "identity_env",
+    "observation_id",
 )
 """Bundle keys that determine the result. Everything else is execution detail.
 

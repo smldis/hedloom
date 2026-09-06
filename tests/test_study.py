@@ -47,7 +47,7 @@ def write_note(out, *, word: str) -> None:
 
 @operation(inputs={"note": TEXT}, outputs={"size": returned(kind="count")})
 def measure(note) -> int:
-    return len(Path(note).read_text())
+    return {'size': len(Path(note).read_text())}
 
 
 @operation(config={"word": parameter(str)},
@@ -62,7 +62,7 @@ def copy_via_shell(out, *, word: str):
 def measure_source(given) -> int:
     """A body whose input is a file this study did not create."""
 
-    return len(Path(given).read_text())
+    return {'size': len(Path(given).read_text())}
 
 
 @flow
@@ -89,7 +89,7 @@ def test_the_plan_is_complete_before_anything_is_spent(tmp_path):
     document = subject.document
 
     assert subject.name == f"{__name__}.build"
-    assert document["schema_version"] == 3
+    assert document["schema_version"] == 4
     assert len(document["invocations"]) == 4
     assert not (tmp_path / "attempts").exists(), "summary must spend nothing"
     assert "write_note" in subject.summary()
@@ -100,8 +100,8 @@ def test_the_body_that_runs_is_the_one_the_plan_names(site):
 
     assert run.study_name == f"{__name__}.build"
     assert run.succeeded, run.summary()
-    assert run["ab:measure"].value == 6
-    assert run["cde:measure"].value == 9
+    assert run["ab:measure"].value["size"] == 6
+    assert run["cde:measure"].value == {"size": 9}
 
 
 def test_stop_on_failure_defaults_true_and_reaches_both_kernels(
@@ -318,20 +318,20 @@ def test_a_declared_source_reaches_the_body_that_asked_for_it(reading_site):
     run = _reads_a_source().submit(site=reading_site, name="test-run")
 
     assert run.succeeded, run.summary()
-    assert run["read"].value == 5
+    assert run["read"].value["size"] == 5
 
 
 def test_editing_a_source_reruns_the_work_that_read_it(reading_site, fixtures):
     """Delivery and staleness read the same file, so they cannot disagree."""
 
     first = _reads_a_source().submit(site=reading_site, name="test-run")
-    assert first["read"].value == 5
+    assert first["read"].value["size"] == 5
 
     (fixtures / "given.txt").write_text("abcdefgh")
     again = _reads_a_source().submit(site=reading_site, name="test-run")
 
     assert not again.report.outcomes[0].reused, again.summary()
-    assert again["read"].value == 8
+    assert again["read"].value["size"] == 8
 
 
 def test_an_unedited_source_reuses_what_read_it(reading_site):
@@ -380,7 +380,7 @@ def test_locally_runs_a_farm_study_here_and_needs_no_scheduler(tmp_path):
     debugged = subject.submit(site=farm_site, locally=True, name="test-run")
 
     assert debugged.succeeded, debugged.summary()
-    assert debugged["ab:measure"].value == 6
+    assert debugged["ab:measure"].value["size"] == 6
 
 
 def test_a_session_holds_one_cluster_for_several_runs(site):
@@ -478,7 +478,7 @@ def test_both_kernels_block_a_dependent_and_let_others_finish(tmp_path, kernel):
     )
     # The branch that has nothing to do with the failure still finishes.
     assert outcomes["good:refuses_one_word"].outcome == "succeeded"
-    assert outcomes["good:measure"].value == 4
+    assert outcomes["good:measure"].value["size"] == 4
 
 
 def test_a_study_is_a_function_and_calling_it_spends_nothing(tmp_path):

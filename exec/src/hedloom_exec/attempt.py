@@ -28,6 +28,8 @@ import warnings
 from hedloom_exec.artifacts import (
     MissingOutput,
     capture_outputs,
+    validate_borrowed,
+    OutputDeclarationError,
     workspace_for,
     workspace_path,
     write_diagnostics,
@@ -219,6 +221,11 @@ def _launch_or_attach_locked(
                     pass
 
     def result(disposition, state, manifest=None):
+        if disposition == "completed":
+            try:
+                validate_borrowed((manifest or {}).get("result", {}).get("artifacts", []))
+            except (MissingOutput, OutputDeclarationError, OSError) as error:
+                raise ReconciliationError(str(error)) from error
         return LaunchResult(disposition, state, manifest, selection,
                             tuple(publication_errors))
 
@@ -372,6 +379,8 @@ def _launch_or_attach_locked(
         placement = bundle.get("placement")
         if placement:
             journal.append("placement", **{"try": number, **placement})
+
+        journal.append("inputs_bound", **{"try": number, "inputs": bundle.get("input_evidence", {})})
 
         journal.append(
             "submit_intent",
@@ -600,8 +609,9 @@ def _reconcile_locked(
                 stdout=detail.get("stdout", ""),
                 stderr=detail.get("stderr", ""),
                 value=detail.get("value"),
+                producer_digest=next((event.data.get("input_digest") for event in state.events if event.event == "created"), None),
             )
-        except MissingOutput as error:
+        except (MissingOutput, OutputDeclarationError, OSError) as error:
             # The work reported success but did not produce what it promised.
             # That is a failed invocation, not a successful one with a gap.
             journal.publish_terminal(

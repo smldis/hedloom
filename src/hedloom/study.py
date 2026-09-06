@@ -102,6 +102,12 @@ class StudyOutput:
         return self.outcome is not None and self.outcome.outcome == "succeeded"
 
     @property
+    def accessible(self) -> bool:
+        """Whether the recorded value/path is accessible now; no revision verification."""
+        from hedloom_exec.artifacts import artifact_accessible
+        return self.available and artifact_accessible(self.artifact)
+
+    @property
     def value(self) -> Any:
         """What this exported output port resolved to.
 

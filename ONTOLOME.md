@@ -49,7 +49,7 @@ shared execution evidence. Every submission requires a chosen name and separate
 Site history root. Permanent occurrences, saved Plans and readable scoped
 addresses preserve each consumer independently. Actual selection and workspace
 binding are published before blocking launch. A Session owns execution handles
-for compatible overlapping bound graphs; each consumer records its binding to
+for compatible ready invocations; each consumer records its binding to
 the handle and the worker publishes the selected try once. Exec owns selection
 accounting even when publication fails; Run adds consumer identity at reporting,
 without a per-invocation selection observer. Fresh-process readers
@@ -58,9 +58,9 @@ execution state and persistence completeness. Initial persistence failure refuse
 later failure continues computation with degraded history. Local subprocess
 barrier tests exercise both kernels. This does not establish real-farm or remote
 storage behavior, or settle wider inquiry ownership. Sharing is scoped to one
-Session and conservative whole-graph compatibility, including execution bindings
-and dependencies. A completed graph is not a result cache; later submissions
-re-enter Exec. This experience exposes execution ownership as part of the
+Session and conservative invocation compatibility after inputs resolve, including
+execution bindings and placement. Completed dispatches are not a result cache;
+later requests re-enter Exec. This experience exposes execution ownership as part of the
 Session's lifetime, rather than an incidental consequence of equal Dask keys.
 
 The unit studies whether one authoring file can connect a Plan to its execution
@@ -108,6 +108,17 @@ that would place each point on its own job as a comment rather than a claim.
 
 ## Current contracts
 
+Runtime-identified outputs test a narrower claim about composition: acquisition can
+be an ordinary operation without a second source lifecycle. The local Git
+A → A → B → A test exercises both kernels: separate observations can reuse the
+same analysis while preserving each consumer's candidate provenance. Plan schema
+4 declares execution mode and output identity; history schema 2 binds candidate
+inputs and dispatch together. Named returns replace whole-return projection.
+Borrowed locations remain externally owned, including after checkout mutation.
+The author guarantees identity and lifetime; present accessibility is a separate
+query and does not verify revision. General successful-result eviction remains
+outside the current collector. See docs/guide/runtime-artifacts.md.
+
 - Distribution: `hedloom`, Python 3.11 or newer, depending on `hedloom-flow`,
   `hedloom-exec` and `hedloom-run`. `distributed` remains optional and is reached only
   when a run is given a client.
@@ -129,7 +140,7 @@ that would place each point on its own job as a comment rather than a claim.
   `Workspace` addressing that attempt's own directory. Attribute access on the
   workspace resolves declared file and directory outputs only; the workspace
   itself is the attempt directory as an `os.PathLike`. A body that computes a
-  value returns it; a body that writes a filesystem artifact writes to
+  value returns a mapping under its declared output name; a body that writes a filesystem artifact writes to
   `out.<name>`.
 - `file(...)` and `directory(...)` state filesystem output shape independently
   of the artifact-contract `kind=` used to connect operations. Successful

@@ -21,7 +21,7 @@ from hedloom_run.site import Site, SiteError, fingerprint_file
 def read(model=None, **kwargs):
     """A source reference resolves to nothing here; the run still reads it."""
 
-    return "read"
+    return {"out": "read"}
 
 
 def transport():
@@ -30,7 +30,7 @@ def transport():
 
 def document(source_id="source:1"):
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "sources": [
             {
                 "id": source_id,

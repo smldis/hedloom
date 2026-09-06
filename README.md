@@ -191,7 +191,7 @@ when `bsub -I` returns:
   budget belongs to that cluster's workers, so `submit_all` cannot put more on
   the farm than the site declared however many studies it is given. Eight jobs
   are wanted, `max_jobs` is two, and no more than two are ever in flight.
-* **One session, the same study twice.** Compatible overlapping bound graphs
+* **One session, the same study twice.** Compatible ready invocations
   share Session-owned execution handles. Both submissions succeed and retain
   exact live history; completed evidence is still reused through Exec on later runs.
 * **Two sessions, the same study.** Different key namespaces, so both callers

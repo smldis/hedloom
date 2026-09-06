@@ -25,7 +25,7 @@ FARM = os.path.join(
 
 class Recorder(InProcessTransport):
     def __init__(self, name):
-        super().__init__({"work": lambda **kwargs: name})
+        super().__init__({"work": lambda **kwargs: {"out": name}})
         self.name = name
         self.seen = []
 
@@ -47,7 +47,7 @@ def invocation(key, policy):
 
 def document(*policies):
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "sources": [],
         "operations": [
             {"identity": {"name": "work", "version": "1"},
@@ -187,6 +187,7 @@ def test_an_authored_resource_need_survives_all_the_way_to_the_submission(
 
         root=str(tmp_path / "attempts"),
         commands={"work": ["/bin/echo", "ran"]},
+        outputs={"work": {"out": {"stream": "stdout"}}},
     )
 
     assert report.succeeded, report.summary()

@@ -136,8 +136,8 @@ neither re-implements nor overrides it.
 
 * the operation's name, version, and a fingerprint of its body's *source*;
 * every declared `config` value;
-* every declared input's own identity, **transitively** — an upstream change
-  propagates downstream automatically;
+* each input's selected artifact identity: producer identity propagates upstream
+  declaration changes, while explicit content/declared identity can stop them;
 * a declared external source's **content** fingerprint, so editing an input
   input file in place correctly invalidates everything that read it.
 

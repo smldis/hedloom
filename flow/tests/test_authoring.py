@@ -140,7 +140,7 @@ def test_directory_declares_filesystem_shape_separately_from_artifact_kind():
     assert output.artifact.kind == "report-bundle"
     assert plain_data(output.binding) == {
         "path": "bundle",
-        "filesystem_kind": "directory",
+        "filesystem_kind": "directory", "external": False, "identity": "producer",
     }
 
 

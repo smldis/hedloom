@@ -119,7 +119,7 @@ def test_a_job_first_seen_running_still_prints_a_queue_measurement(tmp_path, cap
 
 @operation(outputs={"value": returned()})
 def local_value():
-    return 7
+    return {'value': 7}
 
 
 @study(default_policy=local())
@@ -202,7 +202,7 @@ def wait_for_watcher():
         if time.monotonic() >= deadline:
             raise RuntimeError("the watcher never reached its injected reader")
         time.sleep(0.001)
-    return 41
+    return {'value': 41}
 
 
 @study(default_policy=local())

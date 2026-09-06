@@ -93,7 +93,7 @@ def estimate(result) -> float:
     text = Path(result).read_text().strip()
     if not text:
         raise ValueError(f"{result} carries no quadrature result to read")
-    return float(text)
+    return {'estimate': float(text)}
 
 
 @operation(inputs={"estimates": artifacts("integral-estimate")},
@@ -103,7 +103,7 @@ def compare(estimates: list) -> dict:
 
     exact = math.exp(-LOWER) - math.exp(-UPPER)
     errors = [abs(value - exact) for value in estimates]
-    return {
+    return {'verdict': {
         "exact": exact,
         "estimates": list(estimates),
         "worst_error_pct": max(error / exact * 100.0 for error in errors),
@@ -113,7 +113,7 @@ def compare(estimates: list) -> dict:
             for previous, current in zip(errors, errors[1:])
             if current > 0.0
         ],
-    }
+    }}
 
 
 @flow

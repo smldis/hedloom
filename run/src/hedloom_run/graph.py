@@ -1,63 +1,14 @@
-"""Readiness owned by Dask; placement still owned by the Plan.
+"""Admit ready invocations and execute them under declared placement capacity.
 
-One task per invocation, edges where one invocation's output feeds another's
-input. Dask decides what is ready and how much runs at once; it does not decide
-where anything runs, what an attempt's identity is, or whether work may be
-reused — those stay with the Plan and with `hedloom_exec`, exactly as they were
-under the sequential driver.
+Run resolves static dependencies on the controller and asks Exec to finalize
+identity before admitting each invocation. The Session owner joins compatible
+active work after that resolution. Waiting controllers occupy no worker slot.
+Dask executes ready tasks, each requesting its declared placement resource;
+sequential execution uses the same owner protocol without a scheduler.
 
-The invariant this kernel must not break:
-
-    Changing which kernel decides readiness changes how long a plan takes and
-    nothing else — the same results, under the same identities.
-
-The binding rules it obeys are therefore imported from `hedloom_run.binding` rather
-than restated here.
-
-**Cluster shape matters, and the recommended one is unusual.** Build it from
-the site profile, which is the only shape this kernel accepts:
-
-    from hedloom_run.cluster import cluster_for
-    cluster = cluster_for(site)
-
-That gives one in-process worker per placement, each holding threads that
-belong to that placement alone. Every task submitted here is annotated with the
-placement its invocation already resolved to, so a worker's threads can only be
-spent on the work they were sized for.
-
-The annotation is not a refinement, it is the mechanism. A task that requests no
-resource is legal on *every* worker, and Dask will place it on whichever looks
-least busy and later **steal** it onto whichever falls idle — always the worker
-sized for a large farm cap. A local invocation then holds a thread meant for a
-`bsub -I`, and a farm job waits behind a python function with its capacity
-unused. Annotating only the farm tasks does not prevent this; annotating all of
-them makes it unrepresentable.
-
-Three measured reasons for the rest of the shape, recorded in
-`docs/vision/open-concepts.md`:
-
-* An invocation waiting on `bsub -I` costs about 16 KiB of thread and one
-  client process. A worker's thread count is therefore not a statement about
-  this host's CPUs but about how many jobs may be in flight, which is why it is
-  *derived* from the placement's declared cap rather than configured beside it:
-  the two are independent gates and the smaller binds silently.
-* Nothing secedes. A worker holding live `bsub -I` clients should read as
-  running, and `secede()` would report it idle by excluding the task from the
-  parallelism count.
-* Threads avoid supervision and duplication, not serialization. A nanny that
-  restarts a worker under memory pressure would take that worker's blocked
-  clients with it — and, under owner-bound lifetime, that many running farm
-  jobs. Measured, though, and worth knowing: Dask serializes every task even on
-  an in-process cluster, so a **transport always travels as a copy**, never as
-  a shared live object. Ours are effectively stateless per submission, so a
-  copy is correct. A transport that must be a singleton — a pooled one holding
-  a client to a second cluster — cannot be passed this way and will need a
-  factory constructed on the worker.
-
-A failed invocation blocks its dependents by returning a blocked outcome, not
-by raising. Independent branches continue: one point failing does not abandon
-the other forty-nine, which is what a sweep wants and what the sequential
-driver could not offer.
+A handle gates cancellation and entry and can enter Exec only once. Consumer
+reports project shared execution evidence onto their own authored invocations.
+Result-dependent branching, retries and fallback are not introduced here.
 """
 
 from __future__ import annotations
@@ -70,7 +21,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from hedloom_exec.attempt import AttemptError
 from hedloom_exec.durability import Durability, execute
-from hedloom_exec.planned import PlannedInvocation, plan_bundles
+from hedloom_exec.planned import PlannedInvocation, prepare_invocations, finalize_invocation
 from hedloom_exec.transport import Transport, TransportError
 
 from hedloom_run.binding import (
@@ -180,7 +131,7 @@ class _Step:
     """
 
     outcome: InvocationOutcome
-    produced: Mapping[str, Any] = field(default_factory=dict)
+    produced: Mapping[Any, Any] = field(default_factory=dict)
 
 
 def _outcome(
@@ -263,7 +214,7 @@ def _run_one_here(
             )
         )
 
-    bundle = build_bundle(
+    bundle = dict(item.bundle) if "resolved_inputs" in item.bundle else build_bundle(
         item,
         produced=produced,
         placement_name=placement_name,
@@ -294,7 +245,7 @@ def _run_one_here(
             )
         )
 
-    contributed = produced_by(item, result) if result.outcome == "succeeded" else {}
+    contributed = produced_by(item, result, root=config.root) if result.outcome == "succeeded" else {}
     return _Step(
         InvocationOutcome(
             invocation_id=item.invocation_id,
@@ -504,14 +455,6 @@ def _task_key(item: PlannedInvocation) -> str:
     return f"{item.operation}-{name}-{item.input_digest[:8]}"
 
 
-@dataclass(frozen=True, slots=True)
-class _Stop:
-    """The futures whose real outcomes survive a stop-admission decision."""
-
-    preserved: tuple[Any, ...]
-    in_flight: tuple[str | None, ...]
-
-
 def _blocked(item: PlannedInvocation) -> _Step:
     return _Step(_outcome(item, disposition="skipped", outcome="blocked",
         block_reason="stopped before admission"))
@@ -537,128 +480,6 @@ def _report(
     return RunReport(tuple(completed[item.invocation_id].outcome for item in items))
 
 
-def _executing_keys(client: Any) -> set[str]:
-    """Task keys with live Python stacks, not merely assigned to a worker.
-
-    Named for the answer because Dask's own name for the nearby question is
-    misleading: `Client.processing()` reports what the scheduler has *handed
-    to* a worker, queued work included, and every task here is annotated, so
-    root-task queuing is bypassed and the whole graph is assigned at once.
-    Eight tasks on a two-thread worker report eight "processing" and two call
-    stacks. See `docs/dask-scheduling-rules.md` R10 before changing this.
-    """
-
-    return {
-        key
-        for tasks in (client.call_stack() or {}).values()
-        for key in tasks
-    }
-
-
-def _stop_admitting(
-    *,
-    client: Any,
-    items: Sequence[PlannedInvocation],
-    futures: Mapping[str, Any],
-    completed: dict[str, _Step],
-    on_event: Callable[[InvocationOutcome], None] | None,
-    notify: bool,
-) -> _Stop:
-    """Cancel work without a live stack and preserve work already executing."""
-
-    by_id = {item.invocation_id: item for item in items}
-    executing = _executing_keys(client)
-    outstanding = {
-        invocation_id: future
-        for invocation_id, future in futures.items()
-        if invocation_id not in completed
-    }
-    in_flight = {
-        invocation_id: future
-        for invocation_id, future in outstanding.items()
-        if future.key in executing
-    }
-    finished = {
-        invocation_id: future
-        for invocation_id, future in outstanding.items()
-        if future.done() and invocation_id not in in_flight
-    }
-    cancelled = {
-        invocation_id: future
-        for invocation_id, future in outstanding.items()
-        if invocation_id not in in_flight and invocation_id not in finished
-    }
-
-    if cancelled:
-        # A task can acquire a thread after the stack snapshot but before this
-        # call. Dask cannot interrupt that Python thread: its `bsub -I` runs to
-        # completion and its journal is published normally.
-        #
-        # DEVNOTE -- 2026-08-17, from the TLA+ model in `docs/stop-admitting/`.
-        # The loss is not just this run report's line for it: the line is
-        # *false*. `blocked` says the work was never attempted, which is what
-        # makes a rerun look free, while the attempt record says it ran. Two
-        # artifacts of one run contradict each other and the durable one is the
-        # one not being read. TLC reaches it in seven states.
-        #
-        # The window cannot be closed from here -- there is no
-        # cancel-if-not-started, and after this call a future reports
-        # `cancelled` either way, so the classification cannot be recovered
-        # afterwards from Dask either. Both the classification *and* the
-        # outcome have to come from the attempt record: the model shows that
-        # fixing only the classification reports a succeeded invocation as failed,
-        # because `_collect_preserved` reads a future this call destroyed.
-        #
-        # Which this kernel cannot do yet, because it cannot name the attempt:
-        # `execute` derives the record identity and allocates its try on the worker.
-        # The proposed change is `design/binding-the-attempt-identity.md`; read it
-        # and `docs/stop-admitting-protocol.md` before changing any of this.
-        client.cancel(list(cancelled.values()), force=False)
-        for item in items:
-            if item.invocation_id not in cancelled:
-                continue
-            step = _blocked(item)
-            completed[item.invocation_id] = step
-            if notify and on_event:
-                on_event(step.outcome)
-
-    return _Stop(
-        preserved=tuple([*finished.values(), *in_flight.values()]),
-        in_flight=tuple(
-            by_id[invocation_id].authored_key for invocation_id in in_flight
-        ),
-    )
-
-
-def _collect_preserved(
-    futures: Sequence[Any],
-    *,
-    client: Any,
-    by_future_key: Mapping[str, PlannedInvocation],
-    completed: dict[str, _Step],
-    on_event: Callable[[InvocationOutcome], None] | None,
-    notify: bool,
-    suppress_errors: bool,
-) -> None:
-    """Wait for admitted tasks; cleanup may record but never replace an error."""
-
-    from distributed import as_completed
-
-    deferred: BaseException | None = None
-    for future in as_completed(list(futures), loop=client.loop):
-        item = by_future_key[future.key]
-        try:
-            step = future.result()
-        except BaseException as error:
-            step = _abnormal(item, error)
-            deferred = deferred or error
-        completed[item.invocation_id] = step
-        if notify and on_event:
-            on_event(step.outcome)
-    if deferred is not None and not suppress_errors:
-        raise deferred
-
-
 def _run_handle(handle, item, available, config, *upstream):
     if not handle.enter():
         return _blocked(item)
@@ -681,111 +502,166 @@ def _run_handle(handle, item, available, config, *upstream):
     return step
 
 
-def _graph_contract(items, available, config):
-    """Conservative whole-bound-graph equality, independent of consumer names."""
+def _execution_contract(item, available, config):
+    """Binding compatibility is stronger than declared computation equivalence."""
     import cloudpickle
     from hashlib import sha256
-
-    positions = {item.invocation_id: index for index, item in enumerate(items)}
-    declarations = [(item.operation, item.input_digest, dict(item.bundle),
-                     dict(item.policy), item.output_names,
-                     tuple(positions[dep] for dep in item.depends_on)) for item in items]
-    # A serialization mismatch only prevents sharing. Never fall back to a
-    # computation digest: equal computations can have incompatible bindings.
-    return sha256(cloudpickle.dumps((declarations, available, config.root,
-        config.workspace_root, config.outputs, dict(config.sources)))).digest()
+    from pathlib import Path
+    _, transport = select_transport(item, available)
+    binding = transport.execution_contract(item.operation) if hasattr(transport, 'execution_contract') else transport
+    return sha256(cloudpickle.dumps((item.input_digest, binding, dict(item.policy),
+        str(Path(config.root).resolve()), str(Path(config.workspace_root).resolve()) if config.workspace_root else None,
+        config.outputs))).digest()
 
 
-def _run_owned_graph(items, available, config, client, owner, bind, on_event, stop_on_failure):
-    from distributed import as_completed
+def _run_ready(items, available, config, client, owner, bind, on_event, stop_on_failure):
+    """Admit static dependencies from the controller after their identities resolve.
+
+    Waiting/joining consumes no placement slot. Both kernels use this owner
+    protocol; only the graph kernel submits ready executions to Dask.
+    """
+    from concurrent.futures import Future
+    from pathlib import Path
     from uuid import uuid4
+    from time import sleep
+    from hedloom_run.execution import ExecutionOwner, ExecutionHandle
 
-    if bind is None:
-        raise ValueError('owned execution requires a durable consumer binding callback')
+    owner = owner or ExecutionOwner(Path(config.root).resolve() / '.executions')
     token = uuid4().hex
-    completed = {}
-    by_id = {item.invocation_id: index for index, item in enumerate(items)}
-    group = []
-    normal = False
+    completed, active = {}, {}
+    produced = dict(config.sources)
+    remaining = list(items)
+    stopped = False
+    in_flight = []
 
-    def save(index, step, notify=True):
-        item = items[index]
+    def save(item, step, notify=True):
         outcome = replace(step.outcome, invocation_id=item.invocation_id,
-                          authored_key=item.authored_key)
-        if outcome.outcome == 'blocked' and outcome.block_reason and outcome.block_reason.startswith('dependency failure:'):
-            outcome = replace(outcome, block_reason='dependency failure')
-        completed[item.invocation_id] = replace(step, outcome=outcome)
+                          authored_key=item.authored_key, operation=item.operation)
+        contributed = produced_by(item, outcome, root=config.root) if outcome.outcome == 'succeeded' else {}
+        completed[item.invocation_id] = _Step(outcome, contributed)
+        produced.update(contributed)
         if notify and on_event:
             on_event(outcome)
 
-    def collect(index, notify=True, suppress=False):
+    def collect(identifier, notify=True):
+        entry, item, consumer = active.pop(identifier)
         try:
-            step = group[index].future.result()
-        except BaseException as error:
-            save(index, _abnormal(items[index], error), notify=notify)
-            if not suppress:
+            try:
+                step = entry.future.result()
+            except BaseException as error:
+                save(item, _abnormal(item, error), notify)
                 raise
-        else:
-            save(index, step, notify=notify)
+            save(item, step, notify)
+        finally:
+            owner.release(entry, consumer)
 
-    def stop(notify):
+    def withdraw(notify):
         preserved = []
-        for index, item in enumerate(items):
-            if item.invocation_id in completed:
-                continue
-            entry = group[index]
-            decision = owner.withdraw(entry, token)
-            if decision == 'preserve' and entry.future is not None:
-                preserved.append(index)
-            elif decision == 'withdrawn':
-                save(index, _Step(_outcome(item, disposition='withdrawn', outcome='cancelled',
-                    block_reason='consumer withdrew; shared execution belongs to remaining consumers')),
-                    notify=notify)
+        for identifier, (entry, item, consumer) in list(active.items()):
+            decision = owner.withdraw(entry, consumer)
+            if decision == 'preserve':
+                if not entry.future.done():
+                    in_flight.append(item.authored_key)
+                preserved.append(identifier)
             else:
-                save(index, _blocked(item), notify=notify)
-        return preserved
+                active.pop(identifier)
+                step = (_Step(_outcome(item, disposition='withdrawn', outcome='cancelled',
+                        block_reason='consumer withdrew; shared execution belongs to remaining consumers'))
+                        if decision == 'withdrawn' else _blocked(item))
+                try:
+                    save(item, step, notify)
+                finally:
+                    owner.release(entry, consumer)
+        for item in remaining:
+            save(item, _blocked(item), notify)
+        remaining.clear()
+        # Gate every abandoned pending execution before waiting on entered work.
+        errors = []
+        for identifier in preserved:
+            try:
+                collect(identifier, notify)
+            except BaseException as error:
+                errors.append(error)
+        if errors:
+            raise errors[0]
 
     try:
-        with owner.lock:
-            group = owner.group(_graph_contract(items, available, config), len(items), client)
-            # All consumer bindings are durable before this submission admits
-            # any new task. No partial initialization starts a partial graph.
-            for item, entry in zip(items, group):
-                bind(item.invocation_id, entry.handle)
-            for entry in group:
-                entry.consumers.add(token)
-            for item, entry in zip(items, group):
-                if entry.future is None:
-                    entry.future = client.submit(_run_handle, entry.handle, item, available, config,
-                        *(group[by_id[dep]].future for dep in item.depends_on),
-                        key=f'{_task_key(item)}-{entry.handle.execution_id}',
-                        resources=_admission(item, available), pure=False, retries=0)
-        indices = {entry.future.key: index for index, entry in enumerate(group)}
-        for future in as_completed([entry.future for entry in group], loop=client.loop):
-            index = indices[future.key]
-            collect(index)
-            if stop_on_failure and completed[items[index].invocation_id].outcome.outcome != 'succeeded':
-                for pending in stop(True):
-                    collect(pending)
+        while remaining or active:
+            for identifier, (entry, item, consumer) in list(active.items()):
+                if entry.future.done():
+                    collect(identifier)
+                    if completed[identifier].outcome.outcome != 'succeeded':
+                        stopped = stopped or stop_on_failure
+            if stopped:
+                withdraw(True)
                 break
-        normal = True
-    finally:
-        if not normal and group:
-            error = sys.exc_info()[1]
-            try:
-                for pending in stop(False):
-                    collect(pending, notify=False, suppress=True)
-            except BaseException as cleanup_error:
-                if error is not None:
-                    error.cleanup_error = cleanup_error
-            if error is not None:
-                for item in items:
-                    completed.setdefault(item.invocation_id, _blocked(item))
-                error.report = _report(items, completed)
-                error.in_flight = tuple(items[index].authored_key for index, entry in enumerate(group)
-                    if entry.future is not None and not entry.future.done())
-        if group:
-            owner.release(group, token)
+            for spec in list(remaining):
+                if client is None and active:
+                    break
+                if not all(dep in completed for dep in spec.depends_on):
+                    continue
+                remaining.remove(spec)
+                if any(completed[dep].outcome.outcome != 'succeeded' for dep in spec.depends_on):
+                    save(spec, _Step(_outcome(spec, disposition='skipped', outcome='blocked', block_reason='dependency failure')))
+                    continue
+                fresh_handle = ExecutionHandle.create(owner.root) if spec.execution == 'each_submission' else None
+                item = finalize_invocation(spec, produced, fresh_handle.execution_id if fresh_handle else None)
+                try:
+                    placement, chosen = select_transport(item, available)
+                except UnsupportedPlacement as error:
+                    if fresh_handle is not None:
+                        fresh_handle.cancel_before_start()
+                    save(item, _Step(_outcome(item, disposition='refused', outcome='failed', error=str(error))))
+                    stopped = stop_on_failure
+                    if stopped:
+                        break
+                    continue
+                bundle = build_bundle(item, produced=produced, placement_name=placement,
+                                      transport=chosen, outputs=config.outputs)
+                item = replace(item, bundle=bundle)
+                consumer = f'{token}:{spec.invocation_id}'
+                leader = False
+                with owner.lock:
+                    entry = owner.entry(_execution_contract(item, available, config), client, fresh_handle)
+                    try:
+                        if bind:
+                            bind(spec.invocation_id, entry.handle, bundle['input_evidence'])
+                    except BaseException:
+                        if not entry.consumers:
+                            entry.handle.cancel_before_start()
+                            owner.release(entry, consumer)
+                        raise
+                    entry.consumers.add(consumer)
+                    active[item.invocation_id] = (entry, item, consumer)
+                    if entry.future is None:
+                        if client is None:
+                            entry.future = Future()
+                            leader = True
+                        else:
+                            entry.future = client.submit(_run_handle, entry.handle, item, available, config,
+                                key=f'{_task_key(item)}-{entry.handle.execution_id}',
+                                resources=_admission(item, available), pure=False, retries=0)
+                if leader:
+                    try:
+                        entry.future.set_result(_run_handle(entry.handle, item, available, config))
+                    except BaseException as error:
+                        entry.future.set_exception(error)
+                if client is None:
+                    collect(item.invocation_id)
+                    stopped = stop_on_failure and completed[item.invocation_id].outcome.outcome != 'succeeded'
+                    break
+            if active:
+                sleep(0.01)
+    except BaseException as error:
+        try:
+            withdraw(False)
+        except BaseException as cleanup_error:
+            error.cleanup_error = cleanup_error
+        for item in items:
+            completed.setdefault(item.invocation_id, _blocked(item))
+        error.report = _report(items, completed)
+        error.in_flight = tuple(in_flight)
+        raise
     return _report(items, completed)
 
 
@@ -861,115 +737,14 @@ def _run_plan_graph(
         sources=dict(source_addresses or {}),
     )
 
-    items = plan_bundles(
+    items = prepare_invocations(
         document,
         commands=commands,
+        outputs=outputs,
         identity_env=identity_env,
         source_fingerprints=source_fingerprints,
     )
     _require_admission(client, items, available)
     _require_nesting_headroom(client, items, available)
-    if execution_owner is not None:
-        return _run_owned_graph(items, available, config, client, execution_owner,
-                                on_execution, on_event, stop_on_failure)
-    futures: dict[str, Any] = {}
-    taken: set[str] = set()
-    from uuid import uuid4
-    # Sharing requires an explicit owner. A Client alone grants no common
-    # consumer lifetime, even when two readable task keys happen to coincide.
-    submission_namespace = uuid4().hex
-    for item in items:
-        # Two tasks sharing a key would be one task to Dask, and one of the two
-        # invocations would never run. Readable first, unique always.
-        key = f"{_task_key(item)}-{submission_namespace}"
-        while key in taken:
-            key = f"{key}.{len(taken)}"
-        taken.add(key)
-        futures[item.invocation_id] = client.submit(
-            _run_one,
-            item,
-            available,
-            config,
-            *(futures[dependency] for dependency in item.depends_on),
-            key=key,
-            # The worker this may run on, which is the worker whose threads
-            # belong to this invocation's placement. Not a hint: an
-            # unannotated task is legal everywhere and gets moved.
-            resources=_admission(item, available),
-            # Side-effecting work with a durable record of its own. Dask must
-            # not decide two invocations are the same call and run one; reuse
-            # is `hedloom_exec`'s decision, made against declared inputs.
-            pure=False,
-        )
-
-    by_future_key = {
-        future.key: item
-        for item in items
-        for future in (futures[item.invocation_id],)
-    }
-    completed: dict[str, _Step] = {}
-    known_in_flight: tuple[str | None, ...] = ()
-    normal_exit = False
-    try:
-        for future in as_completed(list(futures.values()), loop=client.loop):
-            step = future.result()
-            completed[step.outcome.invocation_id] = step
-            if on_event:
-                on_event(step.outcome)
-            if stop_on_failure and step.outcome.outcome != "succeeded":
-                stopped = _stop_admitting(
-                    client=client,
-                    items=items,
-                    futures=futures,
-                    completed=completed,
-                    on_event=on_event,
-                    notify=True,
-                )
-                known_in_flight = stopped.in_flight
-                _collect_preserved(
-                    stopped.preserved,
-                    client=client,
-                    by_future_key=by_future_key,
-                    completed=completed,
-                    on_event=on_event,
-                    notify=True,
-                    suppress_errors=False,
-                )
-                break
-        normal_exit = True
-    finally:
-        if not normal_exit:
-            error = sys.exc_info()[1]
-            try:
-                stopped = _stop_admitting(
-                    client=client,
-                    items=items,
-                    futures=futures,
-                    completed=completed,
-                    on_event=on_event,
-                    notify=False,
-                )
-                known_in_flight = tuple(
-                    dict.fromkeys([*known_in_flight, *stopped.in_flight])
-                )
-                _collect_preserved(
-                    stopped.preserved,
-                    client=client,
-                    by_future_key=by_future_key,
-                    completed=completed,
-                    on_event=on_event,
-                    notify=False,
-                    suppress_errors=True,
-                )
-            except BaseException as cleanup_error:
-                if error is None:
-                    raise
-                error.cleanup_error = cleanup_error
-
-            for item in items:
-                completed.setdefault(item.invocation_id, _blocked(item))
-            if error is not None:
-                error.report = _report(items, completed)
-                error.in_flight = known_in_flight
-
-    return _report(items, completed)
+    return _run_ready(items, available, config, client, execution_owner,
+                      on_execution, on_event, stop_on_failure)

@@ -56,6 +56,7 @@ Three ideas carry the rest of this documentation:
 | find a run or inspect its live workspace | [Run discovery](guide/discovery.md) |
 | run one, or several, or debug one | [Running a study](guide/running.md) |
 | point it at a farm, or tune concurrency | [Sites and placements](guide/sites.md) |
+| acquire fresh inputs and reuse unchanged analysis | [Runtime artifact identity](guide/runtime-artifacts.md) |
 | read results, or understand what gets reused | [Results, reuse, and looking before you run](guide/results.md) |
 | spend real queue time for the first time | [Your first run on a real farm](guide/first-farm-run.md) |
 | find out what an error is telling you | [Refusals you will actually meet](guide/refusals.md) |
@@ -78,10 +79,9 @@ printed output is real.
   controllers, want the farm at once, measured from the attempt journals.
 * [`examples/live_source.py`](../examples/live_source.py) — a study that
   reads something served from outside it, re-read on every run: a
-  nonce-bearing stage fetches unconditionally and then submits an inner plan
-  whose declared source is fingerprinted by content, so an unchanged document
-  reuses everything below it and a changed one reuses nothing. Both stages
-  share one session, which is what keeps one budget open rather than two.
+  fresh operation fetches on each submission and publishes a content-identified
+  file. Equal bytes reuse downstream work within the same static Plan; changed
+  bytes invalidate it. It needs one placement slot and no nested session.
 * [`examples/retention.py`](../examples/retention.py) — what storage a study
   spends and when it can be taken back: two points diverge, a second pass runs
   the corrections as their own computations, and the survey's promised byte
@@ -107,6 +107,7 @@ one level up from this package, and are where hedloom is exercised hardest.
 :caption: Using Hedloom
 
 guide/authoring
+guide/runtime-artifacts
 guide/running
 guide/discovery
 guide/sites

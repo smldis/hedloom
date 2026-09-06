@@ -40,6 +40,13 @@ open hypothesis, not settled by retaining the instrument inside this unit.
 
 ## Current contracts
 
+Runtime identity sharpens the boundary between a static Plan and execution:
+Flow fixes topology, placement, execution mode, and output identity/ownership;
+exact downstream computation identities may become known later. The authoring
+surface supports producer identity by default, owned-file content identity, and
+filesystem declared identity. Borrowed declarations require declared identity
+and omit a workspace path. Unsupported combinations refuse during declaration.
+
 Authored operations and flow boundaries always resolve readable keys: explicit,
 then existing operation sweep spelling, then `function_name.N` per boundary and
 function name. Explicit/generated collisions refuse in either order; distinct
@@ -74,11 +81,9 @@ or execution identity.
 - Plan IR is immutable, validates operation bindings and artifact dependencies,
   preserves nested flow boundaries, and provides deterministic plain-data and
   JSON inspection.
-- The emitted Plan schema is **3**, and it is the one version a `Plan` will
-  validate: a document declaring anything else is refused by version rather
-  than read as though the difference did not matter. Consumers may be wider —
-  `hedloom_exec.plan_bundles` accepts 2 and 3 — because a durable record
-  outlives the schema the document that produced it was written at.
+- Plan schema **4** is the only supported Plan format. It declares operation
+  execution mode and output identity/ownership. No legacy Plan reader or migration
+  is provided. Runtime identity does not change static graph shape or placement.
 - `address(...)` declares an opaque source address as canonical data.
   `input_artifact(address, artifact=...)` records an external source without
   resolving, reading, or decoding it. A source is identified by exactly those
