@@ -13,7 +13,7 @@ from hedloom.history import HistoryError, HistoryWriter, read_events, publish, p
 
 @operation(outputs={'answer': returned()})
 def answer():
-    return None
+    return {'answer': None}
 
 
 @study(name='definition')
@@ -80,7 +80,9 @@ def test_separate_histories_reuse_exact_reference_and_none(tmp_path):
     assert second['renamed'].reused
     history = RunHistory(site.history_root)
     assert [row.run_id for row in history.list_runs(name='chosen')] == ['chosen.2', 'chosen.1']
-    assert history.outputs(first.run_id) == {'output': {'available': True, 'value': None}}
+    saved = history.outputs(first.run_id)['output']
+    assert saved['available'] and saved['accessible'] and saved['value'] is None
+    assert saved['artifact']['identity'] == first['answer.1'].artifacts['answer']['identity']
     assert first.history.status == second.history.status == 'complete'
     before = {str(path): path.stat().st_mtime_ns for path in tmp_path.rglob('*')}
     history.read_run(first.run_id)

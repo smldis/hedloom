@@ -128,15 +128,15 @@ correct, stable keys from one `key=` argument.
 Dependency edges get the same treatment: when both endpoints are keyed, the edge
 ID is derived from the endpoints (`_stable_edge_id`), not from a counter.
 
-**3. Input digest** — content, at binding time
-(`plan_bundles`, `exec/src/hedloom_exec/planned.py:192`). For each invocation, in
-deterministic topological order, a bundle is hashed:
+**3. Input digest** — selected identities, at readiness. `prepare_invocations`
+keeps symbolic output references separate from identity. `finalize_invocation`
+hashes the bundle once the invocation's selected input identities are known:
 
 | In the digest | Not in the digest |
 | --- | --- |
 | operation name + version | **placement** (`local` / `lsf` / `pooled`) |
 | config arguments | `max_jobs`, queue, cores, memory |
-| resolved input identities (`output:<producer-digest>:<name>`, `source:<digest>`) | which kernel ran it |
+| selected input identities (producer, content, declared, or source) | which kernel ran it |
 | declared output bindings (paths and filesystem shapes) | wall-clock, process, transport handle |
 | **implementation fingerprint** — blake2b of the body's source | try number (that's separate) |
 | the `shell` command, `identity_env` | |
@@ -147,8 +147,10 @@ required (`_implementation_of`, `authoring.py:420`). And moving an operation fro
 `local()` to `lsf()` reuses everything it already produced, because placement is
 about *how* work runs, never *what it means*.
 
-Digests chain: a producer's digest is part of its consumer's inputs, so one
-changed point invalidates exactly its own downstream cone and nothing sideways.
+Producer-mode digests chain conservatively. Content/declared output identities
+instead let an unchanged artifact stop upstream changes propagating. Fresh
+operations include their durable observation identifier in their own digest;
+that identifier does not reach consumers of explicitly identified artifacts.
 
 **4. Record identity and try name** — the durable names
 (`exec/src/hedloom_exec/identity.py`):
@@ -183,11 +185,10 @@ fallback would look content-addressed without being it.
 
 What equal identity asserts is equal *declared* computational dependencies,
 under the author's existing responsibility to declare them faithfully — not
-semantic equivalence, source immutability, or determinism. An intentional
-independent repetition has to declare a distinction such as a seed; renaming
-does not request one. Exec itself does not coalesce simultaneous calls: its
+semantic equivalence, source immutability, or determinism. An intentional independent observation uses `execution="each_submission"`;
+renaming alone does not request one. Exec itself does not coalesce simultaneous calls: its
 claim refuses the loser by name (see [the claim protocol](attempt-claim-protocol.md)).
-A Session can share one call among consumers of compatible active bound graphs
+A Session can share one call among consumers of compatible active invocations
 through Run-owned execution handles. Independent Sessions retain Exec's claim
 behavior. The shared handle records the selected try once; each consumer's
 history records its own durable binding to that handle.
@@ -206,32 +207,25 @@ time, records written under an older rendering stopped being *selected*: layout
 1 is unchanged, so they remain readable and scannable, they are simply not
 reused. This prototype provides no migration and needs none.
 
-### Execution — readiness is the only thing the kernel owns
+### Execution — resolve, bind, admit
 
-`Study._run` (`study.py:175`) binds transports per placement, computes source
-fingerprints, and hands the plain document to one of two kernels:
+The facade saves the complete static Plan and binds implementations and Site
+sources. Run prepares symbolic invocations. As dependencies succeed, Exec's
+finalizer computes the next invocation's identity from the selected artifacts.
+Run saves that consumer's resolved inputs and execution handle before admission.
 
-- `run_plan` — a sequential loop, no cluster, which is what keeps `distributed`
-  an optional extra;
-- `run_plan_graph` (`run/src/hedloom_run/graph.py`) — one Dask task per
-  invocation, edges where outputs feed inputs.
+One Session-owned table joins compatible active invocations. Sequential execution
+uses an in-process completion; the graph kernel submits ready work to Dask with
+its declared placement resource. A joining controller waits without occupying a
+worker slot. Each consumer projects the shared result onto its own invocation.
 
-The invariant the graph kernel is written against, stated in its own module
-docstring:
+Cancellation gates all abandoned pending executions before waiting on entered
+ones. Failures block dependents; `stop_on_failure` additionally stops new work in
+independent branches. Entry cannot replay Exec. The complete Plan is static even
+though downstream identities become known during execution.
 
-> Changing which kernel decides readiness changes how long a plan takes and
-> nothing else — the same results, under the same identities.
-
-The cluster shape is unusual and deliberate: one in-process worker per
-placement, each worker's thread count *derived* from that placement's declared
-`max_jobs`, and **every** task annotated with its placement resource. Annotating
-only the farm tasks would not work — an unannotated task is legal on every
-worker and Dask will steal it onto whichever falls idle, so a local invocation
-ends up holding a thread that was sized for a `bsub -I`. Annotating all of them
-makes that unrepresentable.
-
-A failed invocation returns a blocked outcome rather than raising, so one point
-failing does not abandon the other forty-nine.
+See [runtime artifact identity](../guide/runtime-artifacts.md) for acquisition,
+output equivalence, provenance, ownership, and current limits.
 
 ---
 
@@ -249,7 +243,7 @@ failing does not abandon the other forty-nine.
 | **Reuse across processes** | **yes** — content-addressed record on disk, with manifests | no — results live in worker memory | no | partial, by directory and explicit resume flag | no |
 | **Edited body invalidates** | **yes** — source fingerprint is in the digest | n/a (nothing to invalidate) | retraces, but nothing to reuse anyway | no — a changed script does not invalidate a run dir | no |
 | **Data-dependent branching** | **refused by construction** (handles raise on `__bool__`) | not in-graph; recompute and rebuild | yes — autograph lowers to `tf.cond`/`tf.while_loop` | steps are sequential; a step may act on prior metrics | no; the grid is declared |
-| **Who decides readiness** | Dask, or a sequential loop — **swappable, no result change** | Dask scheduler | TF runtime + Grappler | the flow, in order | a local job queue |
+| **Who decides readiness** | Run controller admission; sequential or Dask execution | Dask scheduler | TF runtime + Grappler | the flow, in order | a local job queue |
 | **Who decides placement** | the **Plan** (per-invocation policy), never the scheduler | scheduler, hinted by `resources=` / `workers=` | placer, with `tf.device` as a *soft* hint | the host it runs on | the host it runs on |
 | **HPC / batch** | first-class: `lsf()` per invocation, `pooled()` for shared workers, job name = record + try | via `dask-jobqueue` (workers are batch jobs, tasks are not) | no | no | no |
 | **Sweeps** | `sweep(points, key=...)` — a keyed scope, keys derived per point | a list comprehension; keys come from token hashing | vectorization / `vmap`-style batching | not a concept | **declared conditions grid** — its native idiom |

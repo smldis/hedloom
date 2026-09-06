@@ -49,6 +49,7 @@ TERMINAL_OUTCOMES = frozenset({"succeeded", "failed", "cancelled", "unreconciled
 _EVENTS = frozenset(
     {
         "created",
+        "inputs_bound",
         "try_started",
         "submit_intent",
         "submit_receipt",

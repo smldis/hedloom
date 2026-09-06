@@ -348,7 +348,7 @@ def address(address_space: str, locator: str) -> ArtifactAddress:
 
 
 
-def file(path: str, *, kind: str = "file") -> _DeclaredOutput:
+def file(path: str | None = None, *, kind: str = "file", identity: str = "producer", external: bool = False) -> _DeclaredOutput:
     """An output the work writes, at ``path`` inside its own workspace.
 
     Declared where the operation is authored rather than supplied wherever it
@@ -357,10 +357,10 @@ def file(path: str, *, kind: str = "file") -> _DeclaredOutput:
     resolving to nothing.
     """
 
-    return _DeclaredOutput(artifact(kind), {"path": path})
+    return _filesystem_output(path, kind, "file", identity, external)
 
 
-def directory(path: str, *, kind: str = "directory") -> _DeclaredOutput:
+def directory(path: str | None = None, *, kind: str = "directory", identity: str = "producer", external: bool = False) -> _DeclaredOutput:
     """A directory tree the work writes inside its own workspace.
 
     ``kind`` is the artifact-contract label used to connect operations. The
@@ -369,9 +369,26 @@ def directory(path: str, *, kind: str = "directory") -> _DeclaredOutput:
     directory at capture time.
     """
 
-    return _DeclaredOutput(
-        artifact(kind), {"path": path, "filesystem_kind": "directory"}
-    )
+    return _filesystem_output(path, kind, "directory", identity, external)
+
+
+def _filesystem_output(path, kind, shape, identity, external):
+    if identity not in {"producer", "declared", "content"}:
+        raise AuthoringError(f"unknown output identity {identity!r}")
+    if identity == "content" and (shape != "file" or external):
+        raise AuthoringError("content identity requires an owned file")
+    if external:
+        if path is not None or identity != "declared":
+            raise AuthoringError("external outputs require declared identity and no workspace path")
+    elif not isinstance(path, str) or not path:
+        raise AuthoringError("owned outputs require a workspace-relative path")
+    binding = {"filesystem_kind": shape, "identity": identity, "external": external}
+    if path is not None:
+        from pathlib import PurePosixPath
+        if PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts:
+            raise AuthoringError("owned output path must stay inside its workspace")
+        binding["path"] = path
+    return _DeclaredOutput(artifact(kind), binding)
 
 
 def stdout(*, kind: str = "text") -> _DeclaredOutput:
@@ -471,6 +488,7 @@ def operation(
     policy: Policy | None = None,
     name: str | None = None,
     version: str = "1",
+    execution: str = "reuse",
 ) -> Callable[[Callable[..., Any]], Operation]:
     """Decorate an operation body as immutable planning metadata.
 
@@ -512,6 +530,7 @@ def operation(
         )
         definition = OperationDefinition(
             identity=identity,
+            execution=execution,
             inputs=tuple(
                 InputContract(
                     item_name,

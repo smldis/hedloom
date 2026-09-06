@@ -62,6 +62,18 @@ its siblings are reused and the earlier results keep their own records.
 
 ## Current contracts
 
+Output identity now includes an explicit choice: economical producer identity,
+full-byte content hashing for owned files, or canonical author-declared identity
+for filesystem outputs. Manifests retain identity and workspace/borrowed ownership.
+Named returned values are captured individually and required missing names fail.
+Borrowed payloads are never traversed for inventory, copied, frozen or deleted by
+capture/retention; reuse checks accessibility without verifying the identity claim.
+Each fresh dispatch identifier selects its own observation record; tries remain
+retry/recovery evidence. Actual input identities, locations and exact producer
+references are flushed as inputs_bound before submit_intent. Completed reuse and
+attachment retain the original try's evidence. This shows that computation reuse
+can cross an acquisition boundary without weakening the execution journal.
+
 `execute` and `launch_or_attach` accept `publish_selection(Selection)`. Exec
 owns the selected reference and publication diagnostics in `LaunchResult`,
 `ExecutionResult`, and handled `ExecutionFailure` exceptions; accounting does
@@ -197,13 +209,12 @@ separately; strict mutation/recovery readers retain their existing behavior.
 - `scan_attempts(...)` reads every record under a root: identity, declaration
   digest, standing outcome and try, and creation time. It is the whole of what
   the store will say about a record, and it says nothing about requesters.
-- `hedloom_exec.planned.plan_bundles(...)` derives content-addressed bundles from a
-  Hedloom Flow Plan **document**, at schema 2 or 3; a document at any other
-  schema is refused by version rather than misread. The coupling is to the portable
-  plain-data artifact, not to the package: nothing imports `hedloom_flow`, and the
-  base distribution stays dependency-free. An invocation's digest changes
-  exactly when its own declaration or any ancestor's does, so reuse is
-  transitive and staleness propagates downstream.
+- `prepare_invocations` reads schema-4 Plan documents into symbolic invocation
+  specifications; `finalize_invocation` binds selected artifact identities before
+  each invocation enters execution. Exec imports neither Flow nor Dask. The
+  producer identity default propagates declarations conservatively; content and
+  declared identities introduce explicit equivalence boundaries. `plan_bundles`
+  uses the same finalizer for producer-only inspection and refuses runtime modes.
 - Sources are identified by their declared address and artifact kind
   rather than by authored-order source ID, so inserting an unrelated source
   invalidates nothing. `plan_bundles(..., source_fingerprints=...)` folds in an
@@ -333,7 +344,8 @@ is tested by reconciling an attempt from a record that carries no topology. It
 does not own Dask transports, worker pools, placement enforcement, policy
 resolution, evidence promotion, or the study lifecycle. It records where
 outputs are but owns no artifact store, performs no transfer between
-filesystems, and verifies no content digest. Retention removes only selected
+filesystems, and does not verify author-declared identities. Explicit content
+outputs hash every file byte; pin verification remains separate. Retention removes only selected
 try-workspace bytes; it never removes record evidence or external artifact
 addresses. It reads a Plan document but neither
 produces nor validates one, and it resolves no declared address: derivation

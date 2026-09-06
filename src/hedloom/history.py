@@ -12,7 +12,7 @@ import warnings
 
 from hedloom.addresses import invocation_addresses
 
-SCHEMA = 1
+SCHEMA = 2
 
 
 class HistoryError(ValueError):
@@ -86,7 +86,7 @@ def read_plan(path):
         data = json.loads(Path(path).read_text())
     except (OSError, ValueError) as error:
         raise HistoryError(f'cannot read saved Plan {path}: {error}') from error
-    if not isinstance(data, dict) or data.get('schema_version') not in (2, 3):
+    if not isinstance(data, dict) or data.get('schema_version') != 4:
         raise HistoryError(f'incompatible saved Plan: {path}')
     return data
 
@@ -267,12 +267,12 @@ class HistoryWriter:
             except Exception:
                 pass
 
-    def bind_execution(self, invocation_id, handle):
+    def bind_execution(self, invocation_id, handle, inputs=None):
         if invocation_id not in self.addresses:
             raise HistoryError('cannot bind an unknown invocation')
         publish(self.location / 'selections' / slot(invocation_id) / 'execution.json',
                 dict(invocation_id=invocation_id, execution_id=handle.execution_id,
-                     location=handle.location, at=now()), immutable=True)
+                     location=handle.location, inputs=inputs or {}, at=now()), immutable=True)
 
     def _append(self, event, data):
         row = dict(schema_version=SCHEMA, seq=self.seq + 1, at=now(), event=event, data=data)

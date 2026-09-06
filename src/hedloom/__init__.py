@@ -42,7 +42,7 @@ from hedloom_flow import operation as _operation
 from hedloom_flow.authoring import directory, file, returned, stdout, sweep  # noqa: F401
 from hedloom_run.site import Site, SiteError  # noqa: F401
 
-from hedloom.binding import BoundTransport, Shell, Workspace, shell  # noqa: F401
+from hedloom.binding import BoundTransport, Shell, Workspace, shell, located  # noqa: F401
 from hedloom.session import Session, session  # noqa: F401
 from hedloom.study import (  # noqa: F401
     OutputUnavailable,
@@ -56,6 +56,7 @@ from hedloom.discovery import RunHistory
 from hedloom.history import HistoryPersistence, RunReference
 
 __all__ = [
+    "located",
     "RunHistory", "HistoryPersistence", "RunReference",
     "ArtifactContract",
     "OutputUnavailable",

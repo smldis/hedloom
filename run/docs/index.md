@@ -213,7 +213,7 @@ file that no longer existed in that form.
 
 `site.fingerprints(document)` closes that gap by hashing what a declared
 source's address currently resolves to, and both kernels pass the result into
-`plan_bundles`. Sources are **hashed**, not stat'ed: an authored input is a
+`prepare_invocations`. Sources are **hashed**, not stat'ed: an authored input is a
 small text or JSON document, kilobytes at most, so hashing it costs nothing
 and is immune to the `mtime` churn an ordinary `git checkout` causes.
 Anything larger than 64 MiB — implausible for an authored input — falls back
@@ -286,8 +286,9 @@ api
 
 ## Execution bindings and publication
 
-Both kernels accept `execution_owner` and `on_execution(invocation_id, handle)`.
-Consumer bindings are completed before the submission admits new work. The
+Both kernels accept `execution_owner` and `on_execution(invocation_id, handle, inputs)`.
+The complete Plan is saved first. Each resolved consumer binding is saved before
+that invocation joins or admits execution. The
 handle's `publish_selection` method receives Exec's selected reference directly;
 there is no per-consumer selection adapter. Exec results and handled failures
 carry that reference even without a publisher. Run adds the consumer identity
@@ -296,12 +297,12 @@ when building its report; publication and handle-accounting errors appear in
 anchored and propagated with existing roots; its history format belongs to
 Hedloom.
 
-The owner is scoped to one Session and one Dask
-client. It shares compatible active bound graphs and supplies durable dispatch
+The owner is scoped to one Session, including concurrent sequential submissions,
+and at most one Dask client. It shares compatible active invocations and supplies durable dispatch
 addresses before admission. Workers publish selection notices at those addresses;
 consumer queries need no live owner. Sequential execution uses the same handle
-contract without Dask. Unowned low-level graph submissions use isolated task
-keys; passing a Client alone does not opt into shared ownership.
+contract without Dask. Low-level calls without an owner create isolated owners and use the same durable
+gate protocol; passing a Client alone does not opt into sharing.
 
 Handles arbitrate entry versus cancellation under a short advisory file lock.
 Cancelled work returns blocked without entering Exec. An entered handle refuses

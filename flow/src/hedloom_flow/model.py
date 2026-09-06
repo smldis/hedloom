@@ -282,6 +282,27 @@ class OutputContract:
             frozen = freeze_data(self.binding, label=f"output {self.name} binding")
             if not isinstance(frozen, FrozenObject):
                 raise ContractError("output binding must be a mapping")
+            binding = plain_data(frozen)
+            mode = binding.get("identity", "producer")
+            external = binding.get("external", False)
+            shape = binding.get("filesystem_kind", "file")
+            if mode not in {"producer", "content", "declared"}:
+                raise ContractError("unknown output identity")
+            if type(external) is not bool:
+                raise ContractError("output external must be bool")
+            if external and (mode != "declared" or "path" in binding):
+                raise ContractError("external outputs require declared identity and no workspace path")
+            if mode == "content" and (external or shape != "file" or "path" not in binding):
+                raise ContractError("content identity requires an owned file")
+            if mode == "declared" and not external and "path" not in binding:
+                raise ContractError("declared identity requires a filesystem output")
+            if shape not in {"file", "directory"}:
+                raise ContractError("unknown output filesystem shape")
+            if "path" in binding:
+                from pathlib import PurePosixPath
+                path = binding["path"]
+                if not isinstance(path, str) or not path or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts:
+                    raise ContractError("output path must stay inside its workspace")
             object.__setattr__(self, "binding", frozen)
 
 
@@ -385,8 +406,11 @@ class OperationDefinition:
     resources: tuple[ResourceContract, ...] = ()
     default_policy: Policy | None = None
     implementation: Implementation | None = None
+    execution: str = "reuse"
 
     def __post_init__(self) -> None:
+        if self.execution not in {"reuse", "each_submission"}:
+            raise ContractError("execution must be reuse or each_submission")
         if not isinstance(self.identity, OperationIdentity):
             raise ContractError("operation identity must be an OperationIdentity")
         if self.implementation is not None and not isinstance(
@@ -636,7 +660,7 @@ class Plan:
     edges: tuple[DependencyEdge, ...] = ()
     boundaries: tuple[FlowBoundary, ...] = ()
     outputs: tuple[NamedOutput, ...] = ()
-    schema_version: int = 3
+    schema_version: int = 4
 
     def __post_init__(self) -> None:
         sequence_fields = (
@@ -652,8 +676,8 @@ class Plan:
             values = tuple(getattr(self, name))
             object.__setattr__(self, name, values)
             _require_instances(values, expected, f"plan {name}")
-        if self.schema_version != 3:
-            raise ContractError("plan schema_version must be 3")
+        if self.schema_version != 4:
+            raise ContractError("plan schema_version must be 4")
 
     def validate(self) -> "Plan":
         issues: list[ValidationIssue] = []
@@ -1392,6 +1416,7 @@ def _policy_data(value: Policy) -> dict[str, Any]:
 def _operation_data(value: OperationDefinition) -> dict[str, Any]:
     return {
         "identity": _operation_identity_data(value.identity),
+        "execution": value.execution,
         "inputs": [
             {
                 "name": item.name,

@@ -121,7 +121,7 @@ The user-authorized planning work established this bounded component:
 - source declarations record opaque addresses, codec identity/options,
   and assumed access scope; source references are artifacts and ordinary
   operation-output references are ephemeral (introduced at schema 2, carried
-  unchanged into the schema 3 emitted today);
+  unchanged into the schema 4 emitted today);
 - optional output materialization capability is inspectable declaration data
   only and does not publish or change an output reference's value class;
 - `.named(...)` and `.options(policy=...)` are immutable and compose in either

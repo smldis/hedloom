@@ -11,21 +11,17 @@ Hedloom Run walks a validated Plan and executes it. It owns dependency order,
 readiness, the threading of each invocation's outputs into the inputs that
 reference them, and what happens to the rest of a plan when something fails.
 
-It exists because that responsibility had no home. A Plan could be authored and
-a single attempt could be executed durably, but the loop joining them lived in
-an example. Deciding *when* work runs is a distinct concern from owning one
-attempt's record, and keeping it separate is what allowed the obvious
-alternative — letting Dask decide readiness — to arrive as a second kernel
-rather than a rewrite. That alternative has now been adopted (2026-08-04, user
-direction); see `docs/vision/open-concepts.md` for the argument and the
-measurements behind it.
+The original loop joined a static Plan to durable attempts. The Dask kernel,
+adopted in August 2026, supplied concurrent execution and placement capacity.
+Runtime artifact identity later required resolving consumer identity before
+looking up shared execution, which moved dependency admission onto the Run
+controller. This revises the earlier choice to send the complete dependency
+graph to Dask. Dask remains the concurrent executor of ready invocations.
 
-**Readiness is a kernel, not the unit.** What the unit owns is the *binding* a
-run performs: which substrate provides a placement, which command implements an
-operation, and which address an upstream output landed at. `hedloom_run.binding`
-holds those rules once, and both kernels use them. Sharing that binding is a
-chosen design for preserving meaning when the readiness kernel changes; its
-presence alone does not establish equivalence for every workload.
+Binding rules and controller admission are shared by both execution choices.
+Exec still owns identity and reuse; Run supplies selected artifacts and decides
+when their consumer is ready. The common path gives a direct way to compare
+sequential and concurrent behavior without maintaining two identity rules.
 
 ## Mode of being
 
@@ -40,7 +36,7 @@ the edited branch and its dependents on a third, blocks successors of a failure
 rather than running them against inputs that do not exist, and passes a file
 written by one step to the step that reads it.
 
-`graph.run_plan_graph` gives readiness to Dask. The cross-kernel cases in
+`graph.run_plan_graph` admits ready invocations to Dask for concurrent execution. The cross-kernel cases in
 `tests/test_graph.py` provide evidence of equal input digests and values for
 their tested Plans, and reuse of a result recorded by the other kernel.
 Adoption is recorded, but the kernel has not yet run a real study; its concurrency,
@@ -55,6 +51,17 @@ equivalence claims.
 
 ## Current contracts
 
+Fresh acquisition exposed a limitation of whole-graph sharing: compatible consumer
+work cannot be recognized until upstream artifact identities arrive. The adopted
+controller admission loop resolves dependencies and asks Exec to finalize each
+ready invocation, then uses the existing owner table. Dask retains placement
+capacity and concurrent execution; it receives ready work rather than unresolved
+consumer tasks. Both kernels use the same admission and projection code. Tests
+exercise convergence from independent observations, per-consumer provenance,
+replay refusal, generation-safe release, withdrawal and one-slot progress. Fresh
+records deliberately differ across submissions while equal selected artifacts
+can give downstream consumers equal computation identities.
+
 Both kernels construct consumer outcomes from Exec-owned results and failures.
 There is no per-invocation selection observer: the execution handle publishes
 Exec's selected reference, and report construction supplies the consumer's
@@ -64,19 +71,20 @@ handled failures retain exact references, including without a publisher.
 Blocked work reports `block_reason` separately from computation errors.
 Optional `Site.history_root` survives Site transformations. Run owns a durable dispatch-handle format, separate from
 the facade's consumer history and Exec's computation records. An explicit
-`ExecutionOwner`, held by the facade Session, shares compatible active bound
-graphs; durable consumer bindings point to selections published once per handle.
-Compatibility includes dependencies, transport configuration, roots and bindings,
-not only computation identity. A completed predecessor stays with its active
-graph for staggered consumers; a fully terminal graph is not cached.
+`ExecutionOwner`, held by the facade Session, shares compatible ready invocations.
+Its table keys finalized computation identity plus execution bindings, placement,
+transport and roots. Run admits dependencies from the controller; Dask executes
+ready tasks with placement resources. Concurrent sequential submissions use the
+same table with in-process completions. No waiting task occupies a worker slot.
+Each invocation occurrence retains its own consumer binding and report. Completed
+entries can be replaced; releasing an old entry cannot remove its replacement.
 
 Entry and cancellation use the same short durable gate. An entered handle never
 re-enters Exec, including on Dask replay. A withdrawing consumer cannot cancel a
 future another consumer needs. With no remaining consumer, unentered work is
 prevented at the gate; entered work is awaited and reported from its result.
 This closes the facade's start/cancel classification race without treating a
-Dask stack snapshot as evidence that execution never happened. Unowned low-level
-graph calls retain their legacy cancellation path and use isolated task keys.
+Dask stack snapshot as evidence that execution never happened. Low-level calls without an owner use isolated owners with the same gate protocol.
 Cross-Session joining and automatic recovery remain outside this prototype.
 
 - Distribution: `hedloom-run`, Python 3.10 or newer, depending on `hedloom-exec`. It
@@ -149,7 +157,7 @@ Cross-Session joining and automatic recovery remain outside this prototype.
   how that installation keeps spent work. Unknown policy keys and automatic
   rule names are refused when the Site is built.
 - `site.fingerprints(document)` identifies each declared source by its
-  **content**, and both kernels pass the result to `plan_bundles`. This closes a
+  **content**, and both kernels pass the result to `prepare_invocations`. This closes a
   real defect: a source's declared address does not change when the file at it
   is edited, so before this an edited input file was invisible and a study reported
   results computed from a file that no longer existed in that form. Content

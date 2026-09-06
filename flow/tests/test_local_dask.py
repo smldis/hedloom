@@ -778,7 +778,7 @@ def test_refinement_command_is_semantic_repeatable_and_uses_injected_source(
                 "invocations": [item.id for item in normalized.invocations],
                 "sources": [item.id for item in normalized.sources],
             },
-            "schema_version": 3,
+            "schema_version": 4,
         },
         # The trapezoid rule is second order, so each refinement by four cuts
         # the error by sixteen. These are the same three estimates that

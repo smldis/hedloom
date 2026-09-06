@@ -235,7 +235,7 @@ def test_source_values_are_immutable_and_serialize_canonically():
         ArtifactAddress("bad space", "opaque")
 
     data = branching_plan().to_data()
-    assert data["schema_version"] == 3
+    assert data["schema_version"] == 4
     # A source is its address and its contract. There is nothing else to say
     # about it that this unit could check, so there is nothing else recorded.
     assert data["sources"][0] == {
@@ -246,7 +246,7 @@ def test_source_values_are_immutable_and_serialize_canonically():
         },
         "artifact": {"kind": "model-input"},
     }
-    with pytest.raises(ContractError, match="schema_version must be 3"):
+    with pytest.raises(ContractError, match="schema_version must be 4"):
         Plan(schema_version=1)
 
 

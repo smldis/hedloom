@@ -11,7 +11,7 @@ import pytest
 
 from hedloom import Site, RunHistory, artifact, file, operation, parameter, returned, session, study
 from hedloom.history import HistoryWriter, read_json, slot
-from hedloom_run.execution import ExecutionError, ExecutionHandle
+from hedloom_run.execution import ExecutionError, ExecutionHandle, read_document
 
 pytest.importorskip('distributed')
 
@@ -40,12 +40,12 @@ def held_file(out, markers, fail):
 @operation(inputs={'source': artifact('shared-probe')},
            outputs={'size': returned()})
 def read_held(source):
-    return len(Path(source).read_text())
+    return {'size': len(Path(source).read_text())}
 
 
 @operation(outputs={'value': returned()})
 def immediate():
-    return 1
+    return {'value': 1}
 
 
 @operation(config={'markers': parameter(str)}, outputs={'value': returned()})
@@ -111,7 +111,7 @@ def test_staggered_consumers_share_live_paths_and_keep_their_names(tmp_path, fai
             wait_for(lambda: (tmp_path / 'started').exists())
             second = threads.submit(live.submit, shared_plan(str(tmp_path), fail, 'beta'),
                                     name='second', stop_on_failure=False)
-            wait_for(lambda: len(bound(tmp_path, 'second')) == 2)
+            wait_for(lambda: len(bound(tmp_path, 'second')) == 1)
             paths = []
             for name, invocation in [('first.1', 'alpha'), ('second.1', 'beta')]:
                 result = subprocess.run([sys.executable, '-m', 'hedloom.cli', 'runs', 'path',
@@ -139,19 +139,20 @@ def test_staggered_consumers_share_live_paths_and_keep_their_names(tmp_path, fai
         assert history.invocation(a.run_id, 'alpha').try_number == a['alpha'].try_number
 
 
-def test_binding_failure_does_not_admit_a_partial_graph(tmp_path, monkeypatch):
+def test_binding_failure_prevents_that_invocation_admission(tmp_path, monkeypatch):
+    (tmp_path / "release").touch()
     original = HistoryWriter.bind_execution
     calls = []
-    def broken(self, identifier, handle):
+    def broken(self, identifier, handle, inputs=None):
         calls.append(identifier)
         if len(calls) == 2:
             raise OSError('second binding failed')
-        return original(self, identifier, handle)
+        return original(self, identifier, handle, inputs)
     monkeypatch.setattr(HistoryWriter, 'bind_execution', broken)
     with pytest.warns(RuntimeWarning), pytest.raises(OSError, match='second binding'):
         shared_plan(str(tmp_path)).submit(site=site_for(tmp_path), name='broken')
-    assert not (tmp_path / 'calls').exists()
-    assert not (tmp_path / 'records').exists()
+    assert (tmp_path / 'calls').read_text().splitlines() == ['call']
+    assert len(list((tmp_path / 'records').glob('*/events.jsonl'))) == 1
 
 
 def test_worker_reentry_cannot_select_a_second_try(tmp_path):
@@ -161,8 +162,8 @@ def test_worker_reentry_cannot_select_a_second_try(tmp_path):
         try:
             wait_for(lambda: (tmp_path / 'started').exists())
             with live._execution_owner.lock:
-                entry = next(iter(live._execution_owner.groups.values()))[0]
-            selection = read_json(Path(entry.handle.location) / 'selection.json')
+                entry = next(iter(live._execution_owner.groups.values()))
+            selection = read_document(Path(entry.handle.location) / 'selection.json')
         finally:
             (tmp_path / 'release').touch()
         run = first.result(timeout=15)
@@ -170,7 +171,7 @@ def test_worker_reentry_cannot_select_a_second_try(tmp_path):
         live.client.retry([entry.future])
         with pytest.raises(ExecutionError, match='replay refused'):
             entry.future.result(timeout=10)
-        assert read_json(Path(entry.handle.location) / 'selection.json') == selection
+        assert read_document(Path(entry.handle.location) / 'selection.json') == selection
         assert (tmp_path / 'calls').read_text().splitlines() == ['call']
 
 
@@ -203,8 +204,9 @@ def test_late_arrival_keeps_finished_predecessor_and_active_successor(tmp_path):
             b = threads.submit(live.submit, subject, name='b')
             wait_for(lambda: len(bound(tmp_path, 'b')) == 2)
             history = RunHistory(site.history_root)
+            assert history.invocation('a.1', 'held_file.1').execution_id != history.invocation('b.1', 'held_file.1').execution_id
+            assert history.invocation('a.1', 'held_copy.1').execution_id == history.invocation('b.1', 'held_copy.1').execution_id
             for invocation in ('held_file.1', 'held_copy.1'):
-                assert history.invocation('a.1', invocation).execution_id == history.invocation('b.1', invocation).execution_id
                 assert history.resolve_path('a.1', invocation, workspace=True) == history.resolve_path('b.1', invocation, workspace=True)
         finally:
             (second_dir / 'release').touch()

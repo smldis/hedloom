@@ -44,7 +44,7 @@ def test_refinement_collection_fan_in_is_ordered_and_fully_keyed(
     )
 
     assert normalized.validate() is normalized
-    assert normalized.schema_version == 3
+    assert normalized.schema_version == 4
     assert len(normalized.sources) == 1
     assert len(normalized.invocations) == len(expected_points) + 1
     assert len(normalized.edges) == len(expected_points)

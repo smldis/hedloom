@@ -51,7 +51,7 @@ def document(settings=(8, 32), stragglers=()):
 
     keys = ["coarse", "medium"]
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "sources": [],
         "operations": [
             {
@@ -77,10 +77,10 @@ def transport(runs=None, failing=None):
             runs.append(t)
         if failing is not None and t == failing:
             raise ValueError("did not converge")
-        return 60.0 - 0.05 * t
+        return {"metrics": 60.0 - 0.05 * t}
 
     def summarize(*, measurements=None, **kwargs):
-        return {"worst": min(measurements), "count": len(measurements)}
+        return {"summary": {"worst": min(measurements), "count": len(measurements)}}
 
     return InProcessTransport({"estimate": estimate, "summarize": summarize})
 
@@ -98,8 +98,8 @@ def test_outputs_are_threaded_into_the_inputs_that_reference_them(tmp_path):
     report = run_plan(document(), transport(), root=str(tmp_path))
     final = report.outcomes[-1]
 
-    assert final.value["count"] == 2
-    assert final.value["worst"] == pytest.approx(60.0 - 0.05 * 32)
+    assert final.value["summary"]["count"] == 2
+    assert final.value["summary"]["worst"] == pytest.approx(60.0 - 0.05 * 32)
 
 
 def test_a_second_run_reuses_everything(tmp_path):
@@ -220,7 +220,7 @@ def test_sequential_execution_honours_cancelled_entry_gate(tmp_path):
     from hedloom_run.execution import ExecutionOwner
     runs = []
     handles = []
-    def cancel_before_admission(identifier, handle):
+    def cancel_before_admission(identifier, handle, inputs):
         handles.append(handle)
         assert handle.cancel_before_start()
     report = run_plan(document(), transport(runs), root=str(tmp_path / 'records'),

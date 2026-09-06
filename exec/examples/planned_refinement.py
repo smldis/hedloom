@@ -113,15 +113,15 @@ def integrate_impl(*, point, steps, grid=None):
     total = (math.exp(-LOWER) + math.exp(-UPPER)) / 2.0
     for index in range(1, steps):
         total += math.exp(-(LOWER + index * width))
-    return {"point": point, "steps": steps, "estimate": total * width}
+    return {"result": {"point": point, "steps": steps, "estimate": total * width}}
 
 
 def compare_impl(*, results=None):
     estimates = [item["estimate"] for item in (results or [])]
-    return {
+    return {"verdict": {
         "points": len(estimates),
         "worst_error": max((abs(value - EXACT) for value in estimates), default=None),
-    }
+    }}
 
 
 def run(document, root, label):
@@ -150,8 +150,8 @@ def run(document, root, label):
             f"  {result.record}#{result.try_number}"
         )
 
-        for output in ("result", "verdict"):
-            values[f"output:{item.input_digest}:{output}"] = result.value
+        for output in item.output_names:
+            values[f"output:{item.input_digest}:{output}"] = result.value[output]
 
     return values
 

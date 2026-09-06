@@ -66,7 +66,7 @@ def write_note_repeated(out, *, word: str, seed: int) -> None:
 
 @operation(inputs={"note": TEXT}, outputs={"size": returned(kind="count")})
 def measure(note) -> int:
-    return len(Path(note).read_text())
+    return {'size': len(Path(note).read_text())}
 
 
 @pytest.fixture

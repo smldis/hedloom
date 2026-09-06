@@ -81,14 +81,15 @@ all.
 
 ### Returning a value, or returning a command
 
-A body that computes a value returns it:
+A body that computes values returns a mapping keyed by its declared output names.
+Missing required names fail the invocation; there is no whole-return fallback:
 
 ```python
 @operation(inputs={"result": QUADRATURE},
            outputs={"estimate": returned(kind="integral-estimate")})
 def estimate(result) -> float:
     ...
-    return value
+    return {"estimate": value}
 ```
 
 A body that wants a command run **at its placement** returns `shell(...)`
@@ -224,7 +225,7 @@ print(subject.summary())
 
 ```
 study grid-refinement
-plan schema 3: 10 invocations, 0 sources
+plan schema 4: 10 invocations, 0 sources
   coarse:estimate    grid_refinement.estimate    local
   coarse:integrate   grid_refinement.integrate   local
   coarse:write_grid  grid_refinement.write_grid  local
@@ -259,8 +260,9 @@ around it. The open architectural question is recorded in
 `docs/vision/open-concepts.md` at the repository root.
 
 *Staged* plans are a different thing and are already demonstrated: an invocation
-may author and submit an inner Plan (`../../studies/ota_pvt_clean_nested.py`).
-Each
-plan is still fully determined when authored; a later stage is authored only
+may author and submit an inner Plan. The
+[nested-studies example](../../examples/nested_studies.py) demonstrates this
+using [one shared Session](running.md#nested-studies-in-one-session).
+Each plan is still fully determined when authored; a later stage is authored only
 after an earlier one produced ordinary Python values. See
 [internals](../internals/index.md#staged-plans).

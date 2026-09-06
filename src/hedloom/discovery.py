@@ -1,5 +1,5 @@
 """Read-only inspection of consumer history and exact computation evidence."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 import os
@@ -8,7 +8,7 @@ from hedloom.addresses import display_address, invocation_addresses, resolve_inv
 from hedloom.history import HistoryError, parse_run_id, read_events, read_json, read_plan, selection_documents, validate_name
 from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.identity import try_name
-from hedloom_exec.artifacts import workspace_path
+from hedloom_exec.artifacts import workspace_path, artifact_accessible
 from hedloom_run.binding import output_value
 
 
@@ -30,6 +30,8 @@ class InvocationSnapshot:
     diagnostics: tuple[str, ...] = ()
     block_reason: str | None = None
     execution_id: str | None = None
+    requested_inputs: dict = field(default_factory=dict)
+    executed_inputs: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +141,7 @@ class RunHistory:
             workspace_status = 'binding-unreported' if record else 'no-selection'
             journal_dir = None
             issues = []
+            executed_inputs = {}
             if record:
                 if not isinstance(record, str) or Path(record).name != record or record in ('.', '..'):
                     raise HistoryError('invalid selected record')
@@ -148,6 +151,8 @@ class RunHistory:
                     issues.append(f'missing recorded journal: {journal_dir}')
                 else:
                     state, partial = journal.snapshot()
+                    executed_inputs = next((event.data.get('inputs', {}) for event in state.events
+                        if event.event == 'inputs_bound' and event.data.get('try') == number), {})
                     issues.extend(partial)
                     selected = next((item for item in state.tries if item.number == number), None)
                     if selected is None:
@@ -173,7 +178,8 @@ class RunHistory:
                 tuple(addresses[identifier]), invocation['operation']['name'],
                 outcome.get('outcome', 'unreported'), state_name, record, number,
                 workspace, workspace_status, journal_dir, outcome.get('error'), blockers, tuple(issues),
-                outcome.get('block_reason'), execution.get('execution_id')))
+                outcome.get('block_reason'), execution.get('execution_id'),
+                execution.get('inputs', {}), executed_inputs))
         status = 'incomplete' if final is None else final['history_status']
         if diagnostics and status == 'complete':
             status = 'degraded'
@@ -235,6 +241,7 @@ class RunHistory:
             row = rows.get(reference.get('invocation_id'))
             available = row is not None and row.run_reported_outcome == 'succeeded' and row.record is not None
             value = None
+            artifact = None
             if available:
                 manifest = AttemptJournal(header['record_root'], row.record).read_manifest(row.try_number)
                 available = manifest is not None
@@ -242,7 +249,9 @@ class RunHistory:
                     evidence = manifest.get('result', {})
                     artifacts = {item['name']: item for item in evidence.get('artifacts', [])}
                     value = output_value(artifacts, evidence.get('value'), reference.get('output_name'))
-            result[output['name']] = {'available': available, 'value': value}
+                    artifact = artifacts.get(reference.get('output_name'))
+            result[output['name']] = {'available': available, 'value': value,
+                'artifact': artifact, 'accessible': available and artifact_accessible(artifact)}
         return result
 
 

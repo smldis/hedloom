@@ -112,7 +112,7 @@ def simulate(out, *, key: str, steps: int, diverges: bool):
 def count_rows(trace) -> int:
     """A value-returning body, so a settled point has a result worth keeping."""
 
-    return sum(1 for line in Path(trace).read_text().splitlines() if line.strip())
+    return {'rows': sum(1 for line in Path(trace).read_text().splitlines() if line.strip())}
 
 
 @flow

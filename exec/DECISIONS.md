@@ -261,3 +261,22 @@ mode's design premise is wrong and needs revisiting.
 - Result reuse proving unsound in practice because input identity cannot be
   captured honestly for long-running tool work. That would make rerun-everything the
   correct default and reduce the record to pure provenance.
+
+## Runtime artifact identity (2026-09-06)
+
+Adopted: ordinary operations may require fresh execution per submission, with a
+durable observation identifier selecting a separate computation record. Tries
+keep their retry/recovery meaning. Producer identity remains the default; owned
+files may request full-byte content identity, and filesystem outputs may carry
+a canonical declared identity. Borrowed locations remain externally owned.
+
+Exec finalizes each invocation after its input identities resolve, before launch.
+Run owns that readiness and shares compatible ready invocations through its
+existing owner table. Consumer history records candidate inputs; inputs_bound in
+the actual try records used inputs before submit_intent. Reuse never rewrites the
+old try. Named returns and Plan schema 4 deliberately replace the old protocol.
+
+Evidence: Hedloom tests/test_runtime_identity.py covers moving local Git revisions,
+content changes above 64 MiB, selected provenance, missing/invalid acquisition,
+shared execution and borrowed ownership. The existing collector remains the only
+reclamation mechanism; general standing-result eviction is still a separate need.

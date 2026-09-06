@@ -52,11 +52,11 @@ def client():
 
 
 def double(value=None, **kwargs):
-    return (value or 1) * 2
+    return {"out": (value or 1) * 2}
 
 
 def scale(factor=1, source=None, **kwargs):
-    return (source or 1) * factor
+    return {"out": (source or 1) * factor}
 
 
 def explode(**kwargs):
@@ -74,7 +74,7 @@ def controlled(marker_dir, role, **kwargs):
         raise RuntimeError("controlled failure")
     while not (directory / f"release-{role}").exists():
         time.sleep(0.01)
-    return role
+    return {"out": role}
 
 
 class ContendedTransport(InProcessTransport):
@@ -92,9 +92,15 @@ class RecordingClient:
     def __init__(self, client):
         self.client = client
         self.cancelled = []
+        self.submitted = []
 
     def __getattr__(self, name):
         return getattr(self.client, name)
+
+    def submit(self, *args, **kwargs):
+        future = self.client.submit(*args, **kwargs)
+        self.submitted.append(future)
+        return future
 
     def cancel(self, futures, **kwargs):
         self.cancelled.extend(futures)
@@ -136,7 +142,7 @@ def invocation(key, operation, *, config=None, source=None):
 def document(invocations):
     names = sorted({item["operation"]["name"] for item in invocations})
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "sources": [],
         "operations": [
             {"identity": {"name": name, "version": "1"},
@@ -216,8 +222,8 @@ def test_an_upstream_value_reaches_its_consumer(client, tmp_path):
     )
 
     by_key = {item.authored_key: item for item in report.outcomes}
-    assert by_key["seed"].value == 6
-    assert by_key["consumer"].value == 60, "the edge must carry the value"
+    assert by_key["seed"].value["out"] == 6
+    assert by_key["consumer"].value["out"] == 60, "the edge must carry the value"
 
 
 def test_the_graph_kernel_produces_the_same_identities_as_the_loop(client, tmp_path):
@@ -426,18 +432,13 @@ def test_stopping_cancels_the_unstarted_and_waits_for_the_in_flight(tmp_path):
                 "the first two invocations did not acquire the two worker threads",
             )
             (marker_dir / "fail-now").write_text("fail")
-            cancelled_future = _wait_until(
-                lambda: next(
-                    (
-                        future
-                        for future in recording.cancelled
-                        if future.status == "cancelled"
-                    ),
-                    None,
-                ),
-                "no unstarted future reached Dask's cancelled state",
+            from hedloom_run.execution import read_document
+            cancelled_handle = _wait_until(
+                lambda: next((path.parent for path in (tmp_path / "attempts" / ".executions").rglob("state.json")
+                              if read_document(path).get("state") == "cancelled"), None),
+                "no unstarted execution was cancelled at its durable gate",
             )
-            cancelled_key = cancelled_future.key
+            cancelled_key = next(future.key for future in recording.submitted if cancelled_handle.name in future.key)
             assert thread.is_alive(), "the run returned before admitted work finished"
 
             for role in ("first", "third", "fourth"):
@@ -527,7 +528,8 @@ def test_disabling_the_stop_never_enters_stop_admission(
     def unexpected_stop(**kwargs):
         raise AssertionError("stop admission was entered while disabled")
 
-    monkeypatch.setattr(graph_module, "_stop_admitting", unexpected_stop)
+    from hedloom_run.execution import ExecutionOwner
+    monkeypatch.setattr(ExecutionOwner, "withdraw", unexpected_stop)
     report = run_plan_graph(
         document(
             [
@@ -596,7 +598,6 @@ def test_an_escaping_exception_cancels_before_it_propagates(tmp_path):
                 {"name": "marker_dir", "value": str(marker_dir)},
                 {"name": "role", "value": name},
             ],
-            source="root",
         )
         for name in ("one", "two", "three")
     ]
@@ -638,18 +639,13 @@ def test_an_escaping_exception_cancels_before_it_propagates(tmp_path):
 
             thread = threading.Thread(target=run)
             thread.start()
-            cancelled_future = _wait_until(
-                lambda: next(
-                    (
-                        future
-                        for future in recording.cancelled
-                        if future.status == "cancelled"
-                    ),
-                    None,
-                ),
-                "the escaping exception did not cancel an unstarted future",
+            from hedloom_run.execution import read_document
+            cancelled_handle = _wait_until(
+                lambda: next((path.parent for path in (tmp_path / "attempts" / ".executions").rglob("state.json")
+                              if read_document(path).get("state") == "cancelled"), None),
+                "observer failure did not cancel pending execution",
             )
-            cancelled_key = cancelled_future.key
+            cancelled_key = next(future.key for future in recording.submitted if cancelled_handle.name in future.key)
             assert thread.is_alive(), "cleanup did not wait for admitted work"
             for name in ("one", "two", "three"):
                 (marker_dir / f"release-{name}").write_text("release")

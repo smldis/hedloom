@@ -22,16 +22,68 @@ so stdout is never the result unless an operation says it is.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 import os
+import json
+from hashlib import blake2b
+
+
+def canonical_identity(value):
+    """Copy finite JSON identity data without coercing object keys or live objects."""
+    def check(item):
+        if isinstance(item, dict):
+            if any(type(key) is not str for key in item):
+                raise ValueError("identity object keys must be strings")
+            for member in item.values():
+                check(member)
+        elif isinstance(item, list):
+            for member in item:
+                check(member)
+        elif item is not None and type(item) not in (str, int, float, bool):
+            raise ValueError("identity must be finite JSON data")
+    if value is None:
+        raise ValueError("an explicit identity is required")
+    check(value)
+    return json.loads(json.dumps(value, sort_keys=True, allow_nan=False))
+
+
+def fingerprint_content(path):
+    """Hash every file byte with bounded memory, independent of size and mtime."""
+    digest = blake2b(digest_size=32)
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return "blake2b-256:" + digest.hexdigest()
+
+
+def validate_borrowed(artifacts):
+    """Accessibility is required for reuse; it does not verify declared identity."""
+    for ref in artifacts:
+        if ref.get("ownership") == "borrowed":
+            path = Path(ref["address"])
+            if not artifact_accessible(ref):
+                raise MissingOutput(f"borrowed output is no longer accessible: {path}")
+
+
+def artifact_accessible(ref):
+    """Present access, independently of the historical identity claim."""
+    if ref is None:
+        return False
+    if ref.get("address") is None:
+        return True
+    path = Path(ref["address"])
+    return (path.is_dir() and os.access(path, os.R_OK | os.X_OK) if ref["kind"] == "directory"
+            else path.is_file() and os.access(path, os.R_OK))
 
 __all__ = [
     "ArtifactRef",
     "MissingOutput",
     "OutputDeclarationError",
     "capture_outputs",
+    "artifact_accessible",
+    "fingerprint_content",
     "workspace_for",
     "workspace_path",
 ]
@@ -61,9 +113,15 @@ class ArtifactRef:
     size: int | None = None
     modified_ns: int | None = None
     value: Any = None
+    identity: Any = None
+    ownership: str | None = None
 
     def as_data(self) -> dict[str, Any]:
         data: dict[str, Any] = {"name": self.name, "kind": self.kind}
+        if self.identity is not None:
+            data["identity"] = self.identity
+        if self.ownership is not None:
+            data["ownership"] = self.ownership
         if self.address is not None:
             data["address"] = self.address
         if self.size is not None:
@@ -161,6 +219,7 @@ def capture_outputs(
     stdout: str = "",
     stderr: str = "",
     value: Any = None,
+    producer_digest: str | None = None,
 ) -> tuple[ArtifactRef, ...]:
     """Record each declared output after the work reported success.
 
@@ -178,7 +237,21 @@ def capture_outputs(
             raise OutputDeclarationError(
                 f"output {name!r} must be a mapping such as {{'path': 'sim.raw'}}"
             )
-        if "path" in declaration:
+        mode = declaration.get("identity", "producer")
+        supplied = value.get(name) if isinstance(value, Mapping) else None
+        if declaration.get("external"):
+            if mode != "declared" or not isinstance(supplied, Mapping) or "location" not in supplied:
+                raise MissingOutput(f"output {name!r} requires a named located value")
+            if not isinstance(supplied["location"], str):
+                raise MissingOutput(f"output {name!r} location must be an absolute path string")
+            candidate = Path(supplied["location"])
+            shape = declaration.get("filesystem_kind", "file")
+            if not candidate.is_absolute() or not (candidate.is_dir() if shape == "directory" else candidate.is_file()):
+                raise MissingOutput(f"output {name!r} is not an accessible {shape}: {candidate}")
+            captured.append(ArtifactRef(name=name, kind=shape, address=str(candidate), ownership="borrowed"))
+            if not artifact_accessible(captured[-1].as_data()):
+                raise MissingOutput(f"borrowed output {name!r} is inaccessible: {candidate}")
+        elif "path" in declaration:
             if workdir is None:
                 raise OutputDeclarationError(
                     f"output {name!r} is on the filesystem but no workspace "
@@ -206,11 +279,37 @@ def capture_outputs(
                 )
             )
         elif declaration.get("value"):
-            captured.append(ArtifactRef(name=name, kind="value", value=value))
+            if not isinstance(value, Mapping) or name not in value:
+                raise MissingOutput(f"missing named return {name!r}")
+            captured.append(ArtifactRef(name=name, kind="value", value=value[name]))
         else:
             raise OutputDeclarationError(
                 f"output {name!r} declares none of 'path', 'stream', or 'value'"
             )
+        ref = captured[-1]
+        if ref.address is not None and ref.ownership is None:
+            ref = replace(ref, ownership="workspace")
+        if mode == "declared":
+            if not isinstance(supplied, Mapping) or supplied.get("identity") is None:
+                raise MissingOutput(f"output {name!r} requires an explicit identity")
+            if ref.address != supplied.get("location"):
+                raise MissingOutput(f"output {name!r} location differs from its declaration")
+            try:
+                canonical = canonical_identity(supplied["identity"])
+            except (TypeError, ValueError) as error:
+                raise MissingOutput(f"output {name!r} identity must be finite JSON data") from error
+            ref = replace(ref, identity={"mode": mode, "artifact": declaration.get("artifact"),
+                                        "representation": ref.kind, "value": canonical})
+        elif mode == "content":
+            if ref.kind != "file" or ref.ownership != "workspace":
+                raise OutputDeclarationError("content identity requires an owned file")
+            ref = replace(ref, identity={"mode": mode, "artifact": declaration.get("artifact"),
+                                        "representation": ref.kind, "value": fingerprint_content(ref.address)})
+        elif mode != "producer":
+            raise OutputDeclarationError(f"unsupported output identity {mode!r}")
+        elif producer_digest is not None:
+            ref = replace(ref, identity=f"output:{producer_digest}:{name}")
+        captured[-1] = ref
     return tuple(captured)
 
 

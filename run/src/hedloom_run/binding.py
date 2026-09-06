@@ -20,6 +20,7 @@ something different depending on how it was run.
 from __future__ import annotations
 
 from typing import Any, Mapping
+from pathlib import Path
 
 from hedloom_exec.planned import PlannedInvocation
 from hedloom_exec.transport import Transport
@@ -72,7 +73,7 @@ def available_transports(
     return AnyPlacement(transport)
 
 
-def resolve(reference: Any, produced: Mapping[str, Any]) -> Any:
+def resolve(reference: Any, produced: Mapping[Any, Any]) -> Any:
     """Turn an input reference into the value or address it names.
 
     One lookup serves both kinds. An operation output is in ``produced``
@@ -87,36 +88,24 @@ def resolve(reference: Any, produced: Mapping[str, Any]) -> Any:
 
     if isinstance(reference, list):
         return [resolve(item, produced) for item in reference]
-    if isinstance(reference, str):
-        return produced.get(reference)
+    if isinstance(reference, (str, tuple)):
+        resolved = produced.get(reference)
+        return resolved.get("value") if isinstance(resolved, dict) and "identity" in resolved else resolved
     return None
 
 
 def output_value(
     artifacts: Mapping[str, Mapping[str, Any]], value: Any, name: str
 ) -> Any:
-    """What one declared output of a succeeded result resolves to.
-
-    A filesystem output resolves to its recorded address, because that is what
-    a downstream command opens, and because reading the bytes on a caller's
-    behalf would be a second, unrecorded notion of what the output is. A stream
-    or returned output resolves to what was recorded under that name. An output
-    with no recorded artifact resolves to the whole returned value, which is
-    all an operation declaring nothing about where its result lands produced.
-
-    Shared for the same reason the rest of this module is: the façade reads an
-    exported output by name, and a second copy of this rule would let a study
-    mean one thing to a downstream input and another to the caller reading the
-    same output.
-    """
+    """Resolve one captured named port to its address or value; missing names refuse."""
 
     artifact = artifacts.get(name)
     if artifact is None:
-        return value
+        raise KeyError(f"missing named output {name!r}")
     return artifact.get("address", artifact.get("value"))
 
 
-def produced_by(item: PlannedInvocation, result: Any) -> dict[str, Any]:
+def produced_by(item: PlannedInvocation, result: Any, *, root=None) -> dict[Any, Any]:
     """What this invocation contributes under the keys that reference it.
 
     A filesystem output contributes its address, because that is what a
@@ -124,11 +113,14 @@ def produced_by(item: PlannedInvocation, result: Any) -> dict[str, Any]:
     """
 
     return {
-        f"output:{item.input_digest}:{name}": output_value(
-            result.artifacts, result.value, name
-        )
-        for name in item.output_names or ("",)
+        (item.invocation_id, name): {
+            "identity": result.artifacts[name].get("identity", f"output:{item.input_digest}:{name}"),
+            "value": output_value(result.artifacts, result.value, name),
+            "producer": {"record_root": str(Path(root).resolve()) if root else None, "record": result.record, "try_number": result.try_number, "output": name},
+        }
+        for name in item.output_names
     }
+
 
 
 def select_transport(
@@ -156,7 +148,7 @@ def select_transport(
 def build_bundle(
     item: PlannedInvocation,
     *,
-    produced: Mapping[str, Any],
+    produced: Mapping[Any, Any],
     placement_name: str,
     transport: Transport,
     outputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None,
@@ -176,7 +168,17 @@ def build_bundle(
     }
     bundle["resolved_inputs"] = {
         name: resolve(reference, produced)
-        for name, reference in item.bundle["inputs"].items()
+        for name, reference in item.bundle.get("input_references", item.bundle["inputs"]).items()
+    }
+    def evidence(reference):
+        if isinstance(reference, list):
+            return [evidence(member) for member in reference]
+        entry = produced.get(reference)
+        if isinstance(entry, dict) and "identity" in entry:
+            return entry
+        return {"identity": reference, "value": entry, "source": item.bundle.get("source_declarations", {}).get(reference)}
+    bundle["input_evidence"] = {
+        name: evidence(ref) for name, ref in item.bundle.get("input_references", {}).items()
     }
     declared = (outputs or {}).get(item.operation)
     if declared:

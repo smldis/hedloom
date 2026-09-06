@@ -160,12 +160,10 @@ class OwnedExecution:
 
 
 class ExecutionOwner:
-    """An explicit, process-local owner of active compatible bound graphs.
+    """Session table of active invocations with compatible finalized bindings.
 
-    A graph is the sharing unit for this first implementation. Keeping its
-    already-finished predecessors with active successors makes staggered
-    arrivals safe without predicting which tries a second traversal would use.
-    A terminal graph is never a cache: a subsequent submission re-enters Exec.
+    Completed entries can be replaced. Consumers retain their exact entry until
+    release, which checks object identity before removing a table generation.
     """
 
     def __init__(self, root):
@@ -174,21 +172,17 @@ class ExecutionOwner:
         self.groups = {}
         self.client = None
 
-    def group(self, key, count, client):
-        # Caller holds lock across binding all consumers and submitting tasks.
-        if self.client is not None and self.client is not client:
-            raise ExecutionError('an execution owner cannot span Dask clients')
-        self.client = client
-        group = self.groups.get(key)
-        if group is not None and (
-            all(entry.future is not None and entry.future.done() for entry in group)
-            or any(entry.handle.state() == 'cancelled' for entry in group)
-        ):
-            group = None
-        if group is None:
-            group = [OwnedExecution(ExecutionHandle.create(self.root)) for _ in range(count)]
-            self.groups[key] = group
-        return group
+    def entry(self, key, client=None, handle=None):
+        """Look up one ready compatible invocation. Caller holds the owner lock."""
+        if client is not None:
+            if self.client is not None and self.client is not client:
+                raise ExecutionError('an execution owner cannot span Dask clients')
+            self.client = client
+        entry = self.groups.get(key)
+        if entry is None or (entry.future is not None and entry.future.done()) or entry.handle.state() == 'cancelled':
+            entry = OwnedExecution(handle or ExecutionHandle.create(self.root))
+            self.groups[key] = entry
+        return entry
 
     def withdraw(self, entry, consumer):
         with self.lock:
@@ -201,12 +195,12 @@ class ExecutionOwner:
                 return 'blocked'
             return 'preserve'
 
-    def release(self, group, consumer):
+    def release(self, entry, consumer):
         with self.lock:
-            for entry in group:
-                entry.consumers.discard(consumer)
+            entry.consumers.discard(consumer)
+            # An old consumer can never remove a replacement generation.
             for key, existing in list(self.groups.items()):
-                if not any(entry.consumers for entry in existing):
+                if existing is entry and not entry.consumers:
                     self.groups.pop(key)
 
     def close(self):

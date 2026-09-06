@@ -38,8 +38,10 @@ That is the whole of what belongs in this package: the composition, and the one
 
 ## Staged plans
 
-An invocation may itself author and submit an inner Plan — see
-`../studies/ota_pvt_clean_nested.py`. Nothing here is result-dependent control:
+An invocation may itself author and submit an inner Plan — see the
+[nested-studies example](../../examples/nested_studies.py), including its
+[Session and capacity requirements](../guide/running.md#nested-studies-in-one-session).
+Nothing here is result-dependent control:
 no plan branches on its own result. Plans are *staged* instead — each one is
 fully determined at the moment it is authored, and a later stage is authored
 only after the earlier stage has already produced the ordinary Python values it
