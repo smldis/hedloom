@@ -28,6 +28,12 @@ computation; changed bytes select a new one. The runnable
 [live-source example](../../examples/live_source.py) exercises this using a
 local dictionary as its service and one worker slot.
 
+For nested submission through the same live Session, see the separate
+[nested-studies example](../../examples/nested_studies.py) and
+[Session guidance](running.md#nested-studies-in-one-session). Fresh acquisition
+no longer requires staging, but nesting remains available for integrating a
+study submitted from an operation.
+
 ## Identity and ownership
 
 | Declaration | Reuse identity | Payload work |

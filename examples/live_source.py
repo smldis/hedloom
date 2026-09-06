@@ -3,6 +3,10 @@
 Run with ``python examples/live_source.py``. A local dictionary stands in for
 an external service. Acquisition is an ordinary operation in one static Plan;
 content identity stops unchanged observations invalidating downstream work.
+
+The three submissions share one Session. For an operation that submits an inner
+study through that same Session, see ``nested_studies.py``. Nesting is still
+supported, but fetching fresh data no longer requires it.
 """
 from pathlib import Path
 import sys

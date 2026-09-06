@@ -60,6 +60,36 @@ where the cap does **not** hold: two *separate* sessions each have their own
 cluster and therefore their own budget, so two controllers can put twice
 `max_jobs` on the farm.
 
+## Nested studies in one Session
+
+An operation can author and submit an inner study through the Session already
+open. The runnable [nested-studies example](../../examples/nested_studies.py)
+does this on local in-process workers. Its wrapper executes every submission;
+the two inner operations reuse their records for unchanged text.
+
+Both levels call the same `Session.submit(...)`. Reusing a `Site` alone shares
+storage declarations, not live workers: a separate `Study.submit(site=...)`
+opens another Session and its own compute budget.
+
+Two details matter in the example:
+
+- The wrapper retains a local placement slot while waiting. The Site declares
+  two slots so the inner work has one available. A single slot causes the graph
+  kernel to refuse with `NestedCapacityExhausted`; a separate wrapper placement
+  can also provide headroom. Account for all concurrent wrappers when sizing it.
+- An [imported state module](../../examples/nested_studies_state.py) holds the
+  Session reference. A body defined in `__main__` is serialized by value, so a
+  direct Session global would attempt to serialize its locks. The module travels
+  by reference and reaches the existing Session on in-process workers. This
+  wiring does not give a separate process or remote worker access to the Session.
+  The caller clears the reference in `finally` before leaving the Session.
+
+The outer Plan contains the wrapper; the inner Plan is authored and saved when
+the wrapper submits it. Each Plan remains static, but inspecting the outer Plan
+alone does not show the inner work. Prefer flow composition when the whole graph
+can be authored together. [Fresh acquisition](runtime-artifacts.md) now works in
+one Plan and does not require nesting.
+
 ## Running less, or running elsewhere: `override`
 
 An override speaks the profile's own vocabulary and applies to this session

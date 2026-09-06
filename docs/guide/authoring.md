@@ -260,8 +260,9 @@ around it. The open architectural question is recorded in
 `docs/vision/open-concepts.md` at the repository root.
 
 *Staged* plans are a different thing and are already demonstrated: an invocation
-may author and submit an inner Plan (`../../studies/ota_pvt_clean_nested.py`).
-Each
-plan is still fully determined when authored; a later stage is authored only
+may author and submit an inner Plan. The
+[nested-studies example](../../examples/nested_studies.py) demonstrates this
+using [one shared Session](running.md#nested-studies-in-one-session).
+Each plan is still fully determined when authored; a later stage is authored only
 after an earlier one produced ordinary Python values. See
 [internals](../internals/index.md#staged-plans).
