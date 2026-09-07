@@ -48,10 +48,10 @@ class Located:
     identity: Any
 
 
-def located(path, *, identity):
-    """Return a filesystem location with its author's explicit artifact identity."""
+def located(path, *, identity=None):
+    """Return a filesystem location; declared identity outputs also require identity."""
     from hedloom_exec.artifacts import canonical_identity
-    return Located(str(Path(path).resolve()), canonical_identity(identity))
+    return Located(str(Path(path).resolve()), canonical_identity(identity) if identity is not None else None)
 
 
 def _named_data(produced):

@@ -43,8 +43,8 @@ open hypothesis, not settled by retaining the instrument inside this unit.
 Runtime identity sharpens the boundary between a static Plan and execution:
 Flow fixes topology, placement, execution mode, and output identity/ownership;
 exact downstream computation identities may become known later. The authoring
-surface supports producer identity by default, owned-file content identity, and
-filesystem declared identity. Borrowed declarations require declared identity
+surface supports producer identity by default, file content identity, and
+filesystem declared identity. Borrowed declarations require declared identity or file content identity
 and omit a workspace path. Unsupported combinations refuse during declaration.
 
 Authored operations and flow boundaries always resolve readable keys: explicit,

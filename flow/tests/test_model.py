@@ -551,3 +551,14 @@ def test_authored_key_values_and_scoped_namespace_are_validated_in_the_model():
     assert "duplicate_authored_key" in codes
     assert "keyed_invoke_id_mismatch" in codes
     assert "keyed_flow_id_mismatch" in codes
+
+
+@pytest.mark.parametrize("binding", [
+    {"external": True, "identity": "content", "filesystem_kind": "directory"},
+    {"external": True, "identity": "content", "path": "payload"},
+    {"external": True, "identity": "producer"},
+    {"identity": "content"},
+])
+def test_invalid_content_and_external_output_contracts(binding):
+    with pytest.raises(ContractError):
+        OutputContract("payload", RAW, binding=binding)

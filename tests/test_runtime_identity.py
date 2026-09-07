@@ -348,3 +348,65 @@ def test_one_completion_projects_multiple_invocations(tmp_path):
     history = RunHistory(site.history_root)
     assert history.invocation(run.run_id, "one").execution_id == history.invocation(run.run_id, "two").execution_id
     assert (tmp_path / "calls").read_text().splitlines() == [str(tmp_path)]
+
+
+@operation(execution="each_submission", config={"path": parameter(str)},
+           outputs={"document": file(kind="document", external=True, identity="content")})
+def acquire_external_file(path):
+    return {"document": located(path)}
+
+
+@study
+def external_file_study(path):
+    return read_tail.named("read")(acquire_external_file.named("pull")(path=path))
+
+
+@pytest.mark.parametrize("sequential", [True, False])
+@pytest.mark.parametrize("size", [1024, 65 * 1024 * 1024])
+def test_external_content_identity(tmp_path, sequential, size):
+    source = tmp_path / "source"
+    with source.open("wb") as stream:
+        stream.truncate(size)
+        stream.seek(size - 1)
+        stream.write(b"A")
+    stamp = source.stat()
+    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    with session(site, sequential=sequential) as live:
+        a = live.submit(external_file_study(str(source)), name="a")
+        same = live.submit(external_file_study(str(source)), name="same")
+        with source.open("r+b") as stream:
+            stream.seek(size - 1)
+            stream.write(b"B")
+        os.utime(source, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        changed = live.submit(external_file_study(str(source)), name="changed")
+    assert all(run.succeeded for run in (a, same, changed))
+    assert len({run["pull"].record for run in (a, same, changed)}) == 3
+    assert same["read"].reused and not changed["read"].reused
+    assert changed["read"].value == {"tail": "B"}
+    for run in (a, same, changed):
+        ref = run["pull"].artifacts["document"]
+        assert ref["address"] == str(source)
+        assert ref["ownership"] == "borrowed"
+    assert a["pull"].artifacts["document"]["identity"] != changed["pull"].artifacts["document"]["identity"]
+
+
+@pytest.mark.parametrize("shape", ["missing", "directory"])
+def test_external_content_requires_existing_file(tmp_path, shape):
+    source = tmp_path / "source"
+    if shape == "directory":
+        source.mkdir()
+    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    run = external_file_study(str(source)).submit(site=site, name="invalid", sequential=True)
+    assert not run.succeeded
+
+
+def test_declared_external_identity_is_still_required(tmp_path):
+    from hedloom.binding import _named_data
+    from hedloom_exec.artifacts import capture_outputs, MissingOutput
+    source = tmp_path / "source"
+    source.write_text("payload")
+    with pytest.raises(MissingOutput, match="explicit identity"):
+        capture_outputs(
+            {"document": {"external": True, "identity": "declared", "filesystem_kind": "file"}},
+            workdir=None, value=_named_data({"document": located(source)}),
+        )

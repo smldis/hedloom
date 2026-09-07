@@ -283,3 +283,9 @@ The immediate children are `hedloom-flow`, `hedloom-exec`, and `hedloom-run`,
 authored as `flow`, `exec`, and `run` in `unit.toml`. Their composition is the
 operator-facing join this ontology owns; containment grants Hedloom no
 authority over the narrower contracts each child retains.
+
+External file outputs may request content identity without transferring ownership.
+Flow validates the file declaration, the facade accepts `located(path)` without
+an author identity, and Exec hashes the borrowed file at capture. Consumers reuse
+by captured bytes; the author still guarantees payload stability and accessibility
+while dependents use it. This separates identity calculation from file ownership.
