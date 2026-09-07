@@ -266,7 +266,7 @@ mode's design premise is wrong and needs revisiting.
 
 Adopted: ordinary operations may require fresh execution per submission, with a
 durable observation identifier selecting a separate computation record. Tries
-keep their retry/recovery meaning. Producer identity remains the default; owned
+keep their retry/recovery meaning. Producer identity remains the default; owned or borrowed
 files may request full-byte content identity, and filesystem outputs may carry
 a canonical declared identity. Borrowed locations remain externally owned.
 

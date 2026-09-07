@@ -63,7 +63,7 @@ its siblings are reused and the earlier results keep their own records.
 ## Current contracts
 
 Output identity now includes an explicit choice: economical producer identity,
-full-byte content hashing for owned files, or canonical author-declared identity
+full-byte content hashing for owned or borrowed files, or canonical author-declared identity
 for filesystem outputs. Manifests retain identity and workspace/borrowed ownership.
 Named returned values are captured individually and required missing names fail.
 Borrowed payloads are never traversed for inventory, copied, frozen or deleted by

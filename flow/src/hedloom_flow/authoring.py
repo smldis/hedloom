@@ -375,11 +375,11 @@ def directory(path: str | None = None, *, kind: str = "directory", identity: str
 def _filesystem_output(path, kind, shape, identity, external):
     if identity not in {"producer", "declared", "content"}:
         raise AuthoringError(f"unknown output identity {identity!r}")
-    if identity == "content" and (shape != "file" or external):
-        raise AuthoringError("content identity requires an owned file")
+    if identity == "content" and shape != "file":
+        raise AuthoringError("content identity requires a file")
     if external:
-        if path is not None or identity != "declared":
-            raise AuthoringError("external outputs require declared identity and no workspace path")
+        if path is not None or identity not in {"declared", "content"}:
+            raise AuthoringError("external outputs require declared or content identity and no workspace path")
     elif not isinstance(path, str) or not path:
         raise AuthoringError("owned outputs require a workspace-relative path")
     binding = {"filesystem_kind": shape, "identity": identity, "external": external}

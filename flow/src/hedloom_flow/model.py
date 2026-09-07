@@ -290,10 +290,10 @@ class OutputContract:
                 raise ContractError("unknown output identity")
             if type(external) is not bool:
                 raise ContractError("output external must be bool")
-            if external and (mode != "declared" or "path" in binding):
-                raise ContractError("external outputs require declared identity and no workspace path")
-            if mode == "content" and (external or shape != "file" or "path" not in binding):
-                raise ContractError("content identity requires an owned file")
+            if external and (mode not in {"declared", "content"} or "path" in binding):
+                raise ContractError("external outputs require declared or content identity and no workspace path")
+            if mode == "content" and (shape != "file" or (not external and "path" not in binding)):
+                raise ContractError("content identity requires a file")
             if mode == "declared" and not external and "path" not in binding:
                 raise ContractError("declared identity requires a filesystem output")
             if shape not in {"file", "directory"}:

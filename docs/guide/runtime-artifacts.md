@@ -39,13 +39,33 @@ study submitted from an operation.
 | Declaration | Reuse identity | Payload work |
 | --- | --- | --- |
 | Default `identity="producer"` | Producer computation digest and output name | No content hashing |
-| Owned file with `identity="content"` | Artifact contract, representation and full-file digest | Streams every byte, regardless of size or mtime |
+| Owned or external file with `identity="content"` | Artifact contract, representation and full-file digest | Streams every byte, regardless of size or mtime |
 | Filesystem output with `identity="declared"` | Artifact contract, representation and author's canonical JSON identity | Trusts the declaration |
 
-Content identity initially supports owned files only. Directory, stream and
+Content identity supports owned and external files. Directory, stream and
 returned-value content identity refuse. Ordinary intermediates keep the
 economical producer default. A content/declared boundary can preserve downstream
 reuse when acquisition code changes but its output identity stays equal.
+
+An external file can use automatic content hashing without being copied:
+
+```python
+from hedloom import located
+
+@operation(execution="each_submission",
+           outputs={"document": file(kind="document", external=True,
+                                      identity="content")})
+def pull_document():
+    return {"document": located(fetch_document_path())}  # author-supplied puller
+```
+
+Omit the workspace filename and the `located` identity: Exec hashes every byte
+of the returned file at capture. Equal bytes allow downstream reuse even at a
+different path; changed bytes invalidate consumers. The path remains borrowed:
+Hedloom does not copy, freeze, restore, or delete it. The author must keep it
+stable and accessible to consumers, including farm workers, while they use it.
+Hashing captures identity; it does not enforce immutability. Referenced files
+are separate dependencies and are not included in this file's digest.
 
 Borrowed repository checkouts require no copying or hashing:
 

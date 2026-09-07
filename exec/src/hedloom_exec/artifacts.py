@@ -240,7 +240,7 @@ def capture_outputs(
         mode = declaration.get("identity", "producer")
         supplied = value.get(name) if isinstance(value, Mapping) else None
         if declaration.get("external"):
-            if mode != "declared" or not isinstance(supplied, Mapping) or "location" not in supplied:
+            if mode not in {"declared", "content"} or not isinstance(supplied, Mapping) or "location" not in supplied:
                 raise MissingOutput(f"output {name!r} requires a named located value")
             if not isinstance(supplied["location"], str):
                 raise MissingOutput(f"output {name!r} location must be an absolute path string")
@@ -301,8 +301,8 @@ def capture_outputs(
             ref = replace(ref, identity={"mode": mode, "artifact": declaration.get("artifact"),
                                         "representation": ref.kind, "value": canonical})
         elif mode == "content":
-            if ref.kind != "file" or ref.ownership != "workspace":
-                raise OutputDeclarationError("content identity requires an owned file")
+            if ref.kind != "file":
+                raise OutputDeclarationError("content identity requires a file")
             ref = replace(ref, identity={"mode": mode, "artifact": declaration.get("artifact"),
                                         "representation": ref.kind, "value": fingerprint_content(ref.address)})
         elif mode != "producer":

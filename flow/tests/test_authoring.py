@@ -1082,3 +1082,14 @@ def test_one_plan_at_a_time_still_holds_when_the_scope_is_a_decorator():
 
     with pytest.raises(PlanningScopeError, match="nested plan contexts"):
         outer()
+
+
+@pytest.mark.parametrize("factory, options", [
+    ("file", {"external": True}),
+    ("file", {"external": True, "identity": "content", "path": "file.txt"}),
+    ("directory", {"external": True, "identity": "content"}),
+])
+def test_invalid_external_identity_declarations(factory, options):
+    import hedloom_flow
+    with pytest.raises(hedloom_flow.AuthoringError):
+        getattr(hedloom_flow.authoring, factory)(**options)
