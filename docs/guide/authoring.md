@@ -266,3 +266,18 @@ using [one shared Session](running.md#nested-studies-in-one-session).
 Each plan is still fully determined when authored; a later stage is authored only
 after an earlier one produced ordinary Python values. See
 [internals](../internals/index.md#staged-plans).
+
+
+## Editing and rerunning a script
+
+Rerunning a script with IPython `%run` or reloading its module may redefine an
+operation from the same source file and qualified function name. Edited source
+gets its own implementation fingerprint. Newly built studies use the matching
+registered definition; existing studies and previously captured Plans retain
+their matching bodies rather than silently using the latest replacement.
+Different source functions cannot claim an already registered operation name.
+Moving a study definition within its file does not create a name collision.
+
+This is source reloading, not a snapshot of Python globals, imported libraries,
+or external state. Declare changing dependencies as inputs or configuration;
+source-unavailable bodies still require explicit version discipline.
