@@ -297,3 +297,7 @@ captured Plans. Different source origins still cannot claim the same operation
 name. This supports editing within a long-lived process without treating a name
 as sufficient evidence that a replacement body implements an older Plan. Python
 globals and imported state are not snapshotted by this binding.
+
+Run discovery accepts either a Site profile or a direct history root. Saved run
+metadata supplies execution locations, so inspecting a Python-authored Site's
+results does not require reconstructing its placement configuration as TOML.

@@ -86,7 +86,12 @@ def _parser() -> argparse.ArgumentParser:
         actions = parent.add_subparsers(dest="action", required=True)
         for action in (("list", "show", "path") if group == "runs" else ("list", "show")):
             leaf = actions.add_parser(action)
-            leaf.add_argument("--site", required=True)
+            if group == "runs":
+                source = leaf.add_mutually_exclusive_group(required=True)
+                source.add_argument("--site", help="site TOML naming the history root")
+                source.add_argument("--history-root", help="saved run history directory")
+            else:
+                leaf.add_argument("--site", required=True)
             if action != "path":
                 leaf.add_argument("--json", action="store_true")
             if action == "list":
@@ -290,7 +295,7 @@ def _prune(arguments: argparse.Namespace) -> int:
 def _discover(arguments):
     from hedloom.discovery import RunHistory, list_attempts
     try:
-        site = Site.from_file(arguments.site)
+        site = Site.from_file(arguments.site) if arguments.site else None
         if arguments.command == "attempts":
             options = ({"since": arguments.since, "outcome": arguments.outcome}
                        if arguments.action == "list" else
@@ -299,7 +304,7 @@ def _discover(arguments):
             if arguments.action == "show" and not data:
                 raise ValueError("selected record/try is unavailable")
         else:
-            history = RunHistory(site.history_root)
+            history = RunHistory(site.history_root if site is not None else arguments.history_root)
             if arguments.action == "path":
                 print(history.resolve_path(arguments.run_id, arguments.invocation,
                       workspace=arguments.workspace, journal_dir=arguments.journal_dir))

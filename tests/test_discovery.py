@@ -407,3 +407,51 @@ def test_reused_workspace_comes_from_receipt_not_new_site_root(tmp_path):
     assert second['answer.1'].reused
     assert history.resolve_path(first.run_id, 'answer.1', workspace=True) == history.resolve_path(second.run_id, 'answer.1', workspace=True)
     assert not (tmp_path / 'new-work').exists()
+
+
+def test_cli_history_root_matches_site_without_writing(tmp_path, capsys, monkeypatch):
+    from hedloom.cli import main
+    site = site_for(tmp_path)
+    run = subject().submit(site=site, name='cli-history', sequential=True)
+    profile = tmp_path / 'site.toml'
+    profile.write_text('[study]\nroot="records"\nhistory_root="history"\n')
+    monkeypatch.chdir(tmp_path)
+    capsys.readouterr()
+    before = {str(p): p.stat().st_mtime_ns for p in tmp_path.rglob('*')}
+    for arguments in (
+        ['list', '--name', 'cli-history', '--json'],
+        ['show', run.run_id, '--json'],
+        ['show', run.run_id, '--invocation', 'answer.1', '--json'],
+        ['path', run.run_id, '--invocation', 'answer.1', '--workspace'],
+        ['path', run.run_id, '--invocation', 'answer.1', '--journal-dir'],
+    ):
+        assert main(['runs', *arguments, '--site', str(profile)]) == 0
+        expected = capsys.readouterr()
+        assert main(['runs', *arguments, '--history-root', 'history']) == 0
+        actual = capsys.readouterr()
+        assert actual.out == expected.out
+        assert actual.err == expected.err == ''
+    after = {str(p): p.stat().st_mtime_ns for p in tmp_path.rglob('*')}
+    assert before == after
+
+
+@pytest.mark.parametrize('arguments', [
+    ['list'], ['show', 'test.1'],
+    ['path', 'test.1', '--invocation', 'answer.1', '--workspace'],
+])
+@pytest.mark.parametrize('source', [[], ['--site', 'site.toml', '--history-root', 'history']])
+def test_cli_runs_requires_one_history_source(arguments, source):
+    from hedloom.cli import main
+    with pytest.raises(SystemExit) as error:
+        main(['runs', *arguments, *source])
+    assert error.value.code == 2
+
+
+def test_cli_history_root_missing_run_reports_error_without_writing(tmp_path, capsys):
+    from hedloom.cli import main
+    root = tmp_path / 'absent'
+    assert main(['runs', 'show', 'missing.1', '--history-root', str(root)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'hedloom runs:' in captured.err
+    assert not root.exists()
