@@ -103,6 +103,30 @@ Each outcome carries `authored_key`, `operation`, `input_digest`,
 **result tooling — a summary table, a run diff — is a consumer of this data and
 needs no change to hedloom.**
 
+`disposition` describes how the invocation was handled; `outcome` describes
+its result. Reused results have `disposition="reused"`, fresh claims use
+`"claimed"`, and attachment to an existing attempt uses `"attached"`.
+Other dispositions include `"skipped"`, `"refused"`, and `"withdrawn"`.
+`item.reused` tests for reuse; `item.ran` includes claims and attachments.
+
+```python
+for item in run.report.outcomes:
+    print(
+        item.disposition,
+        item.authored_key or item.invocation_id,
+        item.outcome,
+        item.error or item.block_reason or "",
+    )
+```
+
+Live reporting, final summaries, and newly saved invocation outcomes use the
+same public vocabulary. Older saved invocation outcomes may contain
+`"completed"` for reuse; historical records are not rewritten. Low-level Exec
+results and execution selection records still use `"completed"`, describing
+selection of an already-published result. Consumers comparing public disposition
+strings should replace `"completed"` with `"reused"` (or use `item.reused`);
+tools reading historical outcome data must recognize both spellings.
+
 `record` and `try_number` are the exact execution this invocation landed on:
 the content-addressed record, and the try whose evidence was published or
 reused. They are what to pin, prune around, or read back later, and they are

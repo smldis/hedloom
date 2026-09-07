@@ -385,7 +385,7 @@ def all_reused(site: Site) -> bool:
         1
         for run in runs.values()
         for outcome in run.report.outcomes
-        if outcome.disposition == "completed"
+        if outcome.reused
     )
     print(f"    farm jobs spent: {len(spans)}   invocations reused: {reused}/16")
     if any(failures(run) for run in runs.values()):

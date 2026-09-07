@@ -252,7 +252,7 @@ def _run_one_here(
             authored_key=item.authored_key,
             operation=item.operation,
             input_digest=item.input_digest,
-            disposition=result.disposition or "ran",
+            disposition="reused" if result.disposition == "completed" else result.disposition or "ran",
             outcome=result.outcome,
             placement=placement_name,
             value=result.value,

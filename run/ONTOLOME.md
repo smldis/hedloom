@@ -194,7 +194,9 @@ Cross-Session joining and automatic recovery remain outside this prototype.
 - Both kernels return the executor's `record` and `try_number` on
   `InvocationOutcome`, so a consumer holds the exact execution an invocation
   landed on without either readiness kernel recomputing identity or scanning
-  the store. `disposition` distinguishes completed reuse from a fresh launch.
+  the store. Public `disposition="reused"` distinguishes reused evidence from a
+  fresh launch. The shared projection translates Exec's `completed` selection
+  into `reused`; Exec selection records retain their protocol vocabulary.
   Neither kernel passes any requester name into execution: a record is selected
   by the declared computation, and the authored key stays where it belongs, on
   the report.

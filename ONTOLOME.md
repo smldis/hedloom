@@ -44,6 +44,12 @@ below provide bounded evidence for that benefit. They do not settle whether
 every current convenience belongs in this facade: a convenience that repeatedly
 restates a child's rules would challenge the present boundary, even if it works.
 
+Public invocation outcomes use Run's `reused` disposition consistently in live
+reporting, summaries, and newly written consumer history. Exec selection evidence
+keeps its `completed` protocol term; older consumer history is readable without
+rewriting its recorded spelling. This boundary keeps selection facts intact while
+letting study authors report reuse without translating executor terminology.
+
 Run history implements the operator-facing join between named submissions and
 shared execution evidence. Every submission requires a chosen name and separate
 Site history root. Permanent occurrences, saved Plans and readable scoped
