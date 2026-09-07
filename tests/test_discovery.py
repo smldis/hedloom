@@ -93,6 +93,42 @@ def test_separate_histories_reuse_exact_reference_and_none(tmp_path):
     assert before == after
 
 
+def test_reuse_reporting_and_history_keep_public_and_selection_vocabularies(tmp_path, capsys):
+    from hedloom.history import selection_documents
+    from hedloom.session import _printer
+
+    site = site_for(tmp_path)
+    first = subject().submit(site=site, name='reporting', sequential=True)
+    second = subject().submit(site=site, name='reporting', sequential=True, watch=True)
+    item = second.report.outcomes[0]
+    assert first.report.outcomes[0].disposition == 'claimed'
+    assert first.report.outcomes[0].ran
+    assert item.disposition == 'reused' and item.reused and not item.ran
+    assert second.report.reused == (item,) and second.report.ran == ()
+    assert 'reused' in second.summary() and 'completed' not in second.summary()
+    live = capsys.readouterr().out
+    assert 'reused' in live and 'completed' not in live
+    _printer('session')(item)
+    live = capsys.readouterr().out
+    assert 'reused' in live and 'completed' not in live
+
+    location = Path(second.history.location)
+    log = location / 'events.jsonl'
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    outcome = next(row['data'] for row in events if row['event'] == 'invocation_outcome')
+    assert outcome['disposition'] == 'reused'
+    selection, _, _ = selection_documents(location, item.invocation_id)
+    assert selection['disposition'] == 'completed'
+    assert (selection['record'], selection['try_number']) == (item.record, item.try_number)
+
+    # Older outcome spelling remains readable, without rewriting its evidence.
+    outcome['disposition'] = 'completed'
+    log.write_text(''.join(json.dumps(row) + '\n' for row in events))
+    historical = log.read_bytes()
+    assert RunHistory(site.history_root).read_run(second.run_id).run_id == second.run_id
+    assert log.read_bytes() == historical
+
+
 def test_torn_tail_corruption_and_unknown_schema(tmp_path):
     run = subject().submit(site=site_for(tmp_path), name='tail', sequential=True)
     location = Path(run.history.location)

@@ -63,7 +63,7 @@ class InvocationOutcome:
 
     @property
     def reused(self) -> bool:
-        return self.disposition == "completed"
+        return self.disposition == "reused"
 
     @property
     def ran(self) -> bool:

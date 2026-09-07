@@ -269,6 +269,7 @@ def test_a_result_recorded_by_one_kernel_is_reused_by_the_other(client, tmp_path
     )
 
     assert all(item.reused for item in graphed.outcomes), graphed.summary()
+    assert {item.disposition for item in graphed.outcomes} == {"reused"}
 
 
 def test_stopped_reports_have_the_same_shape_in_both_kernels(client, tmp_path):
