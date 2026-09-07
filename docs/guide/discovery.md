@@ -38,6 +38,19 @@ hedloom runs path --site site.toml investigate-start.1 --invocation prepare.1 --
 cd "$(hedloom runs path --site site.toml investigate-start.1 --invocation prepare.1 --workspace)"
 ```
 
+If the submitting script constructed `Site(...)` in Python, supply its
+`history_root` directly; no TOML profile or original script is needed:
+
+```sh
+hedloom runs list --history-root /shared/studies/history
+hedloom runs show --history-root /shared/studies/history investigate-start.1 --json
+hedloom runs path --history-root /shared/studies/history investigate-start.1 --invocation prepare.1 --workspace
+```
+
+`runs list`, `runs show`, and `runs path` require exactly one of `--site` or
+`--history-root`. Relative history paths resolve against the current directory.
+The saved run metadata supplies the record and workspace roots.
+
 List results are newest first. `--study` filters the authored definition.
 Date-only `--since` means UTC midnight; timestamps require an explicit timezone.
 A path command prints exactly one existing absolute directory and newline on
