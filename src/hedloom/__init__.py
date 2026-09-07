@@ -100,7 +100,8 @@ __all__ = [
 
 _IMPLEMENTATIONS: dict[str, Callable[..., Any]] = {}
 _OPERATION_DEFINITIONS: dict[str, Any] = {}
-_STUDY_BUILDERS: dict[str, tuple[str | None, int | None]] = {}
+_VERSIONED_IMPLEMENTATIONS: dict[Any, Callable[..., Any]] = {}
+_STUDY_BUILDERS: dict[str, tuple[str | None, str | int | None]] = {}
 
 
 def operation(
@@ -120,17 +121,25 @@ def operation(
     def decorate(body: Callable[..., Any]) -> Any:
         declared = inner(body)
         existing = _OPERATION_DEFINITIONS.get(declared.identity.name)
-        if existing is not None and existing != declared.definition:
+        if (existing is not None and existing != declared.definition
+                and _study_origin(_IMPLEMENTATIONS[declared.identity.name]) != _study_origin(body)):
             raise ValueError(
                 f"operation identity {declared.identity.name!r} is already "
                 "bound to a different body"
             )
         _OPERATION_DEFINITIONS[declared.identity.name] = declared.definition
         _IMPLEMENTATIONS[declared.identity.name] = body
+        _VERSIONED_IMPLEMENTATIONS[declared.definition] = body
         return declared
 
     # `@operation` bare, for a body that declares nothing but its signature.
     return decorate(function) if function is not None else decorate
+
+
+def _implementations_for(plan: Plan) -> Mapping[str, Callable[..., Any]]:
+    """Bind the exact definitions captured by the plan, including older reloads."""
+    return {definition.identity.name: _VERSIONED_IMPLEMENTATIONS[definition]
+            for definition in plan.operations if definition in _VERSIONED_IMPLEMENTATIONS}
 
 
 def implementations() -> Mapping[str, Callable[..., Any]]:
@@ -194,9 +203,10 @@ class StudyBuilder:
     declared: Mapping[str, Any] | None = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Study:
+        plan = self.build(*args, **kwargs)
         return Study(
-            self.build(*args, **kwargs),
-            self.declared or _IMPLEMENTATIONS,
+            plan,
+            self.declared if self.declared is not None else _implementations_for(plan),
             name=self.name,
         )
 
@@ -270,7 +280,7 @@ def study(
             raise TypeError("study() needs name= when given a finished Plan")
         return Study(
             subject,
-            implementations or _IMPLEMENTATIONS,
+            implementations if implementations is not None else _implementations_for(subject),
             name=_study_name(name),
         )
     if callable(subject):
@@ -312,10 +322,10 @@ def _study_name(value: object) -> str:
     return value
 
 
-def _study_origin(function: Callable[..., Any]) -> tuple[str | None, int | None]:
+def _study_origin(function: Callable[..., Any]) -> tuple[str | None, str | int | None]:
     """Identify one source declaration across ordinary module reloads."""
 
     code = getattr(function, "__code__", None)
     if code is None:
         return None, id(function)
-    return code.co_filename, code.co_firstlineno
+    return code.co_filename, function.__qualname__

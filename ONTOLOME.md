@@ -289,3 +289,11 @@ Flow validates the file declaration, the facade accepts `located(path)` without
 an author identity, and Exec hashes the borrowed file at capture. Consumers reuse
 by captured bytes; the author still guarantees payload stability and accessibility
 while dependents use it. This separates identity calculation from file ownership.
+
+Interactive source reloads may register revised operation definitions from the
+same file and qualified function name. Automatic study binding selects bodies
+by the complete Plan operation definition, retaining old versions for previously
+captured Plans. Different source origins still cannot claim the same operation
+name. This supports editing within a long-lived process without treating a name
+as sufficient evidence that a replacement body implements an older Plan. Python
+globals and imported state are not snapshotted by this binding.
