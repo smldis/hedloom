@@ -14,7 +14,9 @@ run = subject.submit(name="investigate-start", site=site, watch=True)
 
 | Argument | Default | What it does |
 | --- | --- | --- |
-| `site` | *required* | Where work runs, where records go, what addresses mean |
+| `site` | *required* | Where work runs, where records go, what addresses mean; includes a separate `history_root` |
+| `name` | *required* | Chosen submission name; each request gets a durable occurrence such as `investigate-start.1` |
+| `on_started` | `None` | Receive the durable run reference before execution |
 | `watch` | `False` | Print each invocation as it settles, **and** poll the farm queue |
 | `stop_on_failure` | `True` | On the first failure, stop admitting new work |
 | `override` | `None` | Change how this run executes, never what it means |

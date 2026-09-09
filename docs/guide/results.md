@@ -163,7 +163,7 @@ neither re-implements nor overrides it.
 * each input's selected artifact identity: producer identity propagates upstream
   declaration changes, while explicit content/declared identity can stop them;
 * a declared external source's **content** fingerprint, so editing an input
-  input file in place correctly invalidates everything that read it.
+  file in place correctly invalidates everything that read it.
 
 **Deliberately excluded**, so changing it never invalidates a result: which
 queue an invocation ran on, its walltime, cores, memory, host, and general
@@ -172,8 +172,8 @@ reuses the result it already produced — which is also why moving an operation
 between `local`, `lsf()` and `pooled()` costs nothing.
 
 The body fingerprint ignores blank lines and trailing whitespace but includes
-everything else, docstrings included. So editing an operation body reruns every
-invocation of that operation, and editing only a comment does not. That is
+everything else, including comments and docstrings. Editing either can rerun
+every invocation of that operation and downstream work whose identity changes. That is
 coarser than "the behaviour changed", deliberately: **a needless rerun costs
 time, a missed one costs correctness.**
 
@@ -200,10 +200,11 @@ outcome.try_number    # the try whose evidence was published or reused
 outcome.artifacts["result"]["address"]   # where that try's output landed
 ```
 
-That pair is the address for everything else. There is no per-study view of
-outputs and no name-shaped selector, because a record holds a computation and
-belongs to no study: two studies declaring the same work reach the same record,
-so `<study>:<key>` could only ever have named whichever of them ran first.
+That pair addresses the execution evidence. A record holds a computation and
+belongs to no study: two studies declaring the same work reach the same record.
+[Run discovery](discovery.md) separately records each named submission and its
+invocation-to-execution bindings, so a saved run can locate the exact record and
+try it consumed without assigning ownership of that record to a study.
 
 The operator commands take a record identity, or any unambiguous prefix of one,
 optionally with `#<try>`:
@@ -218,11 +219,12 @@ hedloom prune --site site.toml --record hedloom-3f9c2a10 --failed
 `pin` protects one terminal try's workspace; `prune` surveys and reclaims spent
 ones. Both address records and tries and nothing else.
 
-What this does **not** give you is a way to find a record you have no reference
-to. Discovery — listing studies, browsing runs, asking what a study produced
-last week — is not built. A caller that wants a reference later must keep the
-one its run reported. This is a real gap in the operator interface, and it is
-the piece being designed separately rather than approximated here.
+To recover a reference later, use `hedloom runs list` and `hedloom runs show`
+with the same Site, or read saved exports with `RunHistory.outputs(run_id)`.
+Every submission requires a chosen `name` and a separate `history_root`.
+`hedloom attempts list` also finds execution evidence that predates run history;
+it does not invent a study owner for it. See [run discovery](discovery.md) for
+filters, scoped invocation addresses, and workspace lookup.
 
 On disk, a layout-1 record keeps `events.jsonl`, one immutable
 `manifest/<try>.json` per terminal try, and an atomic `standing.json` pointer
@@ -270,6 +272,7 @@ Three views, answering three questions, none of which spends anything.
 `hedloom.visualize`:
 
 ```python
+import json
 import hedloom.visualize as visualize
 
 print(json.dumps(visualize.structure(subject), indent=2))

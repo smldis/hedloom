@@ -7,12 +7,15 @@ implement it. It supplies the executable part of a wider inquiry, which also
 includes intent, context, interpretation, and decisions. A completed run
 provides evidence; accepting a conclusion requires judgment about that evidence.
 
+This abbreviated example assumes `render`, `RULE`, `POINTS`, and a configured
+`site.toml`; the complete local example is `examples/grid_refinement.py`.
+
 ```python
-from hedloom import Site, artifact, file, flow, local, operation, shell, study, sweep
+from hedloom import Site, artifact, file, flow, local, lsf, operation, parameter, shell, study, sweep
 
 GRID = artifact("grid-declaration")
 
-@operation(config={"steps": parameter(int)}, outputs={"grid": file("grid.txt")})
+@operation(config={"steps": parameter(int)}, outputs={"grid": file("grid.txt", kind="grid-declaration")})
 def write_grid(out, *, steps):
     out.grid.write_text(render(steps))           # the body really runs
 
@@ -24,8 +27,10 @@ def integrate(grid, out):
 
 @flow
 def refine(points):
+    results = {}
     for point in sweep(points, key="key"):        # keyed scope per point
-        yield integrate(write_grid(steps=point["steps"]))
+        results[point["key"]] = integrate(write_grid(steps=point["steps"])).result
+    return results
 
 @study(name="grid-refinement")
 def refinement(points):

@@ -8,12 +8,15 @@ Plan and executes it. What this package adds is the join — a `submit` that run
 exactly what was authored, because it holds both halves rather than asking two
 files to agree.
 
+This abbreviated example assumes `render`, `RULE`, `POINTS`, and a configured
+`site.toml`; the complete local example is `examples/grid_refinement.py`.
+
 ```python
 from hedloom import Site, artifact, file, flow, local, lsf, operation, parameter, shell, study, sweep
 
 GRID = artifact("grid-declaration")
 
-@operation(config={"steps": parameter(int)}, outputs={"grid": file("grid.txt")})
+@operation(config={"steps": parameter(int)}, outputs={"grid": file("grid.txt", kind="grid-declaration")})
 def write_grid(out, *, steps):
     out.grid.write_text(render(steps))           # the body really runs
 
@@ -25,8 +28,10 @@ def integrate(grid, out):
 
 @flow
 def refine(points):
+    results = {}
     for point in sweep(points, key="key"):        # keyed scope per point
-        yield integrate(write_grid(steps=point["steps"]))
+        results[point["key"]] = integrate(write_grid(steps=point["steps"])).result
+    return results
 
 @study(name="grid-refinement")
 def refinement(points):
@@ -53,6 +58,7 @@ Three ideas carry the rest of this documentation:
 | If you want to | Read |
 | --- | --- |
 | write your first study | [Authoring a study](guide/authoring.md) |
+| use Codex to author, run, or inspect a study | [Hedloom study skill](guide/agent-skill.md) |
 | find a run or inspect its live workspace | [Run discovery](guide/discovery.md) |
 | run one, or several, or debug one | [Running a study](guide/running.md) |
 | point it at a farm, or tune concurrency | [Sites and placements](guide/sites.md) |
@@ -64,8 +70,8 @@ Three ideas carry the rest of this documentation:
 
 ## Runnable evidence
 
-Every snippet in this guide is taken from a file in `examples/`, and every
-printed output is real.
+The guide uses abbreviated snippets based on `examples/`; use the complete
+files below for runnable studies and checkable results.
 
 * [`examples/grid_refinement.py`](../examples/grid_refinement.py) — the whole
   path in one file, against real awk: three grid resolutions whose integral is
@@ -107,6 +113,7 @@ one level up from this package, and are where hedloom is exercised hardest.
 :caption: Using Hedloom
 
 guide/authoring
+guide/agent-skill
 guide/runtime-artifacts
 guide/running
 guide/discovery

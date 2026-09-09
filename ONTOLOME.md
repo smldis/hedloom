@@ -160,11 +160,11 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   identity, ordering and placement are all settled before a body is called, so
   writing Python cannot acquire scheduling authority.
 - `sweep(points, key=...)` opens a keyed scope, so calls inside take
-  `<point>:<operation>` unless they name a key. This is what keeps reuse from
-  depending on an author keying every call by hand, where a mistake is silent
-  staleness rather than an error.
+  `<point>:<operation>` unless they name a key. These are stable readable Plan
+  addresses; computation reuse depends on declarations and resolved inputs,
+  independently of authored keys.
 - `study(plan, name=...).summary()` shows the study name and every invocation, its operation and its
-  placement, and spends nothing. `submit(site=...)` then runs it, opening the
+  placement, and spends nothing. `submit(site=..., name=...)` then runs it, opening the
   compute the site declares for as long as the run needs it and giving it back
   afterwards. There is no kernel to choose: concurrency is each placement's own
   `max_jobs`, and a site that declares none has capacity one. `sequential=True`
