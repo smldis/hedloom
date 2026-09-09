@@ -95,6 +95,11 @@ PYTHONPATH=src:flow/src:exec/src:run/src python -m pytest -q \
 python ../composition.py docs          # from the repository root: python composition.py docs
 ```
 
+For a standalone checkout, use the documentation environment and build commands
+in `README.md`: `python tools/stage_docs.py`, then
+`python -m sphinx -b html -W --keep-going build/docs-source build/docs/html`.
+This is also the Read the Docs build, configured by `.readthedocs.yaml`.
+
 **Name all four unit test directories.** Every unit's `pyproject.toml` sets
 `testpaths = ["tests"]`, so a bare `pytest -q` from here collects only the
 façade's 107 tests and silently skips the other 502. It exits zero either way,
