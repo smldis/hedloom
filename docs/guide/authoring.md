@@ -20,10 +20,9 @@ it.** It records an invocation and hands back a handle. So a flow body cannot
 branch on a result — it never has one — and that is what lets a Plan predict
 everything that will run before anything is spent.
 
-Every snippet below is taken from a runnable example in
-[`examples/`](../../examples/grid_refinement.py), and every printed output is
-real. Nothing here is invented. The example integrates `exp(-x)` by the
-trapezoid rule at three grid resolutions — small enough to read in one sitting,
+The snippets below abbreviate the runnable
+[`grid-refinement example`](../../examples/grid_refinement.py). It integrates
+`exp(-x)` by the trapezoid rule at three grid resolutions — small enough to read in one sitting,
 and analytic, so its answer can be checked rather than believed.
 
 ## Authoring an operation
@@ -87,7 +86,7 @@ Missing required names fail the invocation; there is no whole-return fallback:
 ```python
 @operation(inputs={"result": QUADRATURE},
            outputs={"estimate": returned(kind="integral-estimate")})
-def estimate(result) -> float:
+def estimate(result) -> dict:
     ...
     return {"estimate": value}
 ```
@@ -143,10 +142,11 @@ def refinement_sweep(points):
     return {"verdict": compare.named("compare")(measured).verdict}
 ```
 
-A study is the same planning shape one level up, plus the stable name under
-which its attempts and current outputs are recorded. The decorated function is
-a **family** of study instances: its arguments change inputs, while every
-instance retains the family's name:
+A study is the same planning shape one level up, plus a stable authored
+definition name. Each submission separately chooses the name recorded in
+[run history](discovery.md). The decorated function is a **family** of study
+instances: its arguments change inputs, while every instance retains the
+family's name:
 
 ```python
 @study(name="grid-refinement", default_policy=local())
@@ -158,9 +158,9 @@ assert subject.name == "grid-refinement"
 ```
 
 Omit `name=` and Hedloom infers `module.qualname`, using the same default as
-operation and flow definitions. An explicit name is useful for a short, stable
-CLI namespace. Output names do not name a study: returning `{"psf": psf}`
-still leaves this study named `grid-refinement`.
+operation and flow definitions. An explicit definition name gives a short, stable
+`--study` filter; `submit(name=...)` chooses the run-address namespace. Output
+names do not name a study: returning `{"psf": psf}` still leaves this study named `grid-refinement`.
 
 **What the study returns is what it exports**, and those names are how the run
 is read afterwards — `run.outputs["verdict"].value`, never an aggregate over
@@ -191,7 +191,7 @@ if grid:                                    # HandleUsedAsValue (also TypeError)
 name, would be an answer about the *reference* and silently wrong about the
 *result* — no handle has a value yet to be true, false, or equal to anything.
 
-### `sweep` — keys, and why they matter for reuse
+### `sweep` — stable readable keys
 
 `sweep(points, key=...)` opens a keyed scope: every call inside takes
 `<point-key>:<operation>` unless it names its own key.
@@ -238,9 +238,9 @@ plan schema 4: 10 invocations, 0 sources
   medium:write_grid  grid_refinement.write_grid  local
 ```
 
-`study.name` is its durable operator-facing name, for authoring and run
-context. It does not reach storage: a record is selected by the computation an
-invocation declares, so a study that declares the same work as another one
+`subject.name` is its authored definition name, retained as `study_name` in
+run history. It does not select the computation record: a record is selected
+by the computation an invocation declares, so a study that declares the same work as another one
 reuses that work rather than repeating it under its own name, and neither
 study owns the record; see
 [how a study becomes work](../internals/mechanism.md). `study.plan` is the
