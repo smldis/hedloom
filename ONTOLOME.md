@@ -279,6 +279,12 @@ missed one costs correctness, but it is a limitation rather than a property.
 
 ## Child composition
 
+The standalone documentation site composes each unit's declared docs and
+resources through `tools/stage_docs.py`, preserving repository-relative links.
+Read the Docs can build this checkout without the parent workspace. The
+unit manifests remain the source of which children and documentation belong;
+generated run evidence and design records are not staged for publication.
+
 The immediate children are `hedloom-flow`, `hedloom-exec`, and `hedloom-run`,
 authored as `flow`, `exec`, and `run` in `unit.toml`. Their composition is the
 operator-facing join this ontology owns; containment grants Hedloom no

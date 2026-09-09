@@ -56,12 +56,32 @@ is honest.
 
 ## Documentation
 
-[`docs/`](docs/index.md) is the guide, built into the project's Sphinx site by
-`python composition.py docs` from the repository root. Start at
+[`docs/`](docs/index.md) is the guide. Start at
 [authoring a study](docs/guide/authoring.md), then
 [running one](docs/guide/running.md) and
 [pointing it at a farm](docs/guide/sites.md);
 [internals](docs/internals/index.md) is for working *on* the package.
+
+Build the standalone site from this checkout with Python 3.12:
+
+```console
+python -m venv .venv
+.venv/bin/python -m pip install -r docs/requirements.txt ./flow ./exec ./run .
+.venv/bin/python tools/stage_docs.py
+.venv/bin/python -m sphinx -b html -W --keep-going build/docs-source build/docs/html
+```
+
+Open `build/docs/html/index.html`. The site includes all four units' guides
+and API references, using their `unit.toml` documentation declarations.
+The parent workspace can still build its aggregate site with
+`python composition.py docs`.
+
+For hosting, import `https://github.com/smldis/hedloom` into Read the Docs,
+choose `main` as the default branch, and use `.readthedocs.yaml` as the
+configuration file. Once this configuration is on `main`, trigger the first
+build and verify the GitHub webhook is connected so pushes rebuild `latest`.
+The configuration stages these same sources and treats Sphinx warnings as
+build failures. See the [Read the Docs import guide](https://docs.readthedocs.com/platform/stable/intro/add-project.html).
 
 Two neighbouring surfaces are deliberately not part of that site. `ONTOLOME.md`
 in each unit states the contracts that unit currently guarantees, and is where a
