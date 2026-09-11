@@ -29,6 +29,7 @@ from typing import Any, Callable, Mapping
 import warnings
 import sys
 from hedloom.history import HistoryWriter, HistoryPersistence, RunReference
+from hedloom.reproducibility import Reproducibility, EnvironmentSnapshot, capture
 
 from hedloom_exec.prune import RetentionPolicy, survey
 from hedloom_exec.transport import Transport, TransportError
@@ -306,6 +307,8 @@ class Study:
         *,
         site: Site,
         name: str,
+        reproducibility: Reproducibility | None = None,
+        environment: EnvironmentSnapshot | None = None,
         on_started: Callable[[RunReference], None] | None = None,
         client: Any = None,
         override: Mapping[str, Mapping[str, Any]] | None = None,
@@ -352,12 +355,14 @@ class Study:
                 _watch_reader=_watch_reader,
             ) as live:
                 return live.submit(
-                    self, name=name, on_started=on_started, stop_on_failure=stop_on_failure, on_event=on_event
+                    self, name=name, reproducibility=reproducibility, environment=environment, on_started=on_started, stop_on_failure=stop_on_failure, on_event=on_event
                 )
 
         return self._run(
             site=site,
             name=name,
+            reproducibility=reproducibility,
+            environment=environment,
             on_started=on_started,
             client=client,
             watch=watch,
@@ -371,6 +376,8 @@ class Study:
         *,
         site: Site,
         name: str,
+        reproducibility: Reproducibility | None = None,
+        environment: EnvironmentSnapshot | None = None,
         on_started: Callable[[RunReference], None] | None = None,
         client: Any = None,
         execution_owner: Any = None,
@@ -408,7 +415,8 @@ class Study:
         writer = HistoryWriter(site, name, self.name, document,
                                {"stop_on_failure": stop_on_failure,
                                 "kernel": "sequential" if client is None else "graph",
-                                "placements": dict(site.placements)}, client)
+                                "placements": dict(site.placements)}, client,
+                               reproducibility=capture(reproducibility, self.implementations.values(), environment=environment))
         if execution_owner is None:
             from hedloom_run.execution import ExecutionOwner
             execution_owner = ExecutionOwner(Path(site.history_root) / 'executions')
@@ -582,6 +590,8 @@ def submit(
     *,
     site: Site,
     name: str,
+    reproducibility: Reproducibility | None = None,
+    environment: EnvironmentSnapshot | None = None,
     on_started: Callable[[RunReference], None] | None = None,
     on_event: Callable[[InvocationOutcome], None] | None = None,
     client: Any = None,
@@ -596,6 +606,8 @@ def submit(
     return study.submit(
         site=site,
         name=name,
+        reproducibility=reproducibility,
+        environment=environment,
         on_started=on_started,
         on_event=on_event,
         client=client,

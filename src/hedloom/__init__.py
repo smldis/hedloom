@@ -52,11 +52,12 @@ from hedloom.study import (  # noqa: F401
     submit,
 )
 
+from hedloom.reproducibility import Reproducibility, EnvironmentSnapshot, capture_environment
 from hedloom.discovery import RunHistory
 from hedloom.history import HistoryPersistence, RunReference
 
 __all__ = [
-    "located",
+    "located", "Reproducibility", "EnvironmentSnapshot", "capture_environment",
     "RunHistory", "HistoryPersistence", "RunReference",
     "ArtifactContract",
     "OutputUnavailable",
