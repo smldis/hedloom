@@ -270,6 +270,10 @@ after an earlier one produced ordinary Python values. See
 
 ## Editing and rerunning a script
 
+For a complete entry point and interactive edit/run loop, see
+[running manually from a script](running.md#running-manually-from-a-script) and
+[working in IPython](running.md#working-in-ipython).
+
 Rerunning a script with IPython `%run` or reloading its module may redefine an
 operation from the same source file and qualified function name. Edited source
 gets its own implementation fingerprint. Newly built studies use the matching
