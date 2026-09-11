@@ -77,6 +77,19 @@ class RunHistory:
             raise HistoryError('site declares no history_root')
         self.root = Path(history_root).resolve()
 
+    def reproducibility(self, run_id):
+        """Read the saved record, including records written under the old name."""
+        parse_run_id(run_id)
+        directory = self.root / 'runs' / run_id
+        header = read_json(directory / 'run.json')
+        key = 'reproducibility' if 'reproducibility' in header else 'provenance'
+        reference = header.get(key)
+        if reference is None:
+            return None
+        if reference != key + '.json':
+            raise HistoryError('invalid reproducibility reference')
+        return read_json(directory / reference)
+
     def read_run(self, run_id):
         name, occurrence = parse_run_id(run_id)
         directory = self.root / 'runs' / run_id
