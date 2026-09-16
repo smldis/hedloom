@@ -114,6 +114,31 @@ that would place each point on its own job as a comment rather than a claim.
 
 ## Current contracts
 
+Submission history captures compact submit-host reproducibility evidence by
+default before execution. Python and installed package versions, selected project
+and editable manifests, and Git commits/patches are captured once per Session
+project root (lazily, under a lock), or explicitly through `capture_environment`.
+Dependencies are assumed unchanged until `refresh_environment` or a new session;
+there is no cache-hit filesystem validation. An immutable snapshot retains its
+capture time while study Git revisions, supplied configuration and invocation
+context are captured anew for each run. Clean tracked source bytes matching a
+committed blob are represented by repository/commit/path/blob references; dirty,
+untracked or unverifiable sources retain bytes. Explicit attachments always
+retain bytes. Source Git queries are separate from dependency caching, and known
+source files do not constitute a complete import or data inventory. The public
+API, module, CLI field and new record filename consistently use reproducibility;
+only the history reader accepts the previous record spelling. Automatic lockfile capture and verbose platform,
+interpreter-path and Git-status metadata are excluded. Dirty dependency patches
+remain supported, with gaps explicit. History still stores each compact snapshot
+per run; discovery caching does not imply storage deduplication.
+
+This evidence belongs to the named consumer, independently of computation
+identity and reuse. It neither archives whole repositories nor claims the consumer
+environment produced a reused try. Saved bytes support reconstruction after local
+edits; Git references still depend on retaining the repository. Remote tool
+environments require supplied evidence. See `docs/guide/discovery.md` and
+`tests/test_reproducibility.py`.
+
 Runtime-identified outputs test a narrower claim about composition: acquisition can
 be an ordinary operation without a second source lifecycle. The local Git
 A → A → B → A test exercises both kernels: separate observations can reuse the

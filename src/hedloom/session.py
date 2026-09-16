@@ -32,6 +32,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
+from threading import Lock
+
+from hedloom.reproducibility import Reproducibility, EnvironmentSnapshot, capture_environment, _options, _project_root
 from hedloom_run.driver import InvocationOutcome
 from hedloom_run.site import Site, SiteError
 
@@ -106,6 +109,8 @@ class Session:
         self._pools: dict[str, Any] = {}
         self._watcher: Any = None
         self._execution_owner: Any = None
+        self._environments: dict[str, EnvironmentSnapshot] = {}
+        self._environment_lock = Lock()
 
     @property
     def client(self) -> Any:
@@ -119,6 +124,9 @@ class Session:
 
     def __enter__(self) -> "Session":
         from hedloom.study import start_watcher
+
+        with self._environment_lock:
+            self._environments.clear()
 
         try:
             if self.site.history_root is not None:
@@ -197,11 +205,35 @@ class Session:
                 thread.join(timeout=_WATCH_JOIN_SECONDS)
                 self._watcher = None
 
+    def refresh_environment(self, *, project_root=None) -> EnvironmentSnapshot:
+        """Recapture dependencies after installation or editable-source changes.
+
+        A failed refresh leaves the previous snapshot intact. Already-started
+        submissions retain their original observation.
+        """
+        key = str(_project_root(project_root))
+        with self._environment_lock:
+            snapshot = capture_environment(project_root=key)
+            self._environments[key] = snapshot
+            return snapshot
+
+    def _environment(self, reproducibility, environment):
+        options = _options(reproducibility)
+        if not options.enabled or environment is not None:
+            return environment
+        key = str(_project_root(options.project_root))
+        with self._environment_lock:
+            if key not in self._environments:
+                self._environments[key] = capture_environment(project_root=key)
+            return self._environments[key]
+
     def submit(
         self,
         study: Any,
         *,
         name: str,
+        reproducibility: Reproducibility | None = None,
+        environment: EnvironmentSnapshot | None = None,
         on_started: Callable | None = None,
         stop_on_failure: bool = True,
         on_event: Callable[[InvocationOutcome], None] | None = None,
@@ -219,6 +251,8 @@ class Session:
         return study._run(
             site=self.site,
             name=name,
+            reproducibility=reproducibility,
+            environment=self._environment(reproducibility, environment),
             on_started=on_started,
             client=self._client,
             execution_owner=self._execution_owner,
@@ -230,6 +264,8 @@ class Session:
         self,
         studies: Mapping[str, Any],
         *,
+        reproducibility: Reproducibility | None = None,
+        environment: EnvironmentSnapshot | None = None,
         on_started: Callable | None = None,
         stop_on_failure: bool = True,
         on_event: Callable[[InvocationOutcome], None] | None = None,
@@ -260,6 +296,8 @@ class Session:
                     on_event=on_event,
                     label=label,
                     name=label,
+                    reproducibility=reproducibility,
+                    environment=environment,
                     on_started=on_started,
                 )
             return runs
@@ -276,6 +314,8 @@ class Session:
                     on_event=on_event,
                     label=label,
                     name=label,
+                    reproducibility=reproducibility,
+                    environment=environment,
                     on_started=on_started,
                 )
             except BaseException as error:  # noqa: BLE001 - re-raised below

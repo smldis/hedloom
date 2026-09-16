@@ -318,6 +318,7 @@ def _discover(arguments):
             else:
                 data = asdict(history.read_run(arguments.run_id))
                 data["outputs"] = history.outputs(arguments.run_id)
+                data["reproducibility"] = history.reproducibility(arguments.run_id)
         if arguments.json:
             print(json.dumps(data, sort_keys=True))
         elif arguments.command == "runs" and arguments.action == "list":
@@ -330,6 +331,11 @@ def _discover(arguments):
                 print(f"{data['run_id']}  study:{data['study_name']}  "
                       f"reported:{data['run_reported_outcome']}  history:{data['history_status']}")
                 print(f"last observation: {data['last_observation']}")
+                reproducibility = data.get("reproducibility")
+                print(f"reproducibility: {reproducibility['status'] if reproducibility else 'not recorded'}")
+                if reproducibility:
+                    for gap in reproducibility.get("gaps", []):
+                        print(f"reproducibility gap: {gap}")
                 rows = data["invocations"]
                 for diagnostic in data["diagnostics"]:
                     print(f"history diagnostic: {diagnostic}")

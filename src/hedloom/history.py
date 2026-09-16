@@ -193,7 +193,7 @@ def verify_workers(client, location):
 
 
 class HistoryWriter:
-    def __init__(self, site, name, study_name, document, options, client=None):
+    def __init__(self, site, name, study_name, document, options, client=None, *, reproducibility=None):
         validate_name(name)
         addresses = invocation_addresses(document)
         if site.history_root is None:
@@ -237,13 +237,15 @@ class HistoryWriter:
         fsync_dir(self.location)
         publish(self.location / 'plan.json', document, exact=True)
         publish(self.location / 'addresses.json', {'addresses': addresses})
+        if reproducibility is not None:
+            publish(self.location / 'reproducibility.json', reproducibility, immutable=True)
         if client is not None:
             verify_workers(client, self.location)
         self._append('run_started', {})
         publish(self.location / 'run.json', dict(run_id=self.run_id, name=name,
                 occurrence=number, study_name=study_name, at=now(),
                 record_root=str(Path(site.root).resolve()), workspace_root=site.workspace_root,
-                options=options), immutable=True)
+                options=options, reproducibility='reproducibility.json' if reproducibility is not None else None), immutable=True)
 
     @property
     def reference(self):
