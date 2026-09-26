@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Measure retry depth and storage in one attempt root.
+"""Measure retry depth and storage in one records directory.
 
 Usage:
-    PYTHONPATH=exec/src python tools/attempt-census.py ROOT [WORKSPACE_ROOT]
+    PYTHONPATH=exec/src python tools/attempt-census.py RECORDS_DIR [WORK_DIR]
 
-``ROOT`` may be the attempts directory itself or a parent containing
-``attempts/``.  The reader creates nothing and ignores any entry without an
+The two locations are independent. The reader creates nothing and ignores any entry without an
 ``events.jsonl`` journal.
 """
 
@@ -44,16 +43,15 @@ def _percentile(values: list[int], fraction: float) -> int:
     return values[min(len(values) - 1, int(len(values) * fraction))]
 
 
-def census(root: Path, workspace_root: Path | None = None) -> str:
-    """Return a reproducible, human-readable census without changing the root."""
+def census(records_dir: Path, work_dir: Path | None = None) -> str:
+    """Return a reproducible, human-readable census without changing storage."""
 
-    attempts = root / "attempts" if (root / "attempts").is_dir() else root
-    workspaces = workspace_root or root / "work"
+    workspaces = work_dir or records_dir
 
     started = time.perf_counter()
     attempt_directories = sorted(
-        path for path in attempts.iterdir() if (path / "events.jsonl").exists()
-    ) if attempts.is_dir() else []
+        path for path in records_dir.iterdir() if (path / "events.jsonl").exists()
+    ) if records_dir.is_dir() else []
     directory_seconds = time.perf_counter() - started
 
     groups: dict[tuple[object, ...], list[tuple[int | None, str, bool, Path]]] = (
@@ -62,7 +60,7 @@ def census(root: Path, workspace_root: Path | None = None) -> str:
     outcomes: Counter[str] = Counter()
     started = time.perf_counter()
     for directory in attempt_directories:
-        journal = AttemptJournal(attempts, directory.name)
+        journal = AttemptJournal(records_dir, directory.name)
         state = journal.fold()
         events = state.events
         created = next(
@@ -85,13 +83,14 @@ def census(root: Path, workspace_root: Path | None = None) -> str:
         for group in groups.values()
     ]
     large_groups = [group for group in groups.values() if len(group) >= 5]
-    record_bytes, record_entries = _disk_usage(attempts)
+    record_bytes, record_entries = _disk_usage(records_dir)
     workspace_bytes, workspace_entries = (
         _disk_usage(workspaces) if workspaces.is_dir() else (0, 0)
     )
 
     lines = [
-        f"root                 {root}",
+        f"records_dir          {records_dir}",
+        f"work_dir             {workspaces}",
         f"record directories   {len(attempt_directories)}",
         f"try outcomes         {dict(outcomes)}",
         "",
@@ -122,14 +121,14 @@ def census(root: Path, workspace_root: Path | None = None) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("root", type=Path)
-    parser.add_argument("workspace_root", nargs="?", type=Path)
+    parser.add_argument("records_dir", type=Path)
+    parser.add_argument("work_dir", nargs="?", type=Path)
     arguments = parser.parse_args(sys.argv[1:] if argv is None else argv)
-    root = arguments.root.resolve()
+    records_dir = arguments.records_dir.resolve()
     workspace = (
-        arguments.workspace_root.resolve() if arguments.workspace_root else None
+        arguments.work_dir.resolve() if arguments.work_dir else None
     )
-    print(census(root, workspace))
+    print(census(records_dir, workspace))
     return 0
 
 

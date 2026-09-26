@@ -3,7 +3,7 @@ from examples import live_source
 
 
 def test_fresh_download_reuses_only_unchanged_analysis(tmp_path, monkeypatch):
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"), threads=1)
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"), threads=1)
     with session(site) as live:
         first = live.submit(live_source.live_source(), name="first")
         same = live.submit(live_source.live_source(), name="same")

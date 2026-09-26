@@ -1,9 +1,9 @@
 # Minimal, directly runnable profile for examples/farm_smoke.py.
 # Relative storage paths are anchored to this file's directory.
 [study]
-root = "_runs/farm-smoke/attempts"
-history_root = "_runs/farm-smoke/attempts-history"
-workspace_root = "_runs/farm-smoke/work"
+records_dir = "_runs/farm-smoke/records"
+runs_dir = "_runs/farm-smoke/runs"
+work_dir = "_runs/farm-smoke/work"
 
 [placement.lsf]
 kind = "lsf-interactive"

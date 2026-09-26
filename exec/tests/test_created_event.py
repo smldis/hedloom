@@ -36,7 +36,7 @@ def run(tmp_path, bundle=None, **kwargs):
         transport(),
         bundle or {"operation": "op"},
         durability=Durability.RECORDED,
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
         **kwargs,
     )
 

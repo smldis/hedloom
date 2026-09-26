@@ -22,7 +22,7 @@ def subject():
 
 
 def site_for(path):
-    return Site(root=str(path / 'records'), history_root=str(path / 'history'))
+    return Site(records_dir=str(path / 'records'), runs_dir=str(path / 'history'))
 
 
 def allocate(root, queue):
@@ -44,12 +44,22 @@ def test_allocator_processes_reserved_gaps_and_partial_preparation(tmp_path):
             process.join(20)
             if process.is_alive(): process.kill(); process.join()
             assert process.exitcode == 0
-    reserved = tmp_path / 'history' / 'allocations' / 'experiment.2' / '5'
+    reserved = tmp_path / 'history' / '_meta' / 'allocations' / 'experiment.2' / '5'
     reserved.mkdir()
     writer = HistoryWriter(site_for(tmp_path), 'experiment.2', 'empty', {'invocations': []}, {})
     assert writer.run_id == 'experiment.2.6'
     assert RunHistory(tmp_path / 'history').preparations() == (str(reserved),)
     assert parse_run_id('experiment.2.6') == ('experiment.2', 6)
+
+
+def test_allocator_skips_an_existing_run_directory_without_a_reservation(tmp_path):
+    occupied = tmp_path / 'runs' / 'experiment.1'
+    occupied.mkdir(parents=True)
+    site = Site(records_dir=str(tmp_path / 'records'), runs_dir=str(tmp_path / 'runs'))
+    writer = HistoryWriter(site, 'experiment', 'empty', {'invocations': []}, {})
+    assert writer.run_id == 'experiment.2'
+    assert occupied.is_dir()
+    assert not (tmp_path / 'runs' / '_meta' / 'allocations' / 'experiment' / '1').exists()
 
 
 @pytest.mark.parametrize('name', ['', ' has-space', '../escape', 'a/b', '_private'])
@@ -62,10 +72,10 @@ def test_invalid_names_refuse(tmp_path, name):
 def test_required_configuration_and_overlap(tmp_path):
     with pytest.raises(TypeError):
         subject().submit(site=site_for(tmp_path), sequential=True)
-    with pytest.raises(HistoryError, match='history_root'):
-        subject().submit(site=Site(root=str(tmp_path / 'records')), name='missing', sequential=True)
+    with pytest.raises(HistoryError, match='runs_dir'):
+        subject().submit(site=Site(records_dir=str(tmp_path / 'records')), name='missing', sequential=True)
     with pytest.raises(HistoryError, match='overlap'):
-        subject().submit(site=Site(root=str(tmp_path), history_root=str(tmp_path / 'nested')), name='overlap', sequential=True)
+        subject().submit(site=Site(records_dir=str(tmp_path), runs_dir=str(tmp_path / 'nested')), name='overlap', sequential=True)
     assert not (tmp_path / 'records').exists()
 
 
@@ -78,7 +88,7 @@ def test_separate_histories_reuse_exact_reference_and_none(tmp_path):
     assert (first.run_id, second.run_id) == ('chosen.1', 'chosen.2')
     assert first['answer.1'].record == second['renamed'].record
     assert second['renamed'].reused
-    history = RunHistory(site.history_root)
+    history = RunHistory(site.runs_dir)
     assert [row.run_id for row in history.list_runs(name='chosen')] == ['chosen.2', 'chosen.1']
     saved = history.outputs(first.run_id)['output']
     assert saved['available'] and saved['accessible'] and saved['value'] is None
@@ -88,9 +98,38 @@ def test_separate_histories_reuse_exact_reference_and_none(tmp_path):
     history.read_run(first.run_id)
     history.resolve_path(first.run_id, 'answer.1', journal_dir=True)
     from hedloom.discovery import list_attempts
-    assert len(list_attempts(site.root)) == 1
+    assert len(list_attempts(site.records_dir)) == 1
     after = {str(path): path.stat().st_mtime_ns for path in tmp_path.rglob('*')}
     assert before == after
+
+
+def test_saved_run_tree_and_metadata_are_direct_and_versioned(tmp_path):
+    site = Site(records_dir=str(tmp_path / 'records'),
+                work_dir=str(tmp_path / 'work'), runs_dir=str(tmp_path / 'runs'))
+    run = subject().submit(site=site, name='layout', sequential=True)
+    location = tmp_path / 'runs' / run.run_id
+    assert Path(run.history.location) == location
+    assert (location / 'plan.json').is_file()
+    assert (location / 'run.json').is_file()
+    assert (tmp_path / 'runs' / '_meta' / 'allocations' / 'layout' / '1').is_dir()
+    assert (tmp_path / 'runs' / '_meta' / 'executions').is_dir()
+    assert not (tmp_path / 'runs' / 'runs').exists()
+    header = json.loads((location / 'run.json').read_text())
+    assert header['schema_version'] == 3
+    assert header['records_dir'] == site.records_dir
+    assert header['work_dir'] == site.work_dir
+    assert [item.run_id for item in RunHistory(site.runs_dir).list_runs()] == [run.run_id]
+
+
+def test_previous_run_tree_refuses_without_writing(tmp_path):
+    site = Site(records_dir=str(tmp_path / 'records'), runs_dir=str(tmp_path / 'runs'))
+    old = tmp_path / 'runs' / 'runs' / 'old.1'
+    old.mkdir(parents=True)
+    with pytest.raises(HistoryError, match='previous saved-run layout'):
+        RunHistory(site.runs_dir)
+    with pytest.raises(HistoryError, match='previous saved-run layout'):
+        subject().submit(site=site, name='new', sequential=True)
+    assert not (tmp_path / 'records').exists()
 
 
 def test_reuse_reporting_and_history_keep_public_and_selection_vocabularies(tmp_path, capsys):
@@ -125,7 +164,7 @@ def test_reuse_reporting_and_history_keep_public_and_selection_vocabularies(tmp_
     outcome['disposition'] = 'completed'
     log.write_text(''.join(json.dumps(row) + '\n' for row in events))
     historical = log.read_bytes()
-    assert RunHistory(site.history_root).read_run(second.run_id).run_id == second.run_id
+    assert RunHistory(site.runs_dir).read_run(second.run_id).run_id == second.run_id
     assert log.read_bytes() == historical
 
 
@@ -226,7 +265,7 @@ def waiting(out):
         if barrier.read(1) != 'x': raise RuntimeError('barrier failed')
 @study(name="live-definition")
 def build(): return waiting()
-site=Site(root=str(Path(root)/'records'), workspace_root=str(Path(root)/'work'), history_root=str(Path(root)/'history'))
+site=Site(records_dir=str(Path(root)/'records'), work_dir=str(Path(root)/'work'), runs_dir=str(Path(root)/'history'))
 run=build().submit(site=site,name='live-inspection',sequential=kernel=='sequential')
 assert run.succeeded and run.history.status=='complete', run.history
 ''')
@@ -240,7 +279,7 @@ assert run.succeeded and run.history.status=='complete', run.history
         assert select.select([fd], [], [], 30)[0], 'producer readiness timed out'
         assert os.read(fd, 100) == b'ready\n'
         profile = tmp_path / 'site.toml'
-        profile.write_text('[study]\nroot="records"\nworkspace_root="work"\nhistory_root="history"\n')
+        profile.write_text('[study]\nrecords_dir="records"\nwork_dir="work"\nruns_dir="history"\n')
         command = [sys.executable, '-m', 'hedloom.cli', 'runs']
         listing = subprocess.run([*command, 'list', '--site', str(profile), '--json'], capture_output=True, text=True, timeout=15, check=True)
         assert json.loads(listing.stdout)['runs'][0]['run_id'] == 'live-inspection.1'
@@ -306,7 +345,7 @@ def test_postselection_refusal_keeps_reference(tmp_path, sequential):
     class Refusing:
         name = 'refusing'
         def submit(self, identity, bundle): raise SubmissionRefused('after allocation')
-    common = dict(root=str(tmp_path / 'records'), transports={'local': Refusing()})
+    common = dict(records_dir=str(tmp_path / 'records'), transports={'local': Refusing()})
     if sequential:
         report = run_plan(subject().document, **common)
     else:
@@ -325,7 +364,7 @@ def test_callback_exception_preserves_history_and_finalization_precedes_retentio
     assert caught.value.history.status == 'degraded'
     assert RunHistory(tmp_path / 'history').read_run('callback.1').invocations[0].run_reported_outcome == 'succeeded'
     def retention(site):
-        assert RunHistory(site.history_root).read_run('retention.1').history_status == 'complete'
+        assert RunHistory(site.runs_dir).read_run('retention.1').history_status == 'complete'
     monkeypatch.setattr(module, '_apply_automatic_retention', retention)
     subject().submit(site=site_for(tmp_path), name='retention', sequential=True)
 
@@ -361,7 +400,7 @@ def test_absent_vs_reclaimed_workspace_and_path_stdout(tmp_path, capsys):
         journal.append('workspace_removed', **{'try': row.try_number, 'workspace': str(workspace)})
     assert history.read_run(run.run_id).invocations[0].workspace_status == 'reclaimed'
     profile = tmp_path / 'site.toml'
-    profile.write_text('[study]\nroot="records"\nhistory_root="history"\n')
+    profile.write_text('[study]\nrecords_dir="records"\nruns_dir="history"\n')
     assert main(['runs', 'path', '--site', str(profile), run.run_id, '--invocation', 'answer.1', '--workspace']) == 2
     captured = capsys.readouterr()
     assert captured.out == '' and 'reclaimed' in captured.err
@@ -377,14 +416,14 @@ def test_no_workspace_is_explicit(tmp_path):
     assert row.workspace_status == 'no-workspace' and row.workspace is None
 
 
-def test_site_transformations_keep_history_root(tmp_path):
+def test_site_transformations_keep_runs_dir(tmp_path):
     profile = tmp_path / 'site.toml'
-    profile.write_text('[study]\nroot="records"\nworkspace_root="work"\nhistory_root="history"\n')
+    profile.write_text('[study]\nrecords_dir="records"\nwork_dir="work"\nruns_dir="history"\n')
     site = Site.from_file(profile)
-    assert site.history_root == str(tmp_path / 'history')
-    assert site.overridden({'kernel': {'threads': 2}}).history_root == site.history_root
-    assert site.served_in_process().history_root == site.history_root
-    assert site.with_transports().history_root == site.history_root
+    assert site.runs_dir == str(tmp_path / 'history')
+    assert site.overridden({'kernel': {'threads': 2}}).runs_dir == site.runs_dir
+    assert site.served_in_process().runs_dir == site.runs_dir
+    assert site.with_transports().runs_dir == site.runs_dir
 
 
 def test_preselection_refusal_publishes_no_link(tmp_path):
@@ -399,22 +438,22 @@ def test_preselection_refusal_publishes_no_link(tmp_path):
 
 
 def test_reused_workspace_comes_from_receipt_not_new_site_root(tmp_path):
-    first_site = replace(site_for(tmp_path), workspace_root=str(tmp_path / 'original-work'))
+    first_site = replace(site_for(tmp_path), work_dir=str(tmp_path / 'original-work'))
     first = subject().submit(site=first_site, name='first', sequential=True)
-    second_site = replace(first_site, workspace_root=str(tmp_path / 'new-work'))
+    second_site = replace(first_site, work_dir=str(tmp_path / 'new-work'))
     second = subject().submit(site=second_site, name='second', sequential=True)
-    history = RunHistory(first_site.history_root)
+    history = RunHistory(first_site.runs_dir)
     assert second['answer.1'].reused
     assert history.resolve_path(first.run_id, 'answer.1', workspace=True) == history.resolve_path(second.run_id, 'answer.1', workspace=True)
     assert not (tmp_path / 'new-work').exists()
 
 
-def test_cli_history_root_matches_site_without_writing(tmp_path, capsys, monkeypatch):
+def test_cli_runs_dir_matches_site_without_writing(tmp_path, capsys, monkeypatch):
     from hedloom.cli import main
     site = site_for(tmp_path)
     run = subject().submit(site=site, name='cli-history', sequential=True)
     profile = tmp_path / 'site.toml'
-    profile.write_text('[study]\nroot="records"\nhistory_root="history"\n')
+    profile.write_text('[study]\nrecords_dir="records"\nruns_dir="history"\n')
     monkeypatch.chdir(tmp_path)
     capsys.readouterr()
     before = {str(p): p.stat().st_mtime_ns for p in tmp_path.rglob('*')}
@@ -427,7 +466,7 @@ def test_cli_history_root_matches_site_without_writing(tmp_path, capsys, monkeyp
     ):
         assert main(['runs', *arguments, '--site', str(profile)]) == 0
         expected = capsys.readouterr()
-        assert main(['runs', *arguments, '--history-root', 'history']) == 0
+        assert main(['runs', *arguments, '--runs-dir', 'history']) == 0
         actual = capsys.readouterr()
         assert actual.out == expected.out
         assert actual.err == expected.err == ''
@@ -439,7 +478,7 @@ def test_cli_history_root_matches_site_without_writing(tmp_path, capsys, monkeyp
     ['list'], ['show', 'test.1'],
     ['path', 'test.1', '--invocation', 'answer.1', '--workspace'],
 ])
-@pytest.mark.parametrize('source', [[], ['--site', 'site.toml', '--history-root', 'history']])
+@pytest.mark.parametrize('source', [[], ['--site', 'site.toml', '--runs-dir', 'history']])
 def test_cli_runs_requires_one_history_source(arguments, source):
     from hedloom.cli import main
     with pytest.raises(SystemExit) as error:
@@ -447,10 +486,10 @@ def test_cli_runs_requires_one_history_source(arguments, source):
     assert error.value.code == 2
 
 
-def test_cli_history_root_missing_run_reports_error_without_writing(tmp_path, capsys):
+def test_cli_runs_dir_missing_run_reports_error_without_writing(tmp_path, capsys):
     from hedloom.cli import main
     root = tmp_path / 'absent'
-    assert main(['runs', 'show', 'missing.1', '--history-root', str(root)]) == 2
+    assert main(['runs', 'show', 'missing.1', '--runs-dir', str(root)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ''
     assert 'hedloom runs:' in captured.err

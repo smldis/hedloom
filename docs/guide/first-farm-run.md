@@ -6,13 +6,13 @@ first time a study spends queue time on a farm nobody here can test against.
 
 Read it before that run, not after.
 
-## First, the study root
+## First, the records directory
 
-The ladder below is about your queue. This is about the shared filesystem the
-study root sits on, and it comes first because nothing on the queue can repair
+The ladder below is about your queue. This is about the shared filesystem that
+holds `records_dir`, and it comes first because nothing on the queue can repair
 a root that cannot hold a lock.
 
-**What Hedloom assumes.** A study root on a filesystem where `flock()` both
+**What Hedloom assumes.** A records directory on a filesystem where `flock()` both
 reaches the server and stays owned by the open file description that took it.
 The one deployment this prototype has been measured against is NFSv3 mounted
 `local_lock=none` with `nlockmgr` registered, and on that root both hold. If
@@ -29,7 +29,7 @@ and recovery decision is read back from can interleave. It starts lying.
 None needs anything installed.
 
 ```console
-findmnt -T /path/to/study/root -o FSTYPE,OPTIONS | tr ',' '\n' |
+findmnt -T /path/to/records -o FSTYPE,OPTIONS | tr ',' '\n' |
     grep -E 'nfs|vers|local_lock|acdir'
 ```
 
@@ -38,7 +38,7 @@ the host: two submit hosts will both acquire it and neither is told. On NFSv3,
 `rpcinfo -p <server> | grep nlockmgr` should find the lock manager.
 
 ```console
-cd /path/to/study/root
+cd /path/to/records
 exec 8>probe.lock ; exec 9>probe.lock
 flock -x -n 8 && echo "fd 8 acquired"
 flock -x -n 9 && echo "BAD : fd 9 acquired too" || echo "GOOD: fd 9 refused"
@@ -51,9 +51,9 @@ separating threads of one runner. Read this asymmetrically: `GOOD` settles it,
 
 ```console
 # host A
-flock -x /path/to/study/root/probe.lock -c 'echo held on $(hostname); sleep 30'
+flock -x /path/to/records/probe.lock -c 'echo held on $(hostname); sleep 30'
 # host B, while A is holding
-flock -x -n /path/to/study/root/probe.lock -c 'echo ACQUIRED'; echo "exit=$?"
+flock -x -n /path/to/records/probe.lock -c 'echo ACQUIRED'; echo "exit=$?"
 ```
 
 Host B must print nothing and exit 1. This is the expensive one to arrange and
@@ -158,12 +158,12 @@ the next, failure recording, and reuse on resubmission.
   tests fix the string this code builds — one `-R` holding whitespace-separated
   sections, with memory and licences in a single `rusage` — and can say nothing
   about whether your site parses it that way or knows those licence names.
-- **`flock` on a study root over NFS, between two hosts.** The claim in
+- **`flock` on a records directory over NFS, between two hosts.** The claim in
   `hedloom_exec.journal.AttemptJournal.claim` is the weakest load-bearing
   assumption in the durability argument. Part of it was measured on 2026-08-28
   — on NFSv3 mounted `local_lock=none` with `nlockmgr` up, two open file
   descriptions in one process do exclude each other — and that root is what
-  *First, the study root* above assumes. **Two hosts contending has still
+  *First, the records directory* above assumes. **Two hosts contending has still
   never been run**, and a mount that permits cross-host locking is not
   evidence that it happens. Its `DEVNOTE/TODO` carries the detail.
 - **Attribute caching against a shared root.** A record is published complete

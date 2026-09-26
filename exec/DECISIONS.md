@@ -9,6 +9,16 @@ per-phase work orders, the premise correction that inverted the lifetime
 argument, and what an adversarial review found — is in the unpublished
 `design/development-process-2026-08-03.md`. That is history; this is not.
 
+## Storage location names (2026-09-26)
+
+The record store argument is `records_dir`; the optional per-try file location
+is `work_dir`. `AttemptJournal`, `scan_attempts`, `execute`, `survey`, and pin
+selection use these names where they expose a record or work location. Record
+layout 1 and computation identity are unchanged. Without `work_dir`, low-level
+execution keeps its existing records-location fallback; a reused try keeps its
+original receipt. This breaks old Python keywords deliberately and does not
+rewrite saved evidence.
+
 ## Selection publication and accounting
 
 Exec owns selection accounting. Results and handled failures retain the selected
@@ -173,7 +183,7 @@ mode's design premise is wrong and needs revisiting.
   two plans doing identical work each computed it; that was recorded as
   deliberately conservative. It is now reversed. `attempt_identity` takes a
   computation digest and nothing else, and `execute(transport, bundle, *,
-  durability, root, workspace_root)` takes no requester at all: a record has no
+  durability, records_dir, work_dir)` takes no requester at all: a record has no
   owner, and none is recorded on it.
 
   The risk named in the old entry is real and is now accepted rather than

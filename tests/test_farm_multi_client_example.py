@@ -71,9 +71,9 @@ def test_two_studies_share_one_budget_one_keyspace_and_one_record(
     # Every attempt's folded journal agrees with its published manifest.
     # `publish_terminal` runs outside the claim, so this is the observable form
     # of the race `docs/attempt-claim-protocol.md` models.
-    assert farm_multi_client.disagreements(site.root) == []
+    assert farm_multi_client.disagreements(site.records_dir) == []
 
     # The identities are the record's, not the report's: one manifest per job.
     for record in jobs(state):
         identity, number = parse_try_name(record["name"])
-        assert (Path(site.root) / identity / "manifest" / f"{number}.json").is_file()
+        assert (Path(site.records_dir) / identity / "manifest" / f"{number}.json").is_file()

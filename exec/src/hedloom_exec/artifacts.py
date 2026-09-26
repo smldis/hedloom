@@ -133,20 +133,20 @@ class ArtifactRef:
         return data
 
 
-def workspace_path(root: str | os.PathLike[str], name: str) -> Path:
+def workspace_path(work_dir: str | os.PathLike[str], name: str) -> Path:
     """Where a workspace is, without creating or inspecting it."""
 
-    return Path(root) / name
+    return Path(work_dir) / name
 
 
-def workspace_for(root: str | os.PathLike[str], identity: str) -> Path:
+def workspace_for(work_dir: str | os.PathLike[str], identity: str) -> Path:
     """The directory one try runs in.
 
     Per attempt rather than per invocation: a rerun after a failure must not
     write over the evidence of what the previous attempt produced.
     """
 
-    directory = workspace_path(root, identity)
+    directory = workspace_path(work_dir, identity)
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 

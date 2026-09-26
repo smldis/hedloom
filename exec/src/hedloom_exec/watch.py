@@ -96,9 +96,9 @@ class ObservationLog:
     observation never changes what an attempt concludes.
     """
 
-    def __init__(self, root: str | Path, identity: str) -> None:
+    def __init__(self, records_dir: str | Path, identity: str) -> None:
         self.identity = identity
-        self.path = Path(root) / identity / "observations.jsonl"
+        self.path = Path(records_dir) / identity / "observations.jsonl"
 
     def entries(self) -> tuple[Mapping[str, Any], ...]:
         if not self.path.exists():
@@ -196,13 +196,13 @@ def _submitted_at(journal: AttemptJournal, try_number: int) -> str | None:
     return None
 
 
-def status_of(root: str | Path, identity: str) -> AttemptStatus:
+def status_of(records_dir: str | Path, identity: str) -> AttemptStatus:
     """Read one record's current-try status and any observations."""
 
-    journal = AttemptJournal(root, identity)
+    journal = AttemptJournal(records_dir, identity)
     state = journal.fold()
     created = _created(journal)
-    log = ObservationLog(root, identity)
+    log = ObservationLog(records_dir, identity)
     current = state.current
     number = current.number if current is not None else None
     return AttemptStatus(
@@ -220,15 +220,15 @@ def status_of(root: str | Path, identity: str) -> AttemptStatus:
     )
 
 
-def live_attempts(root: str | Path) -> tuple[AttemptStatus, ...]:
-    """Every attempt under ``root`` that has been submitted and not concluded.
+def live_attempts(records_dir: str | Path) -> tuple[AttemptStatus, ...]:
+    """Every attempt under ``records_dir`` that has been submitted and not concluded.
 
     A directory scan, like the rest of this unit's reading. Honest at prototype
     scale and obviously wrong at any other; an index belongs here only once a
     real sweep makes the scan hurt.
     """
 
-    base = Path(root)
+    base = Path(records_dir)
     if not base.is_dir():
         return ()
     found = []
@@ -294,7 +294,7 @@ class LSFStatusReader:
 
 
 def observe(
-    root: str | Path,
+    records_dir: str | Path,
     reader: LSFStatusReader | None = None,
     *,
     attempts: Iterable[AttemptStatus] | None = None,
@@ -306,7 +306,7 @@ def observe(
     the silent wrongness this unit refuses elsewhere.
     """
 
-    live = tuple(attempts) if attempts is not None else live_attempts(root)
+    live = tuple(attempts) if attempts is not None else live_attempts(records_dir)
     watched = [item for item in live if item.substrate == _LSF_SUBSTRATE]
     if not watched:
         return live
@@ -321,10 +321,10 @@ def observe(
             # went wrong. Not our call to make — record nothing and leave it
             # to reconciliation, which owns the attempt.
             continue
-        log = ObservationLog(root, item.identity)
+        log = ObservationLog(records_dir, item.identity)
         assert item.try_number is not None
         log.record(item.try_number, seen, job_name=item.job_name)
-        updated[item.identity] = status_of(root, item.identity)
+        updated[item.identity] = status_of(records_dir, item.identity)
 
     return tuple(updated.get(item.identity, item) for item in live)
 

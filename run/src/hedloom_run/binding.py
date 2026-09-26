@@ -105,7 +105,7 @@ def output_value(
     return artifact.get("address", artifact.get("value"))
 
 
-def produced_by(item: PlannedInvocation, result: Any, *, root=None) -> dict[Any, Any]:
+def produced_by(item: PlannedInvocation, result: Any, *, records_dir=None) -> dict[Any, Any]:
     """What this invocation contributes under the keys that reference it.
 
     A filesystem output contributes its address, because that is what a
@@ -116,7 +116,7 @@ def produced_by(item: PlannedInvocation, result: Any, *, root=None) -> dict[Any,
         (item.invocation_id, name): {
             "identity": result.artifacts[name].get("identity", f"output:{item.input_digest}:{name}"),
             "value": output_value(result.artifacts, result.value, name),
-            "producer": {"record_root": str(Path(root).resolve()) if root else None, "record": result.record, "try_number": result.try_number, "output": name},
+            "producer": {"records_dir": str(Path(records_dir).resolve()) if records_dir else None, "record": result.record, "try_number": result.try_number, "output": name},
         }
         for name in item.output_names
     }

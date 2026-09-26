@@ -90,20 +90,20 @@ def shared_plan(markers, fail=False, label='work'):
 
 
 def site_for(root, threads=2):
-    return Site(root=str(root / 'records'), workspace_root=str(root / 'work'),
-                history_root=str(root / 'history'), threads=threads)
+    return Site(records_dir=str(root / 'records'), work_dir=str(root / 'work'),
+                runs_dir=str(root / 'history'), threads=threads)
 
 
 def bound(root, name):
-    return list((root / 'history' / 'runs' / (name + '.1') / 'selections').glob('*/execution.json'))
+    return list((root / 'history' / (name + '.1') / 'selections').glob('*/execution.json'))
 
 
 @pytest.mark.parametrize('fail', [False, True])
 def test_staggered_consumers_share_live_paths_and_keep_their_names(tmp_path, fail):
     site = site_for(tmp_path)
     profile = tmp_path / 'site.toml'
-    profile.write_text('[study]\nroot="records"\nworkspace_root="work"\nhistory_root="history"\n')
-    history = RunHistory(site.history_root)
+    profile.write_text('[study]\nrecords_dir="records"\nwork_dir="work"\nruns_dir="history"\n')
+    history = RunHistory(site.runs_dir)
     with session(site) as live, ThreadPoolExecutor(2) as threads:
         first = threads.submit(live.submit, shared_plan(str(tmp_path), fail, 'alpha'),
                                name='first', stop_on_failure=False)
@@ -203,7 +203,7 @@ def test_late_arrival_keeps_finished_predecessor_and_active_successor(tmp_path):
             wait_for(lambda: (second_dir / 'started').exists())
             b = threads.submit(live.submit, subject, name='b')
             wait_for(lambda: len(bound(tmp_path, 'b')) == 2)
-            history = RunHistory(site.history_root)
+            history = RunHistory(site.runs_dir)
             assert history.invocation('a.1', 'held_file.1').execution_id != history.invocation('b.1', 'held_file.1').execution_id
             assert history.invocation('a.1', 'held_copy.1').execution_id == history.invocation('b.1', 'held_copy.1').execution_id
             for invocation in ('held_file.1', 'held_copy.1'):
@@ -300,8 +300,8 @@ def test_last_consumer_cancels_before_entry_even_when_dask_started_the_wrapper(t
 
 def test_same_owner_does_not_share_different_record_and_workspace_bindings(tmp_path):
     site = site_for(tmp_path)
-    other = replace(site, root=str(tmp_path / 'other-records'),
-                    workspace_root=str(tmp_path / 'other-work'))
+    other = replace(site, records_dir=str(tmp_path / 'other-records'),
+                    work_dir=str(tmp_path / 'other-work'))
     subject = shared_plan(str(tmp_path))
     with session(site) as live, ThreadPoolExecutor(2) as threads:
         a = threads.submit(live.submit, subject, name='a')
@@ -312,7 +312,7 @@ def test_same_owner_does_not_share_different_record_and_workspace_bindings(tmp_p
             b = threads.submit(subject._run, site=other, client=live.client,
                                execution_owner=live._execution_owner, name='b')
             wait_for(lambda: len((tmp_path / 'calls').read_text().splitlines()) == 2)
-            history = RunHistory(site.history_root)
+            history = RunHistory(site.runs_dir)
             row_a = history.invocation('a.1', 'work')
             row_b = history.invocation('b.1', 'work')
             assert row_a.execution_id != row_b.execution_id

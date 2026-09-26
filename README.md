@@ -59,8 +59,10 @@ is honest.
 [`docs/`](docs/index.md) is the guide. Start at
 [authoring a study](docs/guide/authoring.md), then
 [running one](docs/guide/running.md) and
-[pointing it at a farm](docs/guide/sites.md);
-[internals](docs/internals/index.md) is for working *on* the package.
+[pointing it at a farm](docs/guide/sites.md). The
+[storage path migration guide](docs/guide/storage-migration.md) covers the
+breaking Python, TOML, CLI, and saved-run changes.
+[Internals](docs/internals/index.md) is for working *on* the package.
 
 Build the standalone site from this checkout with Python 3.12:
 
@@ -103,7 +105,7 @@ says which record and try it landed on — `run["point:solve"].record` and
 reused or fresh. Editing an input moves the record; retrying moves only the
 try. [Run discovery](docs/guide/discovery.md) preserves named submissions and
 reveals their selections before blocking launch. Configure a separate
-`Site.history_root` or `[study] history_root` before submitting.
+`Site.runs_dir` or `[study] runs_dir` before submitting.
 
 - **The body is the implementation.** `@operation` here is `hedloom_flow`'s,
   wrapped so the function it already kept is remembered as callable. The Plan
@@ -126,8 +128,9 @@ reveals their selections before blocking launch. Configure a separate
   `.named("...")` supplies a key for a single call; otherwise `function_name.N`
   is generated within its boundary. Computation reuse is independent of these
   readable Plan identities.
-- **`Site`** holds what is not the study: placements, roots, address spaces,
-  threads, and retention. From TOML, with relative paths anchored to the profile.
+- **`Site`** holds what is not the study: placements, independent
+  `records_dir`, `runs_dir`, and `work_dir` locations, address spaces,
+  threads, and retention. From TOML, relative paths anchor to the profile.
 
 `hedloom prune --site site.toml` is always a survey unless `--apply` is
 present. It reports candidates and exclusions from the Site's named retention

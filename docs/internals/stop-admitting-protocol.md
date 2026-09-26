@@ -122,7 +122,7 @@ on a worker — so the controller submits work it has not materialized a record
 for, and has nothing to fold a journal with.
 
 That is the actual defect, and it is not confined to this protocol:
-`watch.live_attempts` scans the attempt root for the same reason, and a Plan
+`watch.live_attempts` scans the records directory for the same reason, and a Plan
 cannot say where an invocation's record will land until it has run. The
 proposal is `design/binding-the-attempt-identity.md`
 — resolve identities in `binding.py`, where the invariant "the same results,

@@ -105,8 +105,8 @@ def run_plan(
     transport: Transport | None = None,
     *,
     transports: Mapping[str, Transport] | None = None,
-    root: str,
-    workspace_root: str | None = None,
+    records_dir: str,
+    work_dir: str | None = None,
     commands: Mapping[str, Sequence[str]] | None = None,
     outputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     identity_env: Mapping[str, str] | None = None,
@@ -150,7 +150,7 @@ def run_plan(
     available = available_transports(transport, transports)
     items = prepare_invocations(document, commands=commands, outputs=outputs, identity_env=identity_env,
                                 source_fingerprints=source_fingerprints)
-    config = _RunConfig(root=root, workspace_root=workspace_root, outputs=outputs,
+    config = _RunConfig(records_dir=records_dir, work_dir=work_dir, outputs=outputs,
                         sources=dict(source_addresses or {}))
     return _run_ready(items, available, config, None, execution_owner,
                       on_execution, on_event, stop_on_failure)

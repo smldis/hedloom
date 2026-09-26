@@ -64,9 +64,9 @@ Alongside it, create `site.toml`:
 
 ```toml
 [study]
-root = "records"
-workspace_root = "workspaces"
-history_root = "history"
+records_dir = "records"
+work_dir = "work"
+runs_dir = "runs"
 ```
 
 These storage paths are relative to the Site file. History must be separate
@@ -153,7 +153,7 @@ run = subject.submit(name="investigate-start", site=site, watch=True)
 
 | Argument | Default | What it does |
 | --- | --- | --- |
-| `site` | *required* | Where work runs, where records go, what addresses mean; includes a separate `history_root` |
+| `site` | *required* | Where work runs, where records go, what addresses mean; includes a separate `runs_dir` |
 | `name` | *required* | Chosen submission name; each request gets a durable occurrence such as `investigate-start.1` |
 | `on_started` | `None` | Receive the durable run reference before execution |
 | `watch` | `False` | Print each invocation as it settles, **and** poll the farm queue |

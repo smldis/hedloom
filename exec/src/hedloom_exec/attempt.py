@@ -178,7 +178,7 @@ def launch_or_attach(
     transport: Transport,
     bundle: Mapping[str, Any],
     *,
-    workspace_root: str | Path | None = None,
+    work_dir: str | Path | None = None,
     publish_selection: Callable[[Selection], None] | None = None,
 ) -> LaunchResult:
     """Resolve the current record try to one of three durable dispositions.
@@ -190,7 +190,7 @@ def launch_or_attach(
 
     with journal.claim():
         return _launch_or_attach_locked(
-            journal, transport, bundle, workspace_root=workspace_root, publish_selection=publish_selection
+            journal, transport, bundle, work_dir=work_dir, publish_selection=publish_selection
         )
 
 
@@ -199,7 +199,7 @@ def _launch_or_attach_locked(
     transport: Transport,
     bundle: Mapping[str, Any],
     *,
-    workspace_root: str | Path | None = None,
+    work_dir: str | Path | None = None,
     publish_selection: Callable[[Selection], None] | None = None,
 ) -> LaunchResult:
     selection = None
@@ -233,7 +233,7 @@ def _launch_or_attach_locked(
         select(number, disposition)
         chosen = next(item for item in journal.fold().tries if item.number == number)
         # Reuse/attachment must retain the established workspace, even when
-        # this caller supplies a different workspace_root. No receipt means
+        # this caller supplies a different work_dir. No receipt means
         # workspace knowledge remains incomplete rather than guessed.
         if chosen.handle is not None and "workdir" in chosen.handle:
             select(number, disposition, bound=True, prepared=chosen.handle)
@@ -272,7 +272,7 @@ def _launch_or_attach_locked(
                 journal,
                 bundle,
                 selected.number,
-                workspace_root=workspace_root,
+                work_dir=work_dir,
                 create_workspace=False,
             )
             existing(selected.number, "completed")
@@ -301,7 +301,7 @@ def _launch_or_attach_locked(
                         journal,
                         bundle,
                         current.number,
-                        workspace_root=workspace_root,
+                        work_dir=work_dir,
                         create_workspace=False,
                     )
                     existing(current.number, "completed")
@@ -370,7 +370,7 @@ def _launch_or_attach_locked(
             journal,
             bundle,
             number,
-            workspace_root=workspace_root,
+            work_dir=work_dir,
             create_workspace=True,
         )
 
@@ -417,7 +417,7 @@ def _bundle_for_try(
     bundle: Mapping[str, Any],
     number: int,
     *,
-    workspace_root: str | Path | None,
+    work_dir: str | Path | None,
     create_workspace: bool,
 ) -> Mapping[str, Any]:
     """Bind one try's workspace, so declared outputs have somewhere to land.
@@ -430,9 +430,9 @@ def _bundle_for_try(
 
     prepared: Mapping[str, Any] = {**bundle, "try": number}
     declared_outputs = bundle.get("outputs")
-    if not declared_outputs and workspace_root is None:
+    if not declared_outputs and work_dir is None:
         return prepared
-    root = workspace_root or journal.directory.parent
+    root = work_dir or journal.directory.parent
     name = try_name(journal.identity, number)
     workdir = (
         workspace_for(root, name)

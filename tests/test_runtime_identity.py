@@ -47,7 +47,7 @@ def test_latest_a_a_b_a_sequential(tmp_path, sequential):
     git(repository, "add", "payload")
     git(repository, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "B")
     b = git(repository, "rev-parse", "HEAD")
-    site = Site(root=str(tmp_path / "records"), workspace_root=str(tmp_path / "work"), history_root=str(tmp_path / "history"))
+    site = Site(records_dir=str(tmp_path / "records"), work_dir=str(tmp_path / "work"), runs_dir=str(tmp_path / "history"))
     runs = []
     for commit in (a, a, b, a):
         git(repository, "checkout", "-q", commit)
@@ -58,7 +58,7 @@ def test_latest_a_a_b_a_sequential(tmp_path, sequential):
     assert len({run["pull"].record for run in runs}) == 4
     assert [run["analysis"].reused for run in runs] == [False, True, False, True]
     assert all(run["pull"].try_number == 0 for run in runs)
-    events_path = Path(site.root) / runs[0]["analysis"].record / "events.jsonl"
+    events_path = Path(site.records_dir) / runs[0]["analysis"].record / "events.jsonl"
     events = [json.loads(line) for line in events_path.read_text().splitlines()]
     bound = [event for event in events if event["event"] == "inputs_bound"]
     assert len(bound) == 1
@@ -98,7 +98,7 @@ def test_independent_observations_join_analysis(tmp_path, sequential, threads):
     for name in ("one", "two"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "payload").write_text("A")
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"), threads=threads)
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"), threads=threads)
     def wait(predicate):
         deadline = time.monotonic() + 10
         while not predicate():
@@ -114,7 +114,7 @@ def test_independent_observations_join_analysis(tmp_path, sequential, threads):
             if not sequential and threads == 1:
                 (tmp_path / "release").touch()
             else:
-                wait(lambda: len(list((tmp_path / "history" / "runs" / "b.1" / "selections").glob("*/execution.json"))) == 2)
+                wait(lambda: len(list((tmp_path / "history" / "b.1" / "selections").glob("*/execution.json"))) == 2)
         finally:
             (tmp_path / "release").touch()
         first, second = a.result(), b.result()
@@ -122,14 +122,14 @@ def test_independent_observations_join_analysis(tmp_path, sequential, threads):
     assert first["pull"].record != second["pull"].record
     assert first["analysis"].record == second["analysis"].record
     assert (tmp_path / "calls").read_text().splitlines() == [str(tmp_path / "one")]
-    history = RunHistory(site.history_root)
+    history = RunHistory(site.runs_dir)
     first_inputs = history.invocation(first.run_id, "analysis")
     second_inputs = history.invocation(second.run_id, "analysis")
     assert second_inputs.requested_inputs["repo"]["producer"]["record"] == second["pull"].record
     assert second_inputs.executed_inputs["repo"]["producer"]["record"] == first["pull"].record
     if sequential or threads == 2:
         assert first_inputs.execution_id == second_inputs.execution_id
-    bindings = [json.loads(p.read_text()) for p in (tmp_path / "history" / "runs").rglob("execution.json")]
+    bindings = [json.loads(p.read_text()) for p in (tmp_path / "history").rglob("execution.json")]
     assert {row["inputs"]["repo"]["value"] for row in bindings if "repo" in row.get("inputs", {})} == {str(tmp_path / "one"), str(tmp_path / "two")}
 
 
@@ -160,7 +160,7 @@ def test_full_file_identity(tmp_path, sequential, size):
         stream.truncate(size)
         stream.seek(size - 1)
         stream.write(b"A")
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     with session(site, sequential=sequential) as live:
         a = live.submit(file_study(str(source)), name="a")
         os.utime(source, None)
@@ -197,7 +197,7 @@ def test_invalid_acquisition_blocks_consumers(tmp_path, sequential, mode):
     directory = tmp_path / "repo"
     if mode != "missing_path":
         directory.mkdir()
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     run = failed_acquisition(str(directory), mode).submit(site=site, name="failed", sequential=sequential)
     assert run["pull"].outcome == "failed"
     assert run["analysis"].outcome == "blocked"
@@ -234,11 +234,11 @@ def test_borrowed_payload_survives_pin_and_prune(tmp_path):
     work = tmp_path / "work" / try_name(journal.identity, number)
     work.mkdir(parents=True)
     (work / "diagnostic").write_text("owned")
-    made = pin(journal, try_number=number, workspace_root=tmp_path / "work", reason="inspect", freeze=True)
+    made = pin(journal, try_number=number, work_dir=tmp_path / "work", reason="inspect", freeze=True)
     assert payload.stat().st_mode == before.st_mode
     unpin(journal, pin_id=made.pin_id, reason="done")
     policy = RetentionPolicy((RetentionRule("spent", outcome=("failed",), keep_latest=0, keep_logs=False),), floor="0s")
-    result = survey(tmp_path / "records", policy, workspace_root=tmp_path / "work").apply()
+    result = survey(tmp_path / "records", policy, work_dir=tmp_path / "work").apply()
     assert len(result.removed) == 1 and not work.exists()
     assert payload.read_text() == "externally owned"
     assert payload.stat().st_mode == before.st_mode
@@ -264,7 +264,7 @@ def pair_study(path):
 def test_named_outputs_invalidate_only_the_changed_port(tmp_path, sequential):
     source = tmp_path / "source"
     source.write_text("B")
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     with session(site, sequential=sequential) as live:
         first = live.submit(pair_study(str(source)), name="first")
         source.write_text("C")
@@ -288,14 +288,14 @@ def stable_borrow_study(path):
 def test_historical_identity_is_separate_from_current_access(tmp_path):
     location = tmp_path / "external"
     location.mkdir()
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     subject = stable_borrow_study(str(location))
     first = subject.submit(site=site, name="first", sequential=True)
     output = first.outputs["output"]
     assert output.available and output.accessible
     location.rename(tmp_path / "moved")
     assert output.available and not output.accessible
-    saved = RunHistory(site.history_root).outputs(first.run_id)["output"]
+    saved = RunHistory(site.runs_dir).outputs(first.run_id)["output"]
     assert saved["available"] and not saved["accessible"]
     assert saved["artifact"]["identity"]["value"] == "A"
     next_run = subject.submit(site=site, name="missing", sequential=True)
@@ -330,12 +330,12 @@ def two_consumers(path, markers):
 
 def test_one_completion_projects_multiple_invocations(tmp_path):
     (tmp_path / "payload").write_text("A")
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"), threads=2)
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"), threads=2)
     with session(site) as live, ThreadPoolExecutor(1) as pool:
         future = pool.submit(live.submit, two_consumers(str(tmp_path), str(tmp_path)), name="two")
         try:
             deadline = time.monotonic() + 10
-            while len(list((tmp_path / "history" / "runs" / "two.1" / "selections").glob("*/execution.json"))) != 3:
+            while len(list((tmp_path / "history" / "two.1" / "selections").glob("*/execution.json"))) != 3:
                 assert time.monotonic() < deadline
                 time.sleep(.01)
         finally:
@@ -345,7 +345,7 @@ def test_one_completion_projects_multiple_invocations(tmp_path):
     assert run["one"].record == run["two"].record
     assert run["one"].invocation_id != run["two"].invocation_id
     assert run.outputs["one"].value == run.outputs["two"].value == "A"
-    history = RunHistory(site.history_root)
+    history = RunHistory(site.runs_dir)
     assert history.invocation(run.run_id, "one").execution_id == history.invocation(run.run_id, "two").execution_id
     assert (tmp_path / "calls").read_text().splitlines() == [str(tmp_path)]
 
@@ -370,7 +370,7 @@ def test_external_content_identity(tmp_path, sequential, size):
         stream.seek(size - 1)
         stream.write(b"A")
     stamp = source.stat()
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     with session(site, sequential=sequential) as live:
         a = live.submit(external_file_study(str(source)), name="a")
         same = live.submit(external_file_study(str(source)), name="same")
@@ -395,7 +395,7 @@ def test_external_content_requires_existing_file(tmp_path, shape):
     source = tmp_path / "source"
     if shape == "directory":
         source.mkdir()
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     run = external_file_study(str(source)).submit(site=site, name="invalid", sequential=True)
     assert not run.succeeded
 

@@ -86,8 +86,8 @@ def execute(
     bundle: Mapping[str, Any],
     *,
     durability: Durability = Durability.EPHEMERAL,
-    root: str | None = None,
-    workspace_root: str | None = None,
+    records_dir: str | None = None,
+    work_dir: str | None = None,
     publish_selection: Callable[[Selection], None] | None = None,
 ) -> ExecutionResult:
     """Run one invocation at the declared durability level.
@@ -128,11 +128,11 @@ def execute(
             durability=durability,
         )
 
-    if root is None:
-        raise ValueError("recorded execution requires a root")
+    if records_dir is None:
+        raise ValueError("recorded execution requires records_dir")
 
     identity = attempt_identity(computation_digest=input_digest(bundle)).rendered
-    journal = AttemptJournal(root, identity)
+    journal = AttemptJournal(records_dir, identity)
 
     # Selection and reconciliation are one claimed operation. Releasing the
     # claim between them could let another caller advance a failed record and
@@ -145,7 +145,7 @@ def execute(
                 journal,
                 transport,
                 bundle,
-                workspace_root=workspace_root,
+                work_dir=work_dir,
                 publish_selection=publish_selection,
             )
             if launched.disposition == "completed":

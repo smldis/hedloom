@@ -33,7 +33,7 @@ def _policy(*, keep_logs=False):
 
 def _survey(tmp_path, policy=None):
     return survey(tmp_path / "records", policy or _policy(),
-                  workspace_root=tmp_path / "work")
+                  work_dir=tmp_path / "work")
 
 
 def test_apply_removes_exactly_what_the_survey_named(tmp_path):
@@ -70,7 +70,7 @@ def test_apply_rechecks_preconditions_under_the_claim(tmp_path):
 
     journal, number, workspace = _record(tmp_path)
     proposal = _survey(tmp_path)
-    pin(journal, try_number=number, workspace_root=tmp_path / "work",
+    pin(journal, try_number=number, work_dir=tmp_path / "work",
         reason="wanted after all", actor="tester", freeze=False)
     report = proposal.apply()
     assert report.removed == ()
@@ -196,13 +196,13 @@ def test_a_run_after_pruning_behaves_as_if_nothing_was_pruned(tmp_path):
     transport = FailedWork()
     options = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path / "records"),
-        "workspace_root": str(tmp_path / "work"),
+        "records_dir": str(tmp_path / "records"),
+        "work_dir": str(tmp_path / "work"),
 
 
     }
     first = execute(transport, {"operation": "work"}, **options)
-    survey(tmp_path / "records", _policy(), workspace_root=tmp_path / "work").apply()
+    survey(tmp_path / "records", _policy(), work_dir=tmp_path / "work").apply()
     second = execute(transport, {"operation": "work"}, **options)
     assert first.outcome == second.outcome == "failed"
     assert [item.number for item in second.journal.fold().tries] == [0, 1]

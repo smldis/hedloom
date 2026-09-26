@@ -129,14 +129,14 @@ class Session:
             self._environments.clear()
 
         try:
-            if self.site.history_root is not None:
+            if self.site.runs_dir is not None:
                 from pathlib import Path
                 from hedloom_run.execution import ExecutionOwner
-                self._execution_owner = ExecutionOwner(Path(self.site.history_root) / 'executions')
+                self._execution_owner = ExecutionOwner(Path(self.site.runs_dir) / '_meta' / 'executions')
             if self.watch:
                 # One watcher for the root, not one per run: two concurrent runs
                 # sharing a root would otherwise report every attempt twice.
-                self._watcher = start_watcher(self.site.root, self.watch_reader)
+                self._watcher = start_watcher(self.site.records_dir, self.watch_reader)
             if not self.sequential:
                 from hedloom_run.cluster import cluster_for
 

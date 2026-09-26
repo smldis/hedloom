@@ -124,7 +124,7 @@ def compare_impl(*, results=None):
     }}
 
 
-def run(document, root, label):
+def run(document, records_dir, label):
     transport = InProcessTransport(
         {"__main__.integrate": integrate_impl, "__main__.compare": compare_impl}
     )
@@ -142,7 +142,7 @@ def run(document, root, label):
         bundle["resolved_inputs"] = resolved
 
         result = execute(
-            transport, bundle, durability=Durability.RECORDED, root=root
+            transport, bundle, durability=Durability.RECORDED, records_dir=records_dir
         )
         verb = "reused " if result.disposition == "completed" else "ran    "
         print(
@@ -157,15 +157,15 @@ def run(document, root, label):
 
 
 def main():
-    root = tempfile.mkdtemp(prefix="hedloom-exec-example-")
+    records_dir = tempfile.mkdtemp(prefix="hedloom-exec-example-")
     try:
         first = build_plan(POINTS)
-        run(first, root, "First run — nothing is published yet")
-        run(first, root, "Second run — unchanged inputs, nothing recomputes")
+        run(first, records_dir, "First run — nothing is published yet")
+        run(first, records_dir, "Second run — unchanged inputs, nothing recomputes")
 
         edited = dict(POINTS, fine=512)
         second = build_plan(edited)
-        values = run(second, root, "Third run — the fine grid refined to 512 steps")
+        values = run(second, records_dir, "Third run — the fine grid refined to 512 steps")
 
         verdicts = [value for key, value in values.items() if "verdict" in key]
         print(f"\n  final verdict: {verdicts[-1] if verdicts else None}")
@@ -177,14 +177,14 @@ def main():
         # what is there is the whole of the question.
         current = {item.input_digest for item in plan_bundles(second)}
         print("\n  records in the store:")
-        for record in sorted(scan_attempts(root), key=lambda item: item.identity):
+        for record in sorted(scan_attempts(records_dir), key=lambda item: item.identity):
             mark = "this plan" if record.input_digest in current else "  earlier"
             print(
                 f"   {mark}  {record.identity}  {record.outcome or 'unfinished'}"
                 f"  (inputs {record.input_digest})"
             )
     finally:
-        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(records_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

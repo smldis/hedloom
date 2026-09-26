@@ -46,13 +46,18 @@ restates a child's rules would challenge the present boundary, even if it works.
 
 Public invocation outcomes use Run's `reused` disposition consistently in live
 reporting, summaries, and newly written consumer history. Exec selection evidence
-keeps its `completed` protocol term; older consumer history is readable without
-rewriting its recorded spelling. This boundary keeps selection facts intact while
+keeps its `completed` protocol term; schema-3 consumer events using that spelling
+remain readable without rewriting evidence. This boundary keeps selection facts intact while
 letting study authors report reuse without translating executor terminology.
 
 Run history implements the operator-facing join between named submissions and
-shared execution evidence. Every submission requires a chosen name and separate
-Site history root. Permanent occurrences, saved Plans and readable scoped
+shared execution evidence. Every submission requires a chosen name and
+`Site.runs_dir`, independently located from `records_dir` and `work_dir`.
+`runs_dir/<submission>.<occurrence>/` holds the saved Plan and outcomes;
+`runs_dir/_meta/` holds allocation and shared dispatch bookkeeping. Consumer
+history schema 3 records `records_dir` and `work_dir` in `run.json` and does
+not read the earlier nested run tree or schema-2 metadata. Permanent
+occurrences, saved Plans and readable scoped
 addresses preserve each consumer independently. Actual selection and workspace
 binding are published before blocking launch. A Session owns execution handles
 for compatible ready invocations; each consumer records its binding to
@@ -245,15 +250,18 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   conclusion happens to be authored last, and stopped being it silently as soon
   as anything was appended. The removal is breaking, and deliberately has no
   alias: a convenience that keeps its name would keep its meaning.
-- Identity-bearing inputs choose a record, and each execution gets a distinct
-  try workspace beneath it. A declared output's address is that try's path, and
+- Identity-bearing inputs choose a record in `records_dir/<identity>/`, and
+  each execution gets a distinct `work_dir/<identity>-<try>/` when a work
+  directory is configured. A declared output's address is that try's path, and
   `InvocationOutcome.record` and `.try_number` name the execution an invocation
   landed on, whether it ran or reused. There is no per-study view of outputs:
   a record is shared by everyone who declares its computation, so a name-shaped
   view would have had to choose one requester's spelling for work that belongs
   to none of them.
 - Attempt-record layout 1 is the only readable recorded layout, and it has not
-  changed. Identity *renderings* have changed as the identity contract changed,
+  changed in this storage naming refactor. This concerns computation records;
+  old saved-run history has a different, now unreadable schema and tree.
+  Identity *renderings* have changed as the identity contract changed,
   so records written under an earlier one are not selected by today's digest and
   are not reused; their contents remain readable. There is no migration path in
   this prototype and none is needed.
@@ -329,6 +337,6 @@ name. This supports editing within a long-lived process without treating a name
 as sufficient evidence that a replacement body implements an older Plan. Python
 globals and imported state are not snapshotted by this binding.
 
-Run discovery accepts either a Site profile or a direct history root. Saved run
+Run discovery accepts either a Site profile or a direct `runs_dir`. Saved run
 metadata supplies execution locations, so inspecting a Python-authored Site's
 results does not require reconstructing its placement configuration as TOML.

@@ -36,7 +36,7 @@ has been selected for reuse. Try workspaces and batch jobs are named
 
 Storage policy is inspectable before it is destructive. A
 `RetentionPolicy` contains named rules whose conditions narrow one another;
-`prune.survey(record_root, policy, workspace_root=...)` reports candidate
+`prune.survey(records_dir, policy, work_dir=...)` reports candidate
 tries, excluded tries, reasons, and measured reclaimable bytes without
 creating or deleting anything. It never selects the standing result, a
 non-terminal try, `unreconciled` evidence, or a pinned try, and it protects
@@ -76,7 +76,7 @@ bundle = {
     "identity_env": {"TOOL_ROOT": "/opt/toolchain/2026.1"},
 }
 
-result = execute(lsf, bundle, durability=Durability.RECORDED, root="attempts")
+result = execute(lsf, bundle, durability=Durability.RECORDED, records_dir="records")
 result.record        # 'hedloom-<20 hex>' — this declaration's record
 result.try_number    # the try whose evidence was published or reused
 ```
@@ -154,12 +154,12 @@ execute(
         "outputs": {"raw": {"path": "point_tt.out"}},
     },
     durability=Durability.RECORDED,
-    root="attempts",
-    workspace_root="/nfs/studies/sweep",
+    records_dir="records",
+    work_dir="/nfs/studies/sweep",
 )
 ```
 
-The attempt runs in its own directory under `workspace_root`, and the manifest
+The attempt runs in its own directory under `work_dir`, and the manifest
 records each declared output's address, size, and modification time. On a shared
 filesystem that is the whole of materialization — the next invocation opens the
 same path, and nothing is copied. `result.address("raw")` gives it back.
@@ -192,7 +192,7 @@ execute(
     lsf,
     {"command": ["solve", "-b", "point_tt.in"], "cwd": "run/tt"},
     durability=Durability.RECORDED,
-    root="attempts",
+    records_dir="records",
 )
 ```
 

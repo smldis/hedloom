@@ -53,9 +53,9 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
     profile = tmp_path / "site.toml"
     profile.write_text(
         "[study]\n"
-        'root = "attempts"\n'
-        'history_root = "history"\n'
-        'workspace_root = "work"\n'
+        'records_dir = "attempts"\n'
+        'runs_dir = "history"\n'
+        'work_dir = "work"\n'
         "\n[placement.lsf]\n"
         'kind = "lsf-interactive"\n'
         'queue = "reg"\n'
@@ -115,7 +115,7 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
         assert record["name"] == path.stem
         assert record["options"]["-J"] == record["name"]
         identity, number = parse_try_name(record["name"])
-        assert (Path(site.root) / identity / "manifest" / f"{number}.json").is_file()
+        assert (Path(site.records_dir) / identity / "manifest" / f"{number}.json").is_file()
 
     assert maximum_overlap(records) == 2
     assert task_workers == {"lsf"}

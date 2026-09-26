@@ -69,7 +69,7 @@ def test_the_network_exposure_asks_dask_for_nothing(recorded):
 def test_silence_is_what_a_site_gets_without_declaring_anything(
     tmp_path, spec_recorded
 ):
-    site = Site(root=str(tmp_path))
+    site = Site(records_dir=str(tmp_path))
 
     assert site.dashboard == "none"
 
@@ -107,7 +107,7 @@ def test_loopback_binds_the_worker_too(recorded):
 
 
 def test_a_site_carries_its_exposure_to_the_cluster(tmp_path, spec_recorded):
-    site = Site(root=str(tmp_path), threads=7, dashboard="loopback")
+    site = Site(records_dir=str(tmp_path), threads=7, dashboard="loopback")
 
     cluster_for(site)
 
@@ -121,7 +121,7 @@ def test_a_site_carries_its_exposure_to_the_cluster(tmp_path, spec_recorded):
 
 
 def test_an_override_beats_the_profile(tmp_path, spec_recorded):
-    site = Site(root=str(tmp_path), dashboard="loopback")
+    site = Site(records_dir=str(tmp_path), dashboard="loopback")
 
     cluster_for(site, dashboard="network")
 
@@ -141,7 +141,7 @@ def test_every_placement_gets_a_worker_that_holds_only_its_own_work(
     unrestricted task to misplace.
     """
 
-    site = Site(root=str(tmp_path), placements={"local": 2, "lsf": 200})
+    site = Site(records_dir=str(tmp_path), placements={"local": 2, "lsf": 200})
 
     cluster_for(site)
 
@@ -168,7 +168,7 @@ def test_an_unknown_exposure_is_refused():
 
 def test_a_profile_naming_an_unknown_exposure_is_refused_at_construction(tmp_path):
     with pytest.raises(SiteError, match="not one of"):
-        Site(root=str(tmp_path), dashboard="off")
+        Site(records_dir=str(tmp_path), dashboard="off")
 
 
 def test_a_silent_cluster_holds_no_http_server():
@@ -300,7 +300,7 @@ def test_silence_belongs_to_the_cluster_that_asked_for_it(tmp_path):
     from distributed.node import ServerNode
 
     untouched = ServerNode.start_http_server
-    site = Site(root=str(tmp_path), placements={"local": 1})
+    site = Site(records_dir=str(tmp_path), placements={"local": 1})
     built: list[tuple[str, object]] = []
 
     def build(exposure: str) -> None:

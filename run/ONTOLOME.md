@@ -69,9 +69,13 @@ invocation identity. Publication and handle-accounting diagnostics return as
 `InvocationOutcome.observation_errors` without deciding execution. Post-selection
 handled failures retain exact references, including without a publisher.
 Blocked work reports `block_reason` separately from computation errors.
-Optional `Site.history_root` survives Site transformations. Run owns a durable dispatch-handle format, separate from
+Optional `Site.runs_dir` survives Site transformations. Run owns a durable dispatch-handle format, separate from
 the facade's consumer history and Exec's computation records. An explicit
 `ExecutionOwner`, held by the facade Session, shares compatible ready invocations.
+The facade places this bookkeeping beneath `runs_dir/_meta/executions/`;
+lower-level Run calls without run persistence retain their existing
+`records_dir/.executions/` fallback. Neither location changes computation
+identity.
 Its table keys finalized computation identity plus execution bindings, placement,
 transport and roots. Run admits dependencies from the controller; Dask executes
 ready tasks with placement resources. Concurrent sequential submissions use the
@@ -144,15 +148,15 @@ Cross-Session joining and automatic recovery remain outside this prototype.
   declared option refuses, and the run reports the invocation as failed rather
   than running it under conditions nobody asked for.
 - `hedloom_run.site.Site` holds what a run needs and a Plan must not carry: which
-  substrate provides each placement, the roots records and workspaces are
-  written under, the address spaces a declared source resolves through, and the
+  substrate provides each placement, independent `records_dir`, `runs_dir`,
+  and `work_dir` locations, the address spaces a declared source resolves through, and the
   thread count the graph kernel runs at. `Site.from_file` reads it from TOML,
   anchoring relative paths to the profile rather than the working directory, so
   a study run from elsewhere means the same thing. A placement kind it cannot
   build is refused rather than skipped, since a missing placement would surface
   later as `UnsupportedPlacement` and blame the Plan for a configuration error.
 - `Site.retention` carries strict, operator-owned `[retention]` data alongside
-  the two storage roots. It is preserved by overrides, local debugging, and
+  the three storage locations. It is preserved by overrides, local debugging, and
   transport binding because changing how work runs must not silently discard
   how that installation keeps spent work. Unknown policy keys and automatic
   rule names are refused when the Site is built.

@@ -5,9 +5,9 @@
 # that has already passed against a real farm, and a run whose evidence still
 # stands should not be edited to make room for a new feature.
 [study]
-root = "_runs/farm-smoke-pooled/attempts"
-history_root = "_runs/farm-smoke-pooled/attempts-history"
-workspace_root = "_runs/farm-smoke-pooled/work"
+records_dir = "_runs/farm-smoke-pooled/records"
+runs_dir = "_runs/farm-smoke-pooled/runs"
+work_dir = "_runs/farm-smoke-pooled/work"
 
 [placement.pool]
 kind = "lsf-pooled"

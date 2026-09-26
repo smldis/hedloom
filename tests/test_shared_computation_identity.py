@@ -72,8 +72,8 @@ def measure(note) -> int:
 @pytest.fixture
 def site(tmp_path):
     return Site(
-        root=str(tmp_path / "attempts"), workspace_root=str(tmp_path / "work"),
-            history_root=str(tmp_path / "attempts",
+        records_dir=str(tmp_path / "attempts"), work_dir=str(tmp_path / "work"),
+            runs_dir=str(tmp_path / "attempts",
         ) + "-history",
     )
 
@@ -360,7 +360,7 @@ def test_the_operator_cli_addresses_records_and_tries(site, records, capsys):
     outcome = run["point:write_note"]
     reference = f"{outcome.record}#{outcome.try_number}"
 
-    roots = ["--root", str(records), "--workspace-root", str(site.workspace_root)]
+    roots = ["--records-dir", str(records), "--work-dir", str(site.work_dir)]
     assert hedloom_cli(["pin", *roots, reference, "--reason", "keep"]) == 0
     pin_id = capsys.readouterr().out.split()[0]
 
@@ -387,10 +387,10 @@ def test_the_ownership_commands_are_gone(removed, capsys):
     """Removed, not softened: the parser must not know these names."""
 
     with pytest.raises(SystemExit):
-        hedloom_cli([removed, "--root", "/nonexistent", "anything"])
+        hedloom_cli([removed, "--records-dir", "/nonexistent", "anything"])
 
 
 @pytest.mark.parametrize("removed", ["--study", "--invocation"])
 def test_prune_has_no_creator_filters(removed):
     with pytest.raises(SystemExit):
-        hedloom_cli(["prune", "--root", "/nonexistent", removed, "x"])
+        hedloom_cli(["prune", "--records-dir", "/nonexistent", removed, "x"])

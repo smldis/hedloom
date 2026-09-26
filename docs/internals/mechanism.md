@@ -167,7 +167,7 @@ the work declares it computes, so two studies — or two authored keys, or one
 invocation renamed — that declare the same computation reach one shared record,
 and the second finds the first's evidence instead of recomputing it.
 
-`execute(transport, bundle, *, durability, root, workspace_root, publish_selection=None)` takes no
+`execute(transport, bundle, *, durability, records_dir, work_dir, publish_selection=None)` takes no
 requester at all, and the `created` event carries only the try, the operation
 and the declaration digest. A record has **no owner**: recording the first
 caller's name would have been ownership by arrival order, and every question

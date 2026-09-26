@@ -24,7 +24,7 @@ subject = reload_study()
     shell.run_line_magic("run", str(source))
     second = shell.user_ns["subject"]
     rebuilt = study(first.plan, name="old-rebuilt")
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"))
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     for subject, expected in ((second, "after"), (first, "before"), (rebuilt, "before")):
         run = subject.submit(site=site, name="reload", sequential=True)
         assert run.succeeded

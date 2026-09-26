@@ -70,7 +70,7 @@ def test_invocations_land_on_the_placement_they_asked_for(tmp_path):
         ),
         transports={"local": local, "lsf-direct": direct},
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
     )
 
     assert report.succeeded
@@ -87,7 +87,7 @@ def test_a_placement_nobody_provides_fails_rather_than_falling_back(tmp_path):
         document(("heavy", {"name": "lsf-pool", "options": {}})),
         transports={"local": Recorder("local")},
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
     )
 
     assert not report.succeeded
@@ -101,7 +101,7 @@ def test_a_single_transport_still_serves_a_uniform_run(tmp_path):
         document(("a", {"name": "local", "options": {}})),
         Recorder("local"),
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
     )
     assert report.succeeded
 
@@ -116,7 +116,7 @@ def test_requested_resolved_and_observed_are_recorded_separately(tmp_path):
         ),
         transports={"lsf-direct": direct},
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
     )
 
     identity, number = parse_try_name(direct.seen[0])
@@ -137,7 +137,7 @@ def test_placement_is_recorded_before_the_substrate_is_touched(tmp_path):
         document(("heavy", {"name": "lsf-direct", "options": {}})),
         transports={"lsf-direct": direct},
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
     )
 
     identity, _ = parse_try_name(direct.seen[0])
@@ -185,7 +185,7 @@ def test_an_authored_resource_need_survives_all_the_way_to_the_submission(
             )
         },
 
-        root=str(tmp_path / "attempts"),
+        records_dir=str(tmp_path / "attempts"),
         commands={"work": ["/bin/echo", "ran"]},
         outputs={"work": {"out": {"stream": "stdout"}}},
     )
@@ -208,13 +208,13 @@ def test_placement_does_not_change_result_identity(tmp_path):
         document(("a", {"name": "local", "options": {}})),
         transports={"local": Recorder("local")},
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
     )
     moved = run_plan(
         document(("a", {"name": "lsf-direct", "options": {"queue": "big"}})),
         transports={"lsf-direct": Recorder("lsf-direct")},
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
     )
 
     assert first.outcomes[0].input_digest == moved.outcomes[0].input_digest

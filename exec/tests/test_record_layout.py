@@ -13,7 +13,7 @@ def test_a_pin_records_the_layout_it_was_made_under(tmp_path):
         journal.publish_terminal(try_number=number, outcome="failed", manifest={})
     workspace = tmp_path / "work" / f"{identity}-{number}"
     workspace.mkdir(parents=True)
-    made = make_pin(journal, try_number=number, workspace_root=tmp_path / "work",
+    made = make_pin(journal, try_number=number, work_dir=tmp_path / "work",
                     reason="keep", freeze=False)
     assert made.layout == LAYOUT_VERSION
 
@@ -26,7 +26,7 @@ def test_verify_reports_layout_changed_rather_than_drift(tmp_path):
         journal.publish_terminal(try_number=number, outcome="failed", manifest={})
     workspace = tmp_path / "work" / f"{identity}-{number}"
     workspace.mkdir(parents=True)
-    made = make_pin(journal, try_number=number, workspace_root=tmp_path / "work",
+    made = make_pin(journal, try_number=number, work_dir=tmp_path / "work",
                     reason="keep", freeze=False)
     (workspace / "drift").write_text("changed")
     checked = verify(made, layout=LAYOUT_VERSION + 1)

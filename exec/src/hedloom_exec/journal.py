@@ -223,9 +223,9 @@ class AttemptJournal:
     CI job, or an agent can read the same facts without this package.
     """
 
-    def __init__(self, root: str | os.PathLike[str], identity: str) -> None:
+    def __init__(self, records_dir: str | os.PathLike[str], identity: str) -> None:
         self.identity = identity
-        self.directory = Path(root) / identity
+        self.directory = Path(records_dir) / identity
         self.log_path = self.directory / "events.jsonl"
         self.layout_path = self.directory / "layout"
         self.manifest_directory = self.directory / "manifest"
