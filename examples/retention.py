@@ -167,9 +167,9 @@ def main(work: Path | None = None) -> int:
     # A fresh root, deliberately: the arithmetic below is only checkable when
     # every byte under it was produced by this run.
     shutil.rmtree(work, ignore_errors=True)
-    records = work / "attempts"
+    records = work / "records"
     workspaces = work / "work"
-    site = Site(root=str(records), workspace_root=str(workspaces), history_root=str(records) + "-history")
+    site = Site(records_dir=str(records), work_dir=str(workspaces), runs_dir=str(records.parent / "runs"))
 
     print("=== first pass: two points diverge")
     run = spending_study(POINTS).submit(
@@ -188,7 +188,7 @@ def main(work: Path | None = None) -> int:
         RetentionPolicy(
             rules=(RetentionRule(name="failed", outcome=("failed",), keep_latest=0),),
         ),
-        workspace_root=workspaces,
+        work_dir=workspaces,
     )
     held = [item for item in stopgap.skipped if item.reason == "floor"]
     print(f"    reclaimable now: {len(stopgap.candidates)} — the failures are "
@@ -222,7 +222,7 @@ def main(work: Path | None = None) -> int:
 
     print("\n=== survey: read-only by construction")
     before = payload_bytes(records, workspaces)
-    proposed = survey(records, policy, workspace_root=workspaces)
+    proposed = survey(records, policy, work_dir=workspaces)
     report("survey", proposed)
     after = payload_bytes(records, workspaces)
     if after != before:
@@ -240,7 +240,7 @@ def main(work: Path | None = None) -> int:
     promise = pin(
         journal,
         try_number=kept.try_number,
-        workspace_root=workspaces,
+        work_dir=workspaces,
         reason="quoted in a report; the path must keep resolving",
         actor="example",
     )
@@ -248,7 +248,7 @@ def main(work: Path | None = None) -> int:
           f"write bits removed: {promise.froze}")
 
     print("\n=== survey again: the pin is a refusal, not a preference")
-    guarded = survey(records, policy, workspace_root=workspaces)
+    guarded = survey(records, policy, work_dir=workspaces)
     report("survey", guarded)
     pinned_skips = [item for item in guarded.skipped if item.reason == "pinned"]
     if len(pinned_skips) != 1:
@@ -312,7 +312,7 @@ def main(work: Path | None = None) -> int:
     print(f"\n    {len(active)} pin(s) still active; release with "
           f"`hedloom unpin {promise.pin_id[:12]}… --reason done`")
     print("    the same pass from a terminal, once a site declares [retention]:")
-    print(f"      hedloom prune --root {records} --workspace-root {workspaces} "
+    print(f"      hedloom prune --records-dir {records} --work-dir {workspaces} "
           "--failed --keep-latest 0")
     print("      hedloom prune --site site.toml --apply")
     return 0

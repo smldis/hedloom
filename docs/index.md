@@ -60,6 +60,7 @@ Three ideas carry the rest of this documentation:
 | write your first study | [Authoring a study](guide/authoring.md) |
 | use Codex to author, run, or inspect a study | [Hedloom study skill](guide/agent-skill.md) |
 | find a run or inspect its live workspace | [Run discovery](guide/discovery.md) |
+| update scripts and profiles for storage paths | [Storage path migration](guide/storage-migration.md) |
 | run one, or several, or debug one | [Running a study](guide/running.md) |
 | point it at a farm, or tune concurrency | [Sites and placements](guide/sites.md) |
 | acquire fresh inputs and reuse unchanged analysis | [Runtime artifact identity](guide/runtime-artifacts.md) |
@@ -117,6 +118,7 @@ guide/agent-skill
 guide/runtime-artifacts
 guide/running
 guide/discovery
+guide/storage-migration
 guide/sites
 guide/results
 guide/first-farm-run

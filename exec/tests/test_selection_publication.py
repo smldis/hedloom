@@ -14,11 +14,11 @@ def test_selection_and_binding_arrive_before_submit_and_match_reuse(tmp_path):
             return super().submit(identity, bundle)
     transport = Transport({'op': lambda: 42})
     first = execute(transport, {'operation': 'op'}, durability=Durability.RECORDED,
-                    root=str(tmp_path), publish_selection=notices.append)
+                    records_dir=str(tmp_path), publish_selection=notices.append)
     assert (notices[0].record, notices[0].try_number) == (first.record, first.try_number)
     notices.clear()
     second = execute(transport, {'operation': 'op'}, durability=Durability.RECORDED,
-                     root=str(tmp_path), publish_selection=notices.append)
+                     records_dir=str(tmp_path), publish_selection=notices.append)
     assert notices[0].disposition == 'completed'
     assert (second.record, second.try_number) == (first.record, first.try_number)
 
@@ -27,7 +27,7 @@ def test_publication_failure_is_diagnostic_only(tmp_path):
     def fail(selection): raise OSError('publisher cannot write')
     with pytest.warns(RuntimeWarning, match='selection publication failed'):
         result = execute(InProcessTransport({'op': lambda: 42}), {'operation': 'op'},
-                         durability=Durability.RECORDED, root=str(tmp_path), publish_selection=fail)
+                         durability=Durability.RECORDED, records_dir=str(tmp_path), publish_selection=fail)
     assert result.value == 42
     assert result.selection.try_number == result.try_number
     assert result.publication_errors == ("OSError: publisher cannot write",) * 2
@@ -35,7 +35,7 @@ def test_publication_failure_is_diagnostic_only(tmp_path):
 
 def test_snapshot_torn_tail_does_not_repair_or_claim(tmp_path):
     result = execute(InProcessTransport({'op': lambda: 42}), {'operation': 'op'},
-                     durability=Durability.RECORDED, root=str(tmp_path))
+                     durability=Durability.RECORDED, records_dir=str(tmp_path))
     journal = result.journal
     original = journal.log_path.read_bytes()
     journal.log_path.write_bytes(original + b'{')
@@ -79,7 +79,7 @@ def test_submission_failure_keeps_selection_when_publication_is_absent_or_fails(
         warnings.simplefilter('error', RuntimeWarning)
         with pytest.raises(SubmissionRefused) as caught:
             execute(Refusing({}), {'operation': 'op'}, durability=Durability.RECORDED,
-                    root=str(tmp_path), publish_selection=fail if broken_publisher else None)
+                    records_dir=str(tmp_path), publish_selection=fail if broken_publisher else None)
     error = caught.value
     assert error.selection.try_number == 0
     assert error.selection.workspace_known
@@ -97,7 +97,7 @@ def test_reconciliation_failure_retains_exec_selection(tmp_path):
             raise TransportError('poll unavailable')
     with pytest.raises(TransportError) as caught:
         execute(Unreachable({'op': lambda: 42}), {'operation': 'op'},
-                durability=Durability.RECORDED, root=str(tmp_path))
+                durability=Durability.RECORDED, records_dir=str(tmp_path))
     assert caught.value.selection.try_number == 0
     assert caught.value.selection.record
     assert caught.value.publication_errors == ()
@@ -125,11 +125,11 @@ def test_result_cannot_follow_a_rival_to_a_newer_try(tmp_path, monkeypatch):
             released = True
             reconcile(journal, first_transport)
             rival_results.append(execute(rival_transport, bundle,
-                durability=Durability.RECORDED, root=str(tmp_path)))
+                durability=Durability.RECORDED, records_dir=str(tmp_path)))
 
     monkeypatch.setattr(AttemptJournal, 'claim', release_to_rival)
     first = execute(first_transport, bundle, durability=Durability.RECORDED,
-                    root=str(tmp_path))
+                    records_dir=str(tmp_path))
     assert first.outcome == 'failed' and first.try_number == 0
     assert first.selection.try_number == 0
     assert rival_results[0].outcome == 'succeeded' and rival_results[0].try_number == 1

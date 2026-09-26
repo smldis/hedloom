@@ -8,8 +8,8 @@ def _profile(tmp_path):
     profile.write_text(
         """
 [study]
-root = "records"
-workspace_root = "work"
+records_dir = "records"
+work_dir = "work"
 
 [retention]
 floor = "7d"
@@ -45,7 +45,7 @@ def test_retention_survives_every_site_derivation(tmp_path):
 def test_an_unknown_retention_key_is_refused_at_site_load(tmp_path):
     profile = tmp_path / "site.toml"
     profile.write_text(
-        '[study]\nroot = "records"\n[retention]\nmystery = true\n'
+        '[study]\nrecords_dir = "records"\n[retention]\nmystery = true\n'
     )
     with pytest.raises(SiteError, match="unknown key"):
         Site.from_file(profile)

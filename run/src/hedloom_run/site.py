@@ -101,9 +101,9 @@ def fingerprint_file(path: Path) -> str:
 class Site:
     """One installation: where work runs, where records go, what addresses mean."""
 
-    root: str
+    records_dir: str
     transports: Mapping[str, Transport] = field(default_factory=dict)
-    workspace_root: str | None = None
+    work_dir: str | None = None
     address_spaces: Mapping[str, str] = field(default_factory=dict)
     placements: Mapping[str, int | Mapping[str, Any]] = field(default_factory=dict)
     """Each placement this site offers: its budget, and how to reach it.
@@ -191,7 +191,7 @@ class Site:
     retention: Mapping[str, Any] = field(default_factory=dict)
     """Operator-owned workspace retention policy from ``[retention]``."""
 
-    history_root: str | None = None
+    runs_dir: str | None = None
     """Optional consumer-history location; persistence belongs to the facade."""
 
     def __post_init__(self) -> None:
@@ -208,12 +208,12 @@ class Site:
         this only closes the gap for a `Site` built in Python.
         """
 
-        object.__setattr__(self, "root", str(Path(self.root).resolve()))
-        if self.history_root is not None:
-            object.__setattr__(self, "history_root", str(Path(self.history_root).resolve()))
-        if self.workspace_root is not None:
+        object.__setattr__(self, "records_dir", str(Path(self.records_dir).resolve()))
+        if self.runs_dir is not None:
+            object.__setattr__(self, "runs_dir", str(Path(self.runs_dir).resolve()))
+        if self.work_dir is not None:
             object.__setattr__(
-                self, "workspace_root", str(Path(self.workspace_root).resolve())
+                self, "work_dir", str(Path(self.work_dir).resolve())
             )
         object.__setattr__(
             self,
@@ -283,10 +283,10 @@ class Site:
         """
 
         return Site(
-            root=self.root,
+            records_dir=self.records_dir,
             transports={**self.transports, **transports},
-            workspace_root=self.workspace_root,
-            history_root=self.history_root,
+            work_dir=self.work_dir,
+            runs_dir=self.runs_dir,
             address_spaces=self.address_spaces,
             placements=self.placements,
             threads=self.threads,
@@ -352,14 +352,14 @@ class Site:
             if options.get("kind") not in (None, "in-process")
         }
         return Site(
-            root=self.root,
+            records_dir=self.records_dir,
             transports={
                 name: transport
                 for name, transport in self.transports.items()
                 if name not in described
             },
-            workspace_root=self.workspace_root,
-            history_root=self.history_root,
+            work_dir=self.work_dir,
+            runs_dir=self.runs_dir,
             address_spaces=self.address_spaces,
             placements=placements,
             threads=kernel.get("threads", self.threads),
@@ -380,10 +380,10 @@ class Site:
         """
 
         return Site(
-            root=self.root,
+            records_dir=self.records_dir,
             transports={},
-            workspace_root=self.workspace_root,
-            history_root=self.history_root,
+            work_dir=self.work_dir,
+            runs_dir=self.runs_dir,
             address_spaces=self.address_spaces,
             placements={
                 name: {**options, "kind": "in-process"}
@@ -483,15 +483,21 @@ class Site:
             return str(base / value) if not os.path.isabs(value) else value
 
         study = data.get("study") or {}
-        if "root" not in study:
-            raise SiteError(f"{profile} declares no [study] root")
+        stale = sorted(set(study) & {"root", "record_root", "history_root", "workspace_root"})
+        if stale:
+            raise SiteError(
+                f"{profile} uses obsolete [study] storage field(s) {', '.join(stale)}; "
+                "use records_dir, runs_dir, and work_dir"
+            )
+        if "records_dir" not in study:
+            raise SiteError(f"{profile} declares no [study] records_dir")
 
         return cls(
-            root=anchored(study["root"]),
-            history_root=anchored(study["history_root"]) if study.get("history_root") else None,
-            workspace_root=(
-                anchored(study["workspace_root"])
-                if study.get("workspace_root")
+            records_dir=anchored(study["records_dir"]),
+            runs_dir=anchored(study["runs_dir"]) if study.get("runs_dir") else None,
+            work_dir=(
+                anchored(study["work_dir"])
+                if study.get("work_dir")
                 else None
             ),
             address_spaces={

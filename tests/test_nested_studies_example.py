@@ -10,7 +10,7 @@ from hedloom import Site, session
 
 @pytest.mark.parametrize("sequential", [True, False])
 def test_nested_example_uses_open_session_and_reuses_inner_work(tmp_path, monkeypatch, sequential):
-    site = Site(root=str(tmp_path / "records"), history_root=str(tmp_path / "history"),
+    site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"),
                 placements={"local": 2})
     with session(site, sequential=sequential) as live:
         monkeypatch.setattr(state, "SESSION", live)

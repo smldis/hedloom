@@ -162,7 +162,7 @@ def test_observing_cannot_change_what_an_attempt_concludes(tmp_path):
     transport = InProcessTransport({"work": lambda **kwargs: 41})
     common = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path),
+        "records_dir": str(tmp_path),
 
 
     }

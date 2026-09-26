@@ -80,8 +80,8 @@ def build(words=("ab", "cde")):
 
 @pytest.fixture
 def site(tmp_path):
-    return Site(root=str(tmp_path / "attempts"),
-                workspace_root=str(tmp_path / "work"), history_root=str(tmp_path / "attempts") + "-history")
+    return Site(records_dir=str(tmp_path / "attempts"),
+                work_dir=str(tmp_path / "work"), runs_dir=str(tmp_path / "attempts") + "-history")
 
 
 def test_the_plan_is_complete_before_anything_is_spent(tmp_path):
@@ -300,10 +300,10 @@ def fixtures(tmp_path):
 @pytest.fixture
 def reading_site(tmp_path, fixtures):
     return Site(
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
         address_spaces={"fixtures": str(fixtures)},
-        history_root=str(tmp_path / "attempts") + "-history",
+        runs_dir=str(tmp_path / "attempts") + "-history",
     )
 
 
@@ -367,12 +367,12 @@ def test_locally_runs_a_farm_study_here_and_needs_no_scheduler(tmp_path):
     """The debugging pair: no farm, no scheduler, and the same identities."""
 
     farm_site = Site(
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
         placements={
             "lsf": {"kind": "lsf-interactive", "walltime": "1", "max_jobs": 4}
         },
-        history_root=str(tmp_path / "attempts") + "-history",
+        runs_dir=str(tmp_path / "attempts") + "-history",
     )
     subject = build(("ab",))
 
@@ -461,9 +461,9 @@ def test_both_kernels_block_a_dependent_and_let_others_finish(tmp_path, kernel):
     """
 
     site = Site(
-        root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}"),
-        workspace_root=str(tmp_path / f"work-{'seq' if kernel else 'graph'}"),
-        history_root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}") + "-history",
+        records_dir=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}"),
+        work_dir=str(tmp_path / f"work-{'seq' if kernel else 'graph'}"),
+        runs_dir=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}") + "-history",
     )
     run = _one_failing_branch().submit(
         site=site, stop_on_failure=False, **kernel
@@ -522,7 +522,7 @@ def test_an_explicit_study_name_is_the_record_and_cli_namespace(site, capsys):
 
     subject = explicitly_named()
     run = subject.submit(site=site, sequential=True, name="test-run")
-    records = scan_attempts(site.root)
+    records = scan_attempts(site.records_dir)
 
     assert subject.name == "short-study"
     assert run.study_name == "short-study"
@@ -545,7 +545,7 @@ def test_exported_output_names_do_not_rename_or_invalidate_a_study(site):
 
     assert first.study_name == second.study_name == "stable-study"
     assert second.report.outcomes[0].reused
-    assert len(scan_attempts(site.root)) == 1
+    assert len(scan_attempts(site.records_dir)) == 1
 
 
 def test_different_declarations_get_their_own_records(site):
@@ -567,7 +567,7 @@ def test_different_declarations_get_their_own_records(site):
     one = first().submit(site=site, sequential=True, name="test-run")
     two = second().submit(site=site, sequential=True, name="test-run")
 
-    records = {item.identity for item in scan_attempts(site.root)}
+    records = {item.identity for item in scan_attempts(site.records_dir)}
     assert records == {one["write"].record, two["write"].record}
     assert len(records) == 2
 

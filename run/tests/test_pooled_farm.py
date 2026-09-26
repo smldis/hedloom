@@ -206,7 +206,7 @@ def test_a_pool_can_still_report_a_lost_worker(farm, tmp_path):
     from hedloom_run.pooled import close_pools, open_pools
 
     site = Site(
-        root=str(tmp_path / "records"),
+        records_dir=str(tmp_path / "records"),
         placements={
             "pool": {
                 "kind": "lsf-pooled",

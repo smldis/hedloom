@@ -98,8 +98,8 @@ def site_for(root: Path, *, queue: str, cap: int) -> Site:
     """
 
     return Site(
-        root=str(root / "attempts"),
-        workspace_root=str(root / "work"),
+        records_dir=str(root / "records"),
+        work_dir=str(root / "work"),
         placements={
             "lsf": {
                 "kind": "lsf-interactive",
@@ -115,7 +115,7 @@ def site_for(root: Path, *, queue: str, cap: int) -> Site:
         # clusters at once and a dashboard on a fixed port would collide.
         threads=2,
         dashboard="loopback",
-        history_root=str(root / "attempts") + "-history",
+        runs_dir=str(root / "runs"),
     )
 
 
@@ -233,7 +233,7 @@ def shared_budget(site: Site, cap: int) -> bool:
             on_event=announce(),
         )
 
-    spans = farm_spans(site.root, since)
+    spans = farm_spans(site.records_dir, since)
     peak = peak_overlap(spans)
     print(f"    farm jobs: {len(spans)}   peak in flight: {peak}   declared cap: {cap}")
     for label, run in runs.items():
@@ -270,7 +270,7 @@ def same_work_twice(site: Site) -> bool:
             {"first": subject, "second": subject}, on_event=announce(), stop_on_failure=False
         )
 
-    spans = farm_spans(site.root, since)
+    spans = farm_spans(site.records_dir, since)
     print(f"    farm jobs: {len(spans)} (eight would mean the work ran twice)")
     # A Session owns shared handles; both consumers must receive the result.
     for run in runs.values():
@@ -323,7 +323,7 @@ def two_controllers(site: Site) -> bool:
     for thread in threads:
         thread.join()
 
-    spans = farm_spans(site.root, since)
+    spans = farm_spans(site.records_dir, since)
     print(f"    farm jobs: {len(spans)} (eight would mean the claim did not hold)")
     # Both reports first, because the accounting below is only meaningful when
     # every controller finished and can be asked what it saw.
@@ -380,7 +380,7 @@ def all_reused(site: Site) -> bool:
             on_event=lambda outcome: None,
         )
 
-    spans = farm_spans(site.root, since)
+    spans = farm_spans(site.records_dir, since)
     reused = sum(
         1
         for run in runs.values()
@@ -422,12 +422,12 @@ def main() -> int:
         "--root",
         type=Path,
         default=here / "_runs" / "farm-multi-client",
-        help="where attempts and workspaces go",
+        help="example output directory containing records, runs, and work",
     )
     args = parser.parse_args()
 
     site = site_for(args.root, queue=args.queue, cap=args.max_jobs)
-    print(f"study root: {site.root}")
+    print(f"records directory: {site.records_dir}")
     print(f"placement 'lsf': {site.capacity['lsf']} job(s) in flight per session")
 
     for act in (
@@ -439,7 +439,7 @@ def main() -> int:
         if not act():
             return 1
 
-    broken = disagreements(site.root)
+    broken = disagreements(site.records_dir)
     if broken:
         print("\nFAILED: a journal and its manifest disagree:")
         for line in broken:

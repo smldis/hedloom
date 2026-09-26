@@ -47,7 +47,7 @@ def test_saved_before_execution_and_distinct_for_reuse(tmp_path, monkeypatch, se
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', lambda: [])
     site = site_for(tmp_path)
-    history = RunHistory(site.history_root)
+    history = RunHistory(site.runs_dir)
     config = tmp_path / 'setup.sh'
     config.write_text('first')
     seen = []
@@ -88,7 +88,7 @@ def test_older_history_and_missing_new_record(tmp_path, monkeypatch):
     assert history.reproducibility(writer.run_id) is None
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', lambda: [])
     run = subject().submit(site=site_for(tmp_path), name='newer', sequential=True)
-    (tmp_path / 'history' / 'runs' / run.run_id / 'reproducibility.json').unlink()
+    (tmp_path / 'history' / run.run_id / 'reproducibility.json').unlink()
     with pytest.raises(HistoryError, match='cannot read'):
         history.reproducibility(run.run_id)
 
@@ -112,7 +112,7 @@ def test_cli_exposes_saved_environment(tmp_path, monkeypatch, capsys):
     run = subject().submit(site=site_for(tmp_path), name='inspect', sequential=True,
                            reproducibility=Reproducibility(text='recorded setup'))
     profile = tmp_path / 'site.toml'
-    profile.write_text('[study]\nroot="records"\nhistory_root="history"\n')
+    profile.write_text('[study]\nrecords_dir="records"\nruns_dir="history"\n')
     assert main(['runs', 'show', '--site', str(profile), run.run_id, '--json']) == 0
     data = json.loads(capsys.readouterr().out)
     assert data['reproducibility']['text'] == 'recorded setup'
@@ -149,7 +149,7 @@ def test_session_cache_refresh_and_fresh_attachments(tmp_path, monkeypatch):
     config = tmp_path / 'setup.sh'
     config.write_text('first config')
     site = site_for(tmp_path)
-    history = RunHistory(site.history_root)
+    history = RunHistory(site.runs_dir)
     with session(site, sequential=True) as live:
         first = live.submit(subject(), name='first', reproducibility=Reproducibility(files=(config,)))
         manifest.write_text('second environment')
@@ -189,7 +189,7 @@ def test_explicit_environment_reusable_across_standalone_submissions(tmp_path, m
     site = site_for(tmp_path)
     for name in ('first', 'second'):
         run = submit(subject(), site=site, name=name, sequential=True, environment=environment)
-        assert RunHistory(site.history_root).reproducibility(run.run_id)['environment'] == environment.to_data()
+        assert RunHistory(site.runs_dir).reproducibility(run.run_id)['environment'] == environment.to_data()
 
 
 def test_concurrent_submissions_discover_once_with_slow_metadata(tmp_path, monkeypatch):
@@ -208,7 +208,7 @@ def test_concurrent_submissions_discover_once_with_slow_metadata(tmp_path, monke
     with session(site) as live:
         runs = live.submit_all({'first': subject(), 'second': subject()})
     assert len(calls) == 1
-    history = RunHistory(site.history_root)
+    history = RunHistory(site.runs_dir)
     assert history.reproducibility(runs['first'].run_id)['environment'] == history.reproducibility(runs['second'].run_id)['environment']
 
 
@@ -248,7 +248,7 @@ def test_project_roots_have_separate_caches(tmp_path, monkeypatch):
     with session(site, sequential=True) as live:
         a = live.submit(subject(), name='first', reproducibility=Reproducibility(project_root=first))
         b = live.submit(subject(), name='second', reproducibility=Reproducibility(project_root=second))
-    history = RunHistory(site.history_root)
+    history = RunHistory(site.runs_dir)
     assert history.reproducibility(a.run_id)['environment']['project_root'] == str(first)
     assert history.reproducibility(b.run_id)['environment']['project_root'] == str(second)
 
@@ -319,7 +319,7 @@ def test_no_git_and_explicit_attachments_always_preserve_bytes(tmp_path, monkeyp
 def test_reader_accepts_old_record_filename(tmp_path):
     from hedloom.history import HistoryWriter, publish
     writer = HistoryWriter(site_for(tmp_path), 'old', 'empty', {'invocations': []}, {})
-    location = tmp_path / 'history' / 'runs' / writer.run_id
+    location = tmp_path / 'history' / writer.run_id
     header_path = location / 'run.json'
     header = json.loads(header_path.read_text())
     header.pop('reproducibility', None)

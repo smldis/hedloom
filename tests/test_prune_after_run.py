@@ -12,7 +12,7 @@ study_module = importlib.import_module("hedloom.study")
 
 def _site(tmp_path):
     return Site(
-        root=str(tmp_path / "records"), workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "records"), work_dir=str(tmp_path / "work"),
         retention={
             "floor": "0s",
             "rule": [
@@ -21,7 +21,7 @@ def _site(tmp_path):
             ],
             "automatic": {"after_run": ["failures"]},
         },
-        history_root=str(tmp_path / "records") + "-history",
+        runs_dir=str(tmp_path / "records") + "-history",
     )
 
 
@@ -32,9 +32,9 @@ def test_a_run_applies_only_the_rules_the_site_names(tmp_path, monkeypatch):
         def apply(self, **options):
             captured["options"] = options
 
-    def fake_survey(root, policy, *, workspace_root):
+    def fake_survey(root, policy, *, work_dir):
         captured["root"] = root
-        captured["workspace_root"] = workspace_root
+        captured["work_dir"] = work_dir
         captured["rules"] = tuple(rule.name for rule in policy.rules)
         return Found()
 
@@ -65,8 +65,8 @@ def test_a_completed_run_reaches_the_post_run_trigger(tmp_path, monkeypatch):
 
 
 def test_no_automatic_rules_means_no_post_run_pass(tmp_path, monkeypatch):
-    site = Site(root=str(tmp_path / "records"),
-                workspace_root=str(tmp_path / "work"), history_root=str(tmp_path / "records") + "-history")
+    site = Site(records_dir=str(tmp_path / "records"),
+                work_dir=str(tmp_path / "work"), runs_dir=str(tmp_path / "records") + "-history")
     monkeypatch.setattr(
         study_module, "survey",
         lambda *args, **kwargs: pytest.fail("survey should not run"),

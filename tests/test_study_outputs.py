@@ -45,9 +45,9 @@ VERDICT = artifact("verdict")
 @pytest.fixture
 def site(tmp_path):
     return Site(
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
-        history_root=str(tmp_path / "attempts") + "-history",
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
+        runs_dir=str(tmp_path / "attempts") + "-history",
     )
 
 
@@ -371,9 +371,9 @@ def test_both_kernels_export_the_same_outputs(tmp_path, kernel):
     """Which kernel decides readiness changes how long a plan takes, not this."""
 
     site = Site(
-        root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}"),
-        workspace_root=str(tmp_path / f"work-{'seq' if kernel else 'graph'}"),
-        history_root=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}") + "-history",
+        records_dir=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}"),
+        work_dir=str(tmp_path / f"work-{'seq' if kernel else 'graph'}"),
+        runs_dir=str(tmp_path / f"attempts-{'seq' if kernel else 'graph'}") + "-history",
     )
 
     run = _measured_and_evaluated().submit(site=site, **kernel, name="test-run")

@@ -30,7 +30,7 @@ def test_reclaiming_frees_payload_and_keeps_every_record(tmp_path: Path) -> None
 
     assert retention.main(tmp_path) == 0
 
-    records = tmp_path / "attempts"
+    records = tmp_path / "records"
     workspaces = tmp_path / "work"
     scanned = scan_attempts(records)
 
@@ -78,7 +78,7 @@ def test_the_pinned_workspace_survives_and_stays_frozen(tmp_path: Path) -> None:
 
     assert retention.main(tmp_path) == 0
 
-    records = tmp_path / "attempts"
+    records = tmp_path / "records"
     workspaces = tmp_path / "work"
     pinned = [
         (item, pins_of(AttemptJournal(records, item.identity).fold()))

@@ -21,8 +21,8 @@ DOCUMENT = artifact("served-document")
 TALLY = artifact("word-tally")
 _WORK = Path(__file__).resolve().parent / "_runs" / "live-source"
 SERVICE = {"document": "alpha beta gamma beta alpha beta\n"}
-SITE = Site(root=str(_WORK / "attempts"), workspace_root=str(_WORK / "work"),
-            history_root=str(_WORK / "history"), threads=1)
+SITE = Site(records_dir=str(_WORK / "records"), work_dir=str(_WORK / "work"),
+            runs_dir=str(_WORK / "runs"), threads=1)
 
 
 @operation(execution="each_submission",

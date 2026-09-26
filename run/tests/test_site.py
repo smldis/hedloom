@@ -67,7 +67,7 @@ def study(tmp_path):
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     (inputs / "ota.cir").write_text("* ota\nV1 vdd 0 1.8\n")
-    return Site(root=str(tmp_path / "attempts"),
+    return Site(records_dir=str(tmp_path / "attempts"),
                 address_spaces={"repo": str(inputs)})
 
 
@@ -76,7 +76,7 @@ def run(document, site, tmp_path):
         document,
         transport(),
 
-        root=site.root,
+        records_dir=site.records_dir,
         source_fingerprints=site.fingerprints(document),
     )
 
@@ -98,9 +98,9 @@ def test_editing_a_source_in_place_invalidates_the_work_that_read_it(
 def test_without_a_fingerprint_an_edit_is_invisible(study, tmp_path):
     """Documents the behaviour a run gets by declaring nothing. Not a feature."""
 
-    first = run_plan(document(), transport(), root=study.root)
+    first = run_plan(document(), transport(), records_dir=study.records_dir)
     (tmp_path / "inputs" / "ota.cir").write_text("* edited\n")
-    second = run_plan(document(), transport(), root=study.root)
+    second = run_plan(document(), transport(), records_dir=study.records_dir)
 
     assert first.outcomes[0].ran
     assert second.outcomes[0].reused, "declaration-only identity cannot see this"
@@ -129,14 +129,14 @@ def test_an_unrelated_source_still_invalidates_nothing(study, tmp_path):
 
 
 def test_an_address_space_this_site_does_not_define_is_refused(tmp_path):
-    site = Site(root=str(tmp_path), address_spaces={})
+    site = Site(records_dir=str(tmp_path), address_spaces={})
     with pytest.raises(SiteError) as raised:
         site.fingerprints(document())
     assert "repo" in str(raised.value)
 
 
 def test_a_declared_source_that_is_not_there_is_refused_early(tmp_path):
-    site = Site(root=str(tmp_path), address_spaces={"repo": str(tmp_path)})
+    site = Site(records_dir=str(tmp_path), address_spaces={"repo": str(tmp_path)})
     with pytest.raises(SiteError) as raised:
         site.fingerprints(document())
     assert "does not exist" in str(raised.value)
@@ -146,7 +146,7 @@ def test_a_directory_source_covers_everything_under_it(tmp_path):
     tree = tmp_path / "base"
     (tree / "sub").mkdir(parents=True)
     (tree / "sub" / "a.cir").write_text("one")
-    site = Site(root=str(tmp_path), address_spaces={"repo": str(tmp_path)})
+    site = Site(records_dir=str(tmp_path), address_spaces={"repo": str(tmp_path)})
     plan = document()
     plan["sources"][0]["address"]["locator"] = "base"
 
@@ -168,8 +168,8 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
 
     (tmp_path / "site.toml").write_text(
         "[study]\n"
-        'root = "_runs/attempts"\n'
-        'workspace_root = "/nfs/studies/ota"\n'
+        'records_dir = "_runs/attempts"\n'
+        'work_dir = "/nfs/studies/ota"\n'
         "\n[address_space]\n"
         'repository-relative = "."\n'
         "\n[placement.lsf]\n"
@@ -186,8 +186,8 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
     )
     site = Site.from_file(tmp_path / "site.toml")
 
-    assert site.root == str(tmp_path / "_runs" / "attempts")
-    assert site.workspace_root == "/nfs/studies/ota"
+    assert site.records_dir == str(tmp_path / "_runs" / "attempts")
+    assert site.work_dir == "/nfs/studies/ota"
     assert site.address_spaces["repository-relative"] == str(tmp_path)
     assert site.threads == 32
     assert site.dashboard == "none"
@@ -206,6 +206,14 @@ def test_a_profile_anchors_relative_paths_to_itself(tmp_path):
     assert site.capacity == {"lsf": 200, "local": 32}
 
 
+@pytest.mark.parametrize("old", ["root", "record_root", "history_root", "workspace_root"])
+def test_old_storage_fields_refuse_even_with_new_fields(tmp_path, old):
+    profile = tmp_path / "site.toml"
+    profile.write_text(f'[study]\nrecords_dir = "records"\n{old} = "stale"\n')
+    with pytest.raises(SiteError, match=old):
+        Site.from_file(profile)
+
+
 def test_a_farm_placement_without_a_cap_is_refused(tmp_path):
     """No safe default exists, so the profile has to say.
 
@@ -215,7 +223,7 @@ def test_a_farm_placement_without_a_cap_is_refused(tmp_path):
     """
 
     (tmp_path / "site.toml").write_text(
-        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        '[study]\nrecords_dir = "attempts"\n\n[placement.lsf]\n'
         'kind = "lsf-interactive"\nwalltime = "10"\n'
     )
     with pytest.raises(SiteError, match="max_jobs"):
@@ -227,7 +235,7 @@ def test_local_exists_even_where_a_profile_never_mentions_it(tmp_path):
     built, so the commonest plan there is names a placement no farm profile
     bothers to declare. The capacity has to be there anyway."""
 
-    site = Site(root=str(tmp_path), placements={"lsf": 8}, threads=3)
+    site = Site(records_dir=str(tmp_path), placements={"lsf": 8}, threads=3)
 
     assert site.capacity["local"] == 3
     spec = site.cluster_spec()
@@ -239,7 +247,7 @@ def test_max_jobs_is_profile_vocabulary_not_a_bsub_argument(tmp_path):
     """It sizes the cluster; it must never reach the transport as a setting."""
 
     (tmp_path / "site.toml").write_text(
-        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        '[study]\nrecords_dir = "attempts"\n\n[placement.lsf]\n'
         'kind = "lsf-interactive"\nwalltime = "10"\nmax_jobs = 4\n'
     )
     site = Site.from_file(tmp_path / "site.toml")
@@ -256,7 +264,7 @@ def test_an_invocation_overrides_a_profile_memory_default(tmp_path):
     """One placement vocabulary serves both the profile and the Plan."""
 
     (tmp_path / "site.toml").write_text(
-        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        '[study]\nrecords_dir = "attempts"\n\n[placement.lsf]\n'
         'kind = "lsf-interactive"\nwalltime = "10"\nmemory_mb = 4096\n'
         "max_jobs = 4\n"
     )
@@ -280,7 +288,7 @@ def test_a_misspelled_profile_option_names_the_placement_and_key(tmp_path):
     """A profile typo is a site error, never a constructor TypeError."""
 
     (tmp_path / "site.toml").write_text(
-        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        '[study]\nrecords_dir = "attempts"\n\n[placement.lsf]\n'
         'kind = "lsf-interactive"\nwalltime = "10"\nqueeu = "reg"\n'
         "max_jobs = 4\n"
     )
@@ -295,7 +303,7 @@ def test_an_invalid_transport_default_is_a_named_site_error(tmp_path):
     """Profile validation belongs at the profile boundary, with its route name."""
 
     (tmp_path / "site.toml").write_text(
-        '[study]\nroot = "attempts"\n\n[placement.farm]\n'
+        '[study]\nrecords_dir = "attempts"\n\n[placement.farm]\n'
         'kind = "lsf-interactive"\nwalltime = "10"\nmemory_mb = -1\n'
         "max_jobs = 4\n"
     )
@@ -308,7 +316,7 @@ def test_an_invalid_transport_default_is_a_named_site_error(tmp_path):
 
 def test_a_placement_kind_this_site_cannot_build_is_refused(tmp_path):
     (tmp_path / "site.toml").write_text(
-        '[study]\nroot = "attempts"\n\n[placement.gpu]\nkind = "cuda-farm"\n'
+        '[study]\nrecords_dir = "attempts"\n\n[placement.gpu]\nkind = "cuda-farm"\n'
     )
     with pytest.raises(SiteError) as raised:
         Site.from_file(tmp_path / "site.toml")
@@ -316,7 +324,7 @@ def test_a_placement_kind_this_site_cannot_build_is_refused(tmp_path):
 
 
 def test_implementations_are_added_where_configuration_cannot_reach(tmp_path):
-    site = Site(root=str(tmp_path)).with_transports(local=transport())
+    site = Site(records_dir=str(tmp_path)).with_transports(local=transport())
     assert site.transports["local"].name == "in-process"
 
 
@@ -333,15 +341,15 @@ def test_a_relative_root_is_anchored_before_anything_uses_it(tmp_path, monkeypat
 
     monkeypatch.chdir(tmp_path)
     site = Site(
-        root="records",
-        workspace_root="scratch",
+        records_dir="records",
+        work_dir="scratch",
         address_spaces={"here": "inputs"},
     )
 
-    assert Path(site.root).is_absolute()
-    assert Path(site.workspace_root).is_absolute()
+    assert Path(site.records_dir).is_absolute()
+    assert Path(site.work_dir).is_absolute()
     assert Path(site.address_spaces["here"]).is_absolute()
-    assert Path(site.root) == tmp_path / "records"
+    assert Path(site.records_dir) == tmp_path / "records"
 
 
 def test_a_python_site_declares_a_placement_once(tmp_path):
@@ -353,7 +361,7 @@ def test_a_python_site_declares_a_placement_once(tmp_path):
     """
 
     site = Site(
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
         placements={
             "lsf": {
                 "kind": "lsf-interactive",
@@ -374,14 +382,14 @@ def test_a_profile_and_a_python_site_are_the_same_declaration(tmp_path):
     """One vocabulary, two notations. The refusals have to reach both."""
 
     (tmp_path / "site.toml").write_text(
-        '[study]\nroot = "attempts"\n\n[placement.lsf]\n'
+        '[study]\nrecords_dir = "attempts"\n\n[placement.lsf]\n'
         'kind = "lsf-interactive"\nqueue = "reg"\nwalltime = "1"\nmax_jobs = 2\n'
         "\n[kernel]\nthreads = 3\n",
         encoding="utf-8",
     )
     from_file = Site.from_file(tmp_path / "site.toml")
     in_python = Site(
-        root=str(tmp_path / "attempts"),
+        records_dir=str(tmp_path / "attempts"),
         placements={
             "lsf": {
                 "kind": "lsf-interactive",
@@ -404,7 +412,7 @@ def test_an_override_changes_how_a_run_executes_and_nothing_it_declares(tmp_path
     """`reuse.py` settles that placement is not identity-bearing, so this is safe."""
 
     site = Site(
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
         placements={
             "lsf": {
                 "kind": "lsf-interactive",
@@ -425,17 +433,17 @@ def test_an_override_changes_how_a_run_executes_and_nothing_it_declares(tmp_path
     assert thrifty.capacity["lsf"] == 1
     assert thrifty.transports["lsf"].defaults["queue"] == "express"
     assert thrifty.dashboard == "none"
-    assert thrifty.root == site.root, "an override must not move the record"
+    assert thrifty.records_dir == site.records_dir, "an override must not move the record"
     # The original is untouched: an override derives a site, it does not edit one.
     assert site.capacity["lsf"] == 8
     assert site.transports["lsf"].defaults["queue"] == "reg"
 
 
 def test_an_override_refuses_what_would_change_meaning(tmp_path):
-    site = Site(root=str(tmp_path), placements={"local": 2})
+    site = Site(records_dir=str(tmp_path), placements={"local": 2})
 
     with pytest.raises(SiteError, match="never what it means"):
-        site.overridden({"study": {"root": "/somewhere/else"}})
+        site.overridden({"study": {"records_dir": "/somewhere/else"}})
     with pytest.raises(SiteError, match="does not offer"):
         site.overridden({"placement": {"lsf": {"max_jobs": 1}}})
 
@@ -444,7 +452,7 @@ def test_served_in_process_keeps_the_placements_and_drops_the_substrate(tmp_path
     """For debugging a farm study here: same names, same budgets, no farm."""
 
     site = Site(
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
         placements={
             "lsf": {
                 "kind": "lsf-interactive",

@@ -66,7 +66,7 @@ def run_one(root: Path) -> str:
         transport,
         {"operation": "simulate", "arguments": {}},
         durability=Durability.RECORDED,
-        root=str(root),
+        records_dir=str(root),
 
 
     )

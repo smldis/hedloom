@@ -37,8 +37,8 @@ def farm(tmp_path, monkeypatch):
 
 def site_with_pool(tmp_path: Path) -> Site:
     return Site(
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
         dashboard="none",
         placements={
             "pool": {
@@ -57,7 +57,7 @@ def site_with_pool(tmp_path: Path) -> Site:
                 "max_jobs": 2,
             },
         },
-        history_root=str(tmp_path / "attempts") + "-history",
+        runs_dir=str(tmp_path / "attempts") + "-history",
     )
 
 

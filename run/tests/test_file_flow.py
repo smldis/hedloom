@@ -79,8 +79,8 @@ def test_a_file_written_by_one_step_is_read_by_the_next(farm, tmp_path):
         document(),
         farm,
 
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
         commands={
             "simulate": [sys.executable, "-c", WRITE],
             # The measure step is handed the upstream address on its command
@@ -107,8 +107,8 @@ def test_the_upstream_address_is_available_to_the_consumer(farm, tmp_path):
         document(),
         farm,
 
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
         commands={"simulate": [sys.executable, "-c", WRITE]},
         outputs={"simulate": {"raw": {"path": "sim.raw"}}},
         on_event=watch,

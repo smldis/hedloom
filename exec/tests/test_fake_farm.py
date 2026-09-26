@@ -90,7 +90,7 @@ def test_the_submission_reaches_bsub_with_its_declared_shape(farm, tmp_path):
         farm,
         {"command": [sys.executable, "-c", "pass"]},
         durability=Durability.RECORDED,
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
 
 
     )
@@ -115,7 +115,7 @@ def test_a_finished_job_is_not_discovered(farm, tmp_path):
         farm,
         {"command": [sys.executable, "-c", "pass"]},
         durability=Durability.RECORDED,
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
 
 
     )

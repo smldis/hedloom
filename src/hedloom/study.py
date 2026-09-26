@@ -419,7 +419,7 @@ class Study:
                                reproducibility=capture(reproducibility, self.implementations.values(), environment=environment))
         if execution_owner is None:
             from hedloom_run.execution import ExecutionOwner
-            execution_owner = ExecutionOwner(Path(site.history_root) / 'executions')
+            execution_owner = ExecutionOwner(Path(site.runs_dir) / '_meta' / 'executions')
         user_report = _reporter(on_event, watch)
         def report_to(outcome):
             try:
@@ -439,8 +439,8 @@ class Study:
             raise
         common = dict(
             transports=transports,
-            root=site.root,
-            workspace_root=site.workspace_root,
+            records_dir=site.records_dir,
+            work_dir=site.work_dir,
             source_fingerprints=fingerprints,
             source_addresses=source_addresses,
             stop_on_failure=stop_on_failure,
@@ -449,7 +449,7 @@ class Study:
             on_execution=writer.bind_execution,
         )
 
-        watcher = start_watcher(site.root, _watch_reader) if watch else None
+        watcher = start_watcher(site.records_dir, _watch_reader) if watch else None
         try:
             if client is None:
                 report = run_plan(document, **common)
@@ -488,9 +488,9 @@ def _apply_automatic_retention(site: Site) -> None:
     if not names:
         return
     try:
-        if site.workspace_root is None:
+        if site.work_dir is None:
             raise ValueError(
-                "automatic retention needs [study] workspace_root as well as root"
+                "automatic retention needs [study] work_dir as well as records_dir"
             )
         declared = RetentionPolicy.from_toml(site.retention)
         selected = tuple(rule for rule in declared.rules if rule.name in names)
@@ -503,7 +503,7 @@ def _apply_automatic_retention(site: Site) -> None:
             )
         policy = RetentionPolicy(selected, floor=declared.floor)
         survey(
-            site.root, policy, workspace_root=site.workspace_root
+            site.records_dir, policy, work_dir=site.work_dir
         ).apply(actor="automatic-after-run")
     except Exception as error:  # noqa: BLE001 - retention cannot own run outcome
         warnings.warn(
@@ -530,7 +530,7 @@ def _reporter(
 
 
 def start_watcher(
-    root: str | Path, reader: LSFStatusReader | None = None
+    records_dir: str | Path, reader: LSFStatusReader | None = None
 ) -> tuple[Event, Thread]:
     """Start the small queue poller used by ``submit(watch=True)``.
 
@@ -542,7 +542,7 @@ def start_watcher(
     stop = Event()
     thread = Thread(
         target=_watch,
-        args=(root, reader, stop),
+        args=(records_dir, reader, stop),
         daemon=True,
         name=_WATCH_THREAD_NAME,
     )
@@ -551,15 +551,15 @@ def start_watcher(
 
 
 def _watch(
-    root: str | Path,
+    records_dir: str | Path,
     reader: LSFStatusReader | None,
     stop: Event,
 ) -> None:
     while True:
         try:
-            before = live_attempts(root)
+            before = live_attempts(records_dir)
             previous = {row.identity: row.observed for row in before}
-            rows = observe(root, reader, attempts=before)
+            rows = observe(records_dir, reader, attempts=before)
         except TransportError as error:
             print(f"[watch disabled] {error}")
             return

@@ -221,7 +221,7 @@ ones. Both address records and tries and nothing else.
 
 To recover a reference later, use `hedloom runs list` and `hedloom runs show`
 with the same Site, or read saved exports with `RunHistory.outputs(run_id)`.
-Every submission requires a chosen `name` and a separate `history_root`.
+Every submission requires a chosen `name` and a separate `runs_dir`.
 `hedloom attempts list` also finds execution evidence that predates run history;
 it does not invent a study owner for it. See [run discovery](discovery.md) for
 filters, scoped invocation addresses, and workspace lookup.
@@ -230,9 +230,9 @@ On disk, a layout-1 record keeps `events.jsonl`, one immutable
 `manifest/<try>.json` per terminal try, and an atomic `standing.json` pointer
 to the evidence currently reusable. Identity renderings have changed as the
 contract changed, so a record written under an older one is not selected by
-today's digest — its contents remain perfectly readable, because layout 1 has
-not changed. There is no migration and none is needed: old records simply are
-not reused.
+today's digest — its contents remain readable, because layout 1 has
+not changed. That statement concerns Exec records only. The saved-run history
+tree and schema changed; see [storage path migration](storage-migration.md).
 
 ```{warning}
 **Reuse trusts your declaration, across studies.** An operation whose result

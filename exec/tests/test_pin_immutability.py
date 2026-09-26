@@ -24,7 +24,7 @@ def _pinned(tmp_path, *, empty=False):
     workspace.mkdir(parents=True)
     if not empty:
         (workspace / "result.bin").write_bytes(b"content")
-    made = make_pin(journal, try_number=number, workspace_root=tmp_path / "work",
+    made = make_pin(journal, try_number=number, work_dir=tmp_path / "work",
                     reason="reference", actor="engineer")
     return journal, workspace, made
 
@@ -133,7 +133,7 @@ def test_a_crash_between_chmod_and_the_event_leaves_an_explainable_state(
 
     monkeypatch.setattr(journal, "append", crash)
     with pytest.raises(RuntimeError, match="injected"):
-        make_pin(journal, try_number=number, workspace_root=tmp_path / "work",
+        make_pin(journal, try_number=number, work_dir=tmp_path / "work",
                  reason="reference")
     assert workspace.stat().st_mode & 0o222 == 0
     assert journal.fold().pins == ()

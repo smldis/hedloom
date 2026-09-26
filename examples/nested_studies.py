@@ -91,9 +91,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-dir", type=Path, default=_ROOT / "examples" / "_runs" / "nested-studies")
     args = parser.parse_args(argv)
-    site = Site(root=str(args.work_dir / "attempts"),
-                workspace_root=str(args.work_dir / "work"),
-                history_root=str(args.work_dir / "history"), placements={"local": 2})
+    site = Site(records_dir=str(args.work_dir / "records"),
+                work_dir=str(args.work_dir / "work"),
+                runs_dir=str(args.work_dir / "runs"), placements={"local": 2})
     text = "alpha beta gamma beta alpha beta"
     print(nested_studies(text).summary())
     print("Only the wrapper is in this Plan; it authors the inner Plan when it runs.")

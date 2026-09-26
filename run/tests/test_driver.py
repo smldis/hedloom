@@ -87,7 +87,7 @@ def transport(runs=None, failing=None):
 
 def test_a_plan_runs_in_dependency_order(tmp_path):
     report = run_plan(
-        document(), transport(), root=str(tmp_path)
+        document(), transport(), records_dir=str(tmp_path)
     )
 
     assert report.succeeded
@@ -95,7 +95,7 @@ def test_a_plan_runs_in_dependency_order(tmp_path):
 
 
 def test_outputs_are_threaded_into_the_inputs_that_reference_them(tmp_path):
-    report = run_plan(document(), transport(), root=str(tmp_path))
+    report = run_plan(document(), transport(), records_dir=str(tmp_path))
     final = report.outcomes[-1]
 
     assert final.value["summary"]["count"] == 2
@@ -105,8 +105,8 @@ def test_outputs_are_threaded_into_the_inputs_that_reference_them(tmp_path):
 def test_a_second_run_reuses_everything(tmp_path):
     runs = []
     shared = transport(runs)
-    run_plan(document(), shared, root=str(tmp_path))
-    second = run_plan(document(), shared, root=str(tmp_path))
+    run_plan(document(), shared, records_dir=str(tmp_path))
+    second = run_plan(document(), shared, records_dir=str(tmp_path))
 
     assert len(second.reused) == 3
     assert second.ran == ()
@@ -116,9 +116,9 @@ def test_a_second_run_reuses_everything(tmp_path):
 def test_editing_one_input_reruns_it_and_its_dependents_only(tmp_path):
     runs = []
     shared = transport(runs)
-    run_plan(document(), shared, root=str(tmp_path))
+    run_plan(document(), shared, records_dir=str(tmp_path))
     report = run_plan(
-        document((8, 128)), shared, root=str(tmp_path)
+        document((8, 128)), shared, records_dir=str(tmp_path)
     )
 
     reran = {item.authored_key for item in report.ran}
@@ -130,7 +130,7 @@ def test_editing_one_input_reruns_it_and_its_dependents_only(tmp_path):
 
 def test_a_failure_blocks_its_successors_rather_than_running_them(tmp_path):
     report = run_plan(
-        document(), transport(failing=32), root=str(tmp_path)
+        document(), transport(failing=32), records_dir=str(tmp_path)
     )
 
     assert not report.succeeded
@@ -154,7 +154,7 @@ def test_continuing_past_a_failure_still_refuses_to_run_its_dependents(tmp_path)
         document(stragglers=(("late", 8),)),
         transport(failing=32),
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
         stop_on_failure=False,
     )
 
@@ -174,7 +174,7 @@ def test_stopping_also_holds_back_work_that_had_nothing_to_do_with_it(tmp_path):
         document(stragglers=(("late", 8),)),
         transport(failing=32),
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
     )
 
     by_key = {item.authored_key: item for item in report.outcomes}
@@ -189,14 +189,14 @@ def test_progress_is_reportable_while_the_run_proceeds(tmp_path):
         document(),
         transport(),
 
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
         on_event=seen.append,
     )
     assert [item.authored_key for item in seen] == ["coarse", "medium", "summary"]
 
 
 def test_the_report_summarises_what_happened(tmp_path):
-    report = run_plan(document(), transport(), root=str(tmp_path))
+    report = run_plan(document(), transport(), records_dir=str(tmp_path))
     text = report.summary()
     assert "coarse" in text and "succeeded" in text
 
@@ -205,11 +205,11 @@ def test_a_failed_point_is_retried_on_the_next_run(tmp_path):
     """Failures are not cached, so a fixed environment reruns them."""
 
     first = run_plan(
-        document(), transport(failing=32), root=str(tmp_path)
+        document(), transport(failing=32), records_dir=str(tmp_path)
     )
     assert not first.succeeded
 
-    second = run_plan(document(), transport(), root=str(tmp_path))
+    second = run_plan(document(), transport(), records_dir=str(tmp_path))
     assert second.succeeded
     by_key = {item.authored_key: item for item in second.outcomes}
     assert by_key["coarse"].reused, "the point that worked must not rerun"
@@ -223,7 +223,7 @@ def test_sequential_execution_honours_cancelled_entry_gate(tmp_path):
     def cancel_before_admission(identifier, handle, inputs):
         handles.append(handle)
         assert handle.cancel_before_start()
-    report = run_plan(document(), transport(runs), root=str(tmp_path / 'records'),
+    report = run_plan(document(), transport(runs), records_dir=str(tmp_path / 'records'),
         execution_owner=ExecutionOwner(tmp_path / 'executions'),
         on_execution=cancel_before_admission)
     assert not runs

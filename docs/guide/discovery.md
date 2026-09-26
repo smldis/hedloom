@@ -1,12 +1,12 @@
 # Finding runs and live workspaces
 
-Every submission requires a chosen `name` and a separate Site history directory:
+Every submission requires a chosen `name` and a `runs_dir`:
 
 ```toml
 [study]
-root = "records"
-workspace_root = "workspaces"
-history_root = "history"
+records_dir = "records"
+work_dir = "work"
+runs_dir = "runs"
 ```
 
 ```python
@@ -24,8 +24,7 @@ before execution. Watch mode prints the address to stderr immediately.
 Names are case-sensitive and match `[A-Za-z0-9][A-Za-z0-9._-]*`. Addresses always
 include a positive unpadded occurrence: name `experiment.2` starts at
 `experiment.2.1`. There is no latest alias. Permanent atomic reservation
-directories prevent number recycling; gaps are valid. History cannot overlap
-the computation or workspace roots.
+directories prevent number recycling; gaps are valid. `runs_dir` cannot overlap `records_dir` or `work_dir`.
 
 ## Inspect from another process
 
@@ -39,17 +38,17 @@ cd "$(hedloom runs path --site site.toml investigate-start.1 --invocation prepar
 ```
 
 If the submitting script constructed `Site(...)` in Python, supply its
-`history_root` directly; no TOML profile or original script is needed:
+`runs_dir` directly; no TOML profile or original script is needed:
 
 ```sh
-hedloom runs list --history-root /shared/studies/history
-hedloom runs show --history-root /shared/studies/history investigate-start.1 --json
-hedloom runs path --history-root /shared/studies/history investigate-start.1 --invocation prepare.1 --workspace
+hedloom runs list --runs-dir /shared/studies/runs
+hedloom runs show --runs-dir /shared/studies/runs investigate-start.1 --json
+hedloom runs path --runs-dir /shared/studies/runs investigate-start.1 --invocation prepare.1 --workspace
 ```
 
 `runs list`, `runs show`, and `runs path` require exactly one of `--site` or
-`--history-root`. Relative history paths resolve against the current directory.
-The saved run metadata supplies the record and workspace roots.
+`--runs-dir`. Relative run paths resolve against the current directory.
+The saved run metadata supplies `records_dir` and `work_dir`.
 
 List results are newest first. `--study` filters the authored definition.
 Date-only `--since` means UTC midnight; timestamps require an explicit timezone.
@@ -71,7 +70,7 @@ browseable.
 
 ```python
 from hedloom import RunHistory
-history = RunHistory(site.history_root)
+history = RunHistory(site.runs_dir)
 runs = history.list_runs(name="investigate-start")
 view = history.read_run("investigate-start.1")
 invocations = history.list_invocations(view.run_id)
@@ -81,8 +80,10 @@ outputs = history.outputs(view.run_id)  # available is separate from value=None
 
 Queries need neither the original study module nor a Dask client. They never
 launch, poll a scheduler, reconcile, pin, prune, repair, or create directories.
-Recorded roots continue to locate old evidence after profile changes. Missing
-locations are reported; relocation is not implemented.
+Recorded locations continue to locate evidence after profile changes. Missing
+locations are reported; relocation is not implemented. Saved runs from the
+previous schema and directory layout are not readable here; see
+[storage path migration](storage-migration.md).
 
 ## Interpreting observations
 
@@ -193,7 +194,7 @@ with session(site) as live:
     live.refresh_environment()
     third = live.submit(subject, name="updated")
 
-evidence = RunHistory(site.history_root).reproducibility(first.run_id)
+evidence = RunHistory(site.runs_dir).reproducibility(first.run_id)
 print(evidence["environment"]["captured_at"])
 print(evidence["captured_at"])
 ```
@@ -236,7 +237,7 @@ Supplied file paths are relative to the submitting working directory. Files are
 copied, never executed; a missing supplied file refuses before operations run.
 `Reproducibility(enabled=False)` records an explicit opt-out and performs no
 environment discovery. You can explicitly attach a lockfile if a particular run
-needs one. Old runs without the feature return `None` from the history reader.
+needs one. Schema-3 runs without the feature return `None` from the history reader.
 
 `hedloom runs show --site site.toml baseline.1 --json` includes the saved record.
 File bytes are base64-encoded with SHA-256 digests. Dependency manifests appear

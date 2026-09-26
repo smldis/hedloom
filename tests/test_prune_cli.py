@@ -26,8 +26,8 @@ def _site_and_record(tmp_path):
     profile.write_text(
         f"""
 [study]
-root = "{root}"
-workspace_root = "{work}"
+records_dir = "{root}"
+work_dir = "{work}"
 
 [retention]
 floor = "0s"

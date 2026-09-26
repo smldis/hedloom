@@ -70,8 +70,8 @@ def test_a_file_the_command_wrote_itself_is_recorded(tmp_path, monkeypatch):
         transport,
         {"command": WRITES_A_FILE, "outputs": {"raw": {"path": "sim.raw"}}},
         durability=Durability.RECORDED,
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
 
 
     )
@@ -91,8 +91,8 @@ def test_stdout_is_diagnostics_not_the_result(tmp_path, monkeypatch):
         transport,
         {"command": WRITES_A_FILE, "outputs": {"raw": {"path": "sim.raw"}}},
         durability=Durability.RECORDED,
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
 
 
     )
@@ -111,8 +111,8 @@ def test_a_command_may_declare_stdout_as_its_output(tmp_path, monkeypatch):
             "outputs": {"answer": {"stream": "stdout"}},
         },
         durability=Durability.RECORDED,
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
 
 
     )
@@ -131,8 +131,8 @@ def test_a_promised_output_that_never_appears_fails_the_invocation(
             "outputs": {"raw": {"path": "sim.raw"}},
         },
         durability=Durability.RECORDED,
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
 
 
     )
@@ -147,8 +147,8 @@ def test_each_attempt_gets_its_own_workspace(tmp_path, monkeypatch):
     transport = farm(tmp_path, monkeypatch)
     common = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path / "attempts"),
-        "workspace_root": str(tmp_path / "work"),
+        "records_dir": str(tmp_path / "attempts"),
+        "work_dir": str(tmp_path / "work"),
 
 
     }
@@ -179,8 +179,8 @@ def test_an_unrelated_file_in_the_workspace_is_not_promoted(tmp_path, monkeypatc
             "outputs": {"raw": {"path": "sim.raw"}},
         },
         durability=Durability.RECORDED,
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
 
 
     )
@@ -196,8 +196,8 @@ def test_downstream_resolves_the_recorded_address(tmp_path, monkeypatch):
     transport = farm(tmp_path, monkeypatch)
     common = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path / "attempts"),
-        "workspace_root": str(tmp_path / "work"),
+        "records_dir": str(tmp_path / "attempts"),
+        "work_dir": str(tmp_path / "work"),
 
     }
     produced = execute(

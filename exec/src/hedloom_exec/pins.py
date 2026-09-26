@@ -165,7 +165,7 @@ def is_pinned(state: "AttemptState", try_number: int) -> bool:
 
 def pin(
     journal: "AttemptJournal", *, try_number: int,
-    workspace_root: str | os.PathLike[str], reason: str,
+    work_dir: str | os.PathLike[str], reason: str,
     actor: str | None = None, freeze: bool = True,
 ) -> Pin:
     """Inventory, optionally chmod, then durably promise one terminal try."""
@@ -196,7 +196,7 @@ def pin(
                 "workspace removal and cannot be pinned"
             )
         workspace = workspace_path(
-            workspace_root, try_name(journal.identity, try_number)
+            work_dir, try_name(journal.identity, try_number)
         )
         if workspace.is_symlink() or not workspace.is_dir():
             raise PinError(
@@ -276,7 +276,7 @@ def verify(pin: Pin, *, layout: int) -> Verification:
     return Verification("drifted", drifted) if drifted else Verification("intact")
 
 
-def resolve_selector(root: str | os.PathLike[str], selector: str):
+def resolve_selector(records_dir: str | os.PathLike[str], selector: str):
     """Resolve ``<record>`` or ``<record>#<try>`` against the records present.
 
     A record identity, or any unambiguous prefix of one, is the whole selector
@@ -290,7 +290,7 @@ def resolve_selector(root: str | os.PathLike[str], selector: str):
     from hedloom_exec.journal import AttemptJournal
     from hedloom_exec.reuse import scan_attempts
 
-    records = scan_attempts(root)
+    records = scan_attempts(records_dir)
     base, marker, suffix = selector.partition("#")
     requested_try: int | None = None
     if marker:

@@ -106,14 +106,14 @@ class AttemptRecord:
         return self.outcome is not None
 
 
-def scan_attempts(root: str | Path) -> tuple[AttemptRecord, ...]:
-    """Read every attempt under ``root``.
+def scan_attempts(records_dir: str | Path) -> tuple[AttemptRecord, ...]:
+    """Read every attempt under ``records_dir``.
 
     A directory scan is honest for a prototype and obviously wrong at scale;
     an index belongs here only once a real workload makes the scan hurt.
     """
 
-    base = Path(root)
+    base = Path(records_dir)
     if not base.is_dir():
         return ()
 

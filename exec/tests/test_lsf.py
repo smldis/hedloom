@@ -138,7 +138,7 @@ def test_recorded_execution_over_lsf_reuses_a_published_result(tmp_path):
     lsf, _ = transport(runner=runner)
     common = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path),
+        "records_dir": str(tmp_path),
 
 
     }

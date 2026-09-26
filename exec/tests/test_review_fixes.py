@@ -106,7 +106,7 @@ def test_a_rejected_submission_leaves_nothing_cached(tmp_path):
             transport,
             BUNDLE,
             durability=Durability.RECORDED,
-            root=str(tmp_path),
+            records_dir=str(tmp_path),
 
 
         )
@@ -323,7 +323,7 @@ def test_two_declarations_coexist_as_two_records(tmp_path):
     from hedloom_exec.reuse import input_digest, scan_attempts
 
     transport = InProcessTransport({"simulate": lambda **kw: "ran"})
-    common = {"durability": Durability.RECORDED, "root": str(tmp_path)}
+    common = {"durability": Durability.RECORDED, "records_dir": str(tmp_path)}
     first_bundle = {"operation": "simulate", "inputs": {"a": 1}}
     second_bundle = {"operation": "simulate", "inputs": {"a": 2}}
     first = execute(transport, first_bundle, **common)

@@ -67,7 +67,7 @@ def test_unchanged_inputs_reuse_the_published_result(tmp_path):
     shared = transport(runs)
     common = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path),
+        "records_dir": str(tmp_path),
 
 
     }
@@ -87,7 +87,7 @@ def test_changed_inputs_do_not_reuse_the_old_result(tmp_path):
     shared = transport(runs)
     common = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path),
+        "records_dir": str(tmp_path),
 
 
     }
@@ -105,26 +105,26 @@ def test_scanning_an_absent_root_is_empty_not_an_error(tmp_path):
     assert scan_attempts(tmp_path / "nothing-here") == ()
 
 
-def test_recorded_execution_needs_only_a_bundle_and_a_root(tmp_path):
+def test_recorded_execution_needs_only_a_bundle_and_records_dir(tmp_path):
     """No study, no Plan ID, no invocation ID, no authored key."""
 
     import inspect
 
     parameters = inspect.signature(execute).parameters
     assert set(parameters) == {
-        "transport", "bundle", "durability", "root", "workspace_root", "publish_selection"
+        "transport", "bundle", "durability", "records_dir", "work_dir", "publish_selection"
     }
 
     result = execute(
-        transport(), BUNDLE, durability=Durability.RECORDED, root=str(tmp_path)
+        transport(), BUNDLE, durability=Durability.RECORDED, records_dir=str(tmp_path)
     )
     assert result.outcome == "succeeded"
     assert result.record == scan_attempts(tmp_path)[0].identity
     assert result.try_number == 0
 
 
-def test_recorded_execution_still_requires_a_root(tmp_path):
-    with pytest.raises(ValueError, match="requires a root"):
+def test_recorded_execution_still_requires_records_dir(tmp_path):
+    with pytest.raises(ValueError, match="requires records_dir"):
         execute(transport(), BUNDLE, durability=Durability.RECORDED)
 
 
@@ -146,7 +146,7 @@ def test_a_prior_failure_gets_a_new_try_in_the_same_shared_record(tmp_path):
     def explode(**kwargs):
         raise RuntimeError("no")
 
-    common = {"durability": Durability.RECORDED, "root": str(tmp_path)}
+    common = {"durability": Durability.RECORDED, "records_dir": str(tmp_path)}
     failed = execute(
         InProcessTransport({"simulate": explode}),
         BUNDLE,

@@ -22,18 +22,18 @@ Use `compute.named("key")(n=...)` or `sweep(points, key="key")` for readable ide
 **Submit.** `Site.from_file("site.toml")` anchors relative paths to the profile:
 ```toml
 [study]
-root = "records"
-workspace_root = "workspaces"
-history_root = "history"
+records_dir = "records"
+work_dir = "work"
+runs_dir = "runs"
 ```
-History cannot overlap either other root. Call `subject = my_study(...)`, inspect `subject.summary()`, then submit authorized work: `run = subject.submit(site=site, name="request", sequential=True)` for local sequential execution. Preserve requested farm placement/concurrency; several runs can share `with session(site) as s: s.submit(subject, name="request")`.
+`runs_dir` cannot overlap the other two storage locations. Call `subject = my_study(...)`, inspect `subject.summary()`, then submit authorized work: `run = subject.submit(site=site, name="request", sequential=True)` for local sequential execution. Preserve requested farm placement/concurrency; several runs can share `with session(site) as s: s.submit(subject, name="request")`.
 
 **Use results.** Check `run.succeeded` and `run.history.status`; retain actual `run.run_id`. `run.outputs["name"]` has `.available`, `.value`, `.artifact`, `.outcome`. File `.value` is an address; returned `.value` can legitimately be `None`. No `run.value` exists. Execution success does not mean the exported verdict passes. `run.report.outcomes` exposes `.authored_key`, `.reused`, `.record`, `.try_number`, `.error`.
 
 **Discover without executing or importing the study.**
 ```python
 from hedloom import Site, RunHistory
-h = RunHistory(Site.from_file("site.toml").history_root)
+h = RunHistory(Site.from_file("site.toml").runs_dir)
 rows = h.list_runs(name="request")  # newest first; optional study=definition
 view = h.read_run(rows[0].run_id)
 outputs = h.outputs(view.run_id)

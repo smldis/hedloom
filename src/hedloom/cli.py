@@ -24,24 +24,24 @@ from hedloom_run.site import Site, SiteError
 
 
 def _storage_location(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--site", help="site TOML naming both storage roots")
-    parser.add_argument("--root", help="attempt-record root")
-    parser.add_argument("--workspace-root", help="try-workspace root")
+    parser.add_argument("--site", help="site TOML naming both storage directories")
+    parser.add_argument("--records-dir", help="attempt record directory")
+    parser.add_argument("--work-dir", help="try work directory")
 
 
-def _storage_roots(arguments: argparse.Namespace) -> tuple[str, str]:
+def _storage_dirs(arguments: argparse.Namespace) -> tuple[str, str]:
     if arguments.site:
-        if arguments.root or arguments.workspace_root:
-            raise ValueError("--site cannot be combined with explicit roots")
+        if arguments.records_dir or arguments.work_dir:
+            raise ValueError("--site cannot be combined with explicit storage directories")
         site = Site.from_file(arguments.site)
-        if site.workspace_root is None:
+        if site.work_dir is None:
             raise ValueError(
-                "the site declares no workspace_root; this operation needs both roots"
+                "the site declares no work_dir; this operation needs records_dir and work_dir"
             )
-        return site.root, site.workspace_root
-    if not arguments.root or not arguments.workspace_root:
-        raise ValueError("this operation needs --site or both --root and --workspace-root")
-    return arguments.root, arguments.workspace_root
+        return site.records_dir, site.work_dir
+    if not arguments.records_dir or not arguments.work_dir:
+        raise ValueError("this operation needs --site or both --records-dir and --work-dir")
+    return arguments.records_dir, arguments.work_dir
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -88,8 +88,8 @@ def _parser() -> argparse.ArgumentParser:
             leaf = actions.add_parser(action)
             if group == "runs":
                 source = leaf.add_mutually_exclusive_group(required=True)
-                source.add_argument("--site", help="site TOML naming the history root")
-                source.add_argument("--history-root", help="saved run history directory")
+                source.add_argument("--site", help="site TOML naming the runs directory")
+                source.add_argument("--runs-dir", help="saved runs directory")
             else:
                 leaf.add_argument("--site", required=True)
             if action != "path":
@@ -116,16 +116,16 @@ def _parser() -> argparse.ArgumentParser:
 
 def _pin(arguments: argparse.Namespace) -> int:
     try:
-        root, workspace_root = _storage_roots(arguments)
-        record, tries = resolve_selector(root, arguments.selector)
+        records_dir, work_dir = _storage_dirs(arguments)
+        record, tries = resolve_selector(records_dir, arguments.selector)
         if not tries:
             raise PinSelectionError(
                 f"record {record.identity} has no terminal try to pin"
             )
-        journal = AttemptJournal(root, record.identity)
+        journal = AttemptJournal(records_dir, record.identity)
         for item in tries:
             made = pin_workspace(
-                journal, try_number=item.number, workspace_root=workspace_root,
+                journal, try_number=item.number, work_dir=work_dir,
                 reason=arguments.reason, actor=arguments.actor,
                 freeze=not arguments.no_freeze,
             )
@@ -136,10 +136,10 @@ def _pin(arguments: argparse.Namespace) -> int:
         return 2
 
 
-def _pin_matches(root: str, selector: str):
+def _pin_matches(records_dir: str, selector: str):
     found = []
-    for record in scan_attempts(root):
-        state = AttemptJournal(root, record.identity).fold()
+    for record in scan_attempts(records_dir):
+        state = AttemptJournal(records_dir, record.identity).fold()
         found.extend(
             (record, item) for item in state.pins
             if item.is_active and item.pin_id.startswith(selector)
@@ -156,10 +156,10 @@ def _pin_matches(root: str, selector: str):
 
 def _unpin(arguments: argparse.Namespace) -> int:
     try:
-        root, _workspace_root = _storage_roots(arguments)
-        record, selected = _pin_matches(root, arguments.selector)
+        records_dir, _work_dir = _storage_dirs(arguments)
+        record, selected = _pin_matches(records_dir, arguments.selector)
         released = unpin_workspace(
-            AttemptJournal(root, record.identity), pin_id=selected.pin_id,
+            AttemptJournal(records_dir, record.identity), pin_id=selected.pin_id,
             reason=arguments.reason, actor=arguments.actor,
             thaw=not arguments.no_thaw,
         )
@@ -172,9 +172,9 @@ def _unpin(arguments: argparse.Namespace) -> int:
 
 def _pins(arguments: argparse.Namespace) -> int:
     try:
-        root, _workspace_root = _storage_roots(arguments)
-        for record in scan_attempts(root):
-            state = AttemptJournal(root, record.identity).fold()
+        records_dir, _work_dir = _storage_dirs(arguments)
+        for record in scan_attempts(records_dir):
+            state = AttemptJournal(records_dir, record.identity).fold()
             for item in state.pins:
                 if item.is_active:
                     print(
@@ -230,7 +230,7 @@ def _prune_policy(arguments: argparse.Namespace) -> tuple[RetentionPolicy, tuple
             "no retention rule was selected; declare one in the site or use "
             "--outcome, --failed, --older-than, or --larger-than"
         )
-    records = scan_attempts(site.root if site else arguments.root)
+    records = scan_attempts(site.records_dir if site else arguments.records_dir)
     if arguments.record is not None:
         records = tuple(
             item for item in records
@@ -243,9 +243,9 @@ def _prune_policy(arguments: argparse.Namespace) -> tuple[RetentionPolicy, tuple
 
 def _prune(arguments: argparse.Namespace) -> int:
     try:
-        root, workspace_root = _storage_roots(arguments)
+        records_dir, work_dir = _storage_dirs(arguments)
         policy, records = _prune_policy(arguments)
-        found = survey(root, policy, workspace_root=workspace_root, records=records)
+        found = survey(records_dir, policy, work_dir=work_dir, records=records)
         if not arguments.apply:
             data = found.as_data()
             if arguments.json:
@@ -300,11 +300,11 @@ def _discover(arguments):
             options = ({"since": arguments.since, "outcome": arguments.outcome}
                        if arguments.action == "list" else
                        {"record": arguments.record, "try_number": arguments.try_number})
-            data = list_attempts(site.root, workspace_root=site.workspace_root, **options)
+            data = list_attempts(site.records_dir, work_dir=site.work_dir, **options)
             if arguments.action == "show" and not data:
                 raise ValueError("selected record/try is unavailable")
         else:
-            history = RunHistory(site.history_root if site is not None else arguments.history_root)
+            history = RunHistory(site.runs_dir if site is not None else arguments.runs_dir)
             if arguments.action == "path":
                 print(history.resolve_path(arguments.run_id, arguments.invocation,
                       workspace=arguments.workspace, journal_dir=arguments.journal_dir))
@@ -367,7 +367,15 @@ def _discover(arguments):
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the operator CLI, returning a process exit status."""
 
-    arguments = _parser().parse_args(argv)
+    parser = _parser()
+    supplied = list(sys.argv[1:] if argv is None else argv)
+    obsolete = {"--root": "--records-dir", "--workspace-root": "--work-dir",
+                "--history-root": "--runs-dir"}
+    for argument in supplied:
+        flag = argument.split("=", 1)[0]
+        if flag in obsolete:
+            parser.error(f"{flag} was renamed to {obsolete[flag]}")
+    arguments = parser.parse_args(supplied)
     if arguments.command in ("runs", "attempts"):
         return _discover(arguments)
     if arguments.command == "pin":

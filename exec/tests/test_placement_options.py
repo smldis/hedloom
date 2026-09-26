@@ -220,7 +220,7 @@ def test_retuning_the_resource_request_still_reuses_the_result(tmp_path):
     lsf, runner = transport()
     common = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path),
+        "records_dir": str(tmp_path),
 
 
     }
@@ -241,7 +241,7 @@ def test_what_the_job_asked_for_is_published_with_the_result(tmp_path):
         lsf,
         bundle(queue="bigmem", cores=8, licences={"spectre": 1}),
         durability=Durability.RECORDED,
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
 
 
     )

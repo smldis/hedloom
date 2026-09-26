@@ -20,10 +20,10 @@ needs_awk = pytest.mark.skipif(
 
 def site_for(tmp_path: Path) -> Site:
     return Site(
-        root=str(tmp_path / "attempts"),
-        workspace_root=str(tmp_path / "work"),
+        records_dir=str(tmp_path / "attempts"),
+        work_dir=str(tmp_path / "work"),
         address_spaces={"repository-relative": str(ROOT / "examples")},
-        history_root=str(tmp_path / "attempts") + "-history",
+        runs_dir=str(tmp_path / "attempts") + "-history",
     )
 
 

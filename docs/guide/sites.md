@@ -1,21 +1,25 @@
 # Sites and placements
 
 Nothing about *where* a study runs is authored into the study. A `Site` holds
-all of it: which substrate provides each named placement, the roots records and
-workspaces are written under, the address spaces a declared source resolves
+all of it: which substrate provides each named placement, the independent
+record, run, and try work directories, the address spaces a declared source resolves
 through, and how much local concurrency the submit host should offer.
 
 ```python
 site = Site(
-    root=str(work / "attempts"),
-    workspace_root=str(work / "work"),
-    history_root=str(work / "history"),
+    records_dir=str(work / "records"),
+    work_dir=str(work / "work"),
+    runs_dir=str(work / "runs"),
     address_spaces={"repository-relative": str(here)},
 )
 ```
 
 (`examples/grid_refinement.py` — constructed directly, because it needs no placement
 besides the default in-process one.)
+
+The three paths are configured independently and need no common parent.
+`runs_dir` is required for a facade submission. `work_dir` remains optional in
+low-level Run and Exec calls; if omitted, try files use the records location.
 
 ## Profiles
 
@@ -25,9 +29,9 @@ study run from elsewhere still means the same thing:
 
 ```toml
 [study]
-root = "_runs/farm-smoke/attempts"
-workspace_root = "_runs/farm-smoke/work"
-history_root = "_runs/farm-smoke/history"
+records_dir = "_runs/farm-smoke/records"
+work_dir = "_runs/farm-smoke/work"
+runs_dir = "_runs/farm-smoke/runs"
 
 [placement.lsf]
 kind = "lsf-interactive"

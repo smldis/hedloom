@@ -72,16 +72,20 @@ def _workspace_status(location, removed):
 
 
 class RunHistory:
-    def __init__(self, history_root):
-        if history_root is None:
-            raise HistoryError('site declares no history_root')
-        self.root = Path(history_root).resolve()
+    def __init__(self, runs_dir):
+        if runs_dir is None:
+            raise HistoryError('site declares no runs_dir')
+        self.root = Path(runs_dir).resolve()
+        if (self.root / 'runs').exists() or (self.root / 'allocations').exists():
+            raise HistoryError(f'{self.root} has the previous saved-run layout; migrate saved data manually before reading here')
 
     def reproducibility(self, run_id):
-        """Read the saved record, including records written under the old name."""
+        """Read schema-3 evidence, including the earlier provenance filename."""
         parse_run_id(run_id)
-        directory = self.root / 'runs' / run_id
+        directory = self.root / run_id
         header = read_json(directory / 'run.json')
+        if 'records_dir' not in header or 'work_dir' not in header:
+            raise HistoryError(f'incompatible run location metadata: {directory / "run.json"}')
         key = 'reproducibility' if 'reproducibility' in header else 'provenance'
         reference = header.get(key)
         if reference is None:
@@ -92,8 +96,10 @@ class RunHistory:
 
     def read_run(self, run_id):
         name, occurrence = parse_run_id(run_id)
-        directory = self.root / 'runs' / run_id
+        directory = self.root / run_id
         header = read_json(directory / 'run.json')
+        if 'records_dir' not in header or 'work_dir' not in header:
+            raise HistoryError(f'incompatible run location metadata: {directory / "run.json"}')
         if (header.get('name'), header.get('occurrence'), header.get('run_id')) != (name, occurrence, run_id):
             raise HistoryError(f'run header address mismatch: {run_id}')
         document = read_plan(directory / 'plan.json')
@@ -158,7 +164,7 @@ class RunHistory:
             if record:
                 if not isinstance(record, str) or Path(record).name != record or record in ('.', '..'):
                     raise HistoryError('invalid selected record')
-                journal = AttemptJournal(header['record_root'], record)
+                journal = AttemptJournal(header['records_dir'], record)
                 journal_dir = str(journal.directory.resolve())
                 if not journal.directory.is_dir():
                     issues.append(f'missing recorded journal: {journal_dir}')
@@ -205,7 +211,11 @@ class RunHistory:
             validate_name(name)
         cutoff = since_time(since)
         rows = []
-        for path in (self.root / 'runs').glob('*/run.json'):
+        for path in self.root.glob('*/run.json'):
+            try:
+                parse_run_id(path.parent.name)
+            except HistoryError:
+                continue
             header = read_json(path)
             if name is not None and header['name'] != name or study is not None and header['study_name'] != study:
                 continue
@@ -215,8 +225,8 @@ class RunHistory:
         return tuple(sorted(rows, key=lambda row: (row.at, row.run_id), reverse=True))
 
     def preparations(self):
-        return tuple(sorted(str(path) for path in (self.root / 'allocations').glob('*/*')
-                     if path.is_dir() and not (self.root / 'runs' / f'{path.parent.name}.{path.name}' / 'run.json').exists()))
+        return tuple(sorted(str(path) for path in (self.root / '_meta' / 'allocations').glob('*/*')
+                     if path.is_dir() and not (self.root / f'{path.parent.name}.{path.name}' / 'run.json').exists()))
 
     def list_invocations(self, run_id):
         return self.read_run(run_id).invocations
@@ -244,7 +254,7 @@ class RunHistory:
     def outputs(self, run_id):
         """Resolve saved named exports from exact manifests, including None."""
         snapshot = self.read_run(run_id)
-        directory = self.root / 'runs' / run_id
+        directory = self.root / run_id
         header = read_json(directory / 'run.json')
         document = read_plan(directory / 'plan.json')
         rows = {row.invocation_id: row for row in snapshot.invocations}
@@ -256,7 +266,7 @@ class RunHistory:
             value = None
             artifact = None
             if available:
-                manifest = AttemptJournal(header['record_root'], row.record).read_manifest(row.try_number)
+                manifest = AttemptJournal(header['records_dir'], row.record).read_manifest(row.try_number)
                 available = manifest is not None
                 if available:
                     evidence = manifest.get('result', {})
@@ -268,16 +278,16 @@ class RunHistory:
         return result
 
 
-def list_attempts(root, *, workspace_root=None, since=None, outcome=None, record=None, try_number=None):
+def list_attempts(records_dir, *, work_dir=None, since=None, outcome=None, record=None, try_number=None):
     cutoff = since_time(since)
     rows = []
-    directories = [Path(root) / record] if record else Path(root).glob('*')
+    directories = [Path(records_dir) / record] if record else Path(records_dir).glob('*')
     if record and (Path(record).name != record or record in ('.', '..')):
         raise ValueError('record must be one directory name')
     for directory in directories:
         if not (directory / 'layout').is_file():
             continue
-        journal = AttemptJournal(root, directory.name)
+        journal = AttemptJournal(records_dir, directory.name)
         state, diagnostics = journal.snapshot()
         standing = journal.read_manifest()
         created = next((event for event in state.events if event.event == 'created'), None)
@@ -288,7 +298,7 @@ def list_attempts(root, *, workspace_root=None, since=None, outcome=None, record
             if cutoff and (not times or datetime.fromisoformat(times[0]) < cutoff):
                 continue
             recorded = (item.handle or {})
-            workspace = (Path(recorded['workdir']) if recorded.get('workdir') else None) if 'workdir' in recorded else workspace_path(workspace_root or root, try_name(directory.name, item.number))
+            workspace = (Path(recorded['workdir']) if recorded.get('workdir') else None) if 'workdir' in recorded else workspace_path(work_dir or records_dir, try_name(directory.name, item.number))
             removed = any(event.event == 'workspace_removed' and event.data.get('try') == item.number for event in state.events)
             rows.append(dict(record=directory.name, try_number=item.number,
                 operation=created.data.get('operation') if created else None,

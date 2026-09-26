@@ -110,8 +110,8 @@ def _waiting_on_nested_run():
 class _RunConfig:
     """Where the durable record and the workspaces live, for one run."""
 
-    root: str
-    workspace_root: str | None = None
+    records_dir: str
+    work_dir: str | None = None
     publish_selection: Any = None
     outputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None
     sources: Mapping[str, str] = field(default_factory=dict)
@@ -227,8 +227,8 @@ def _run_one_here(
             chosen,
             bundle,
             durability=Durability.RECORDED,
-            root=config.root,
-            workspace_root=config.workspace_root,
+            records_dir=config.records_dir,
+            work_dir=config.work_dir,
             publish_selection=config.publish_selection,
         )
     except (AttemptError, TransportError) as error:
@@ -245,7 +245,7 @@ def _run_one_here(
             )
         )
 
-    contributed = produced_by(item, result, root=config.root) if result.outcome == "succeeded" else {}
+    contributed = produced_by(item, result, records_dir=config.records_dir) if result.outcome == "succeeded" else {}
     return _Step(
         InvocationOutcome(
             invocation_id=item.invocation_id,
@@ -510,7 +510,7 @@ def _execution_contract(item, available, config):
     _, transport = select_transport(item, available)
     binding = transport.execution_contract(item.operation) if hasattr(transport, 'execution_contract') else transport
     return sha256(cloudpickle.dumps((item.input_digest, binding, dict(item.policy),
-        str(Path(config.root).resolve()), str(Path(config.workspace_root).resolve()) if config.workspace_root else None,
+        str(Path(config.records_dir).resolve()), str(Path(config.work_dir).resolve()) if config.work_dir else None,
         config.outputs))).digest()
 
 
@@ -526,7 +526,7 @@ def _run_ready(items, available, config, client, owner, bind, on_event, stop_on_
     from time import sleep
     from hedloom_run.execution import ExecutionOwner, ExecutionHandle
 
-    owner = owner or ExecutionOwner(Path(config.root).resolve() / '.executions')
+    owner = owner or ExecutionOwner(Path(config.records_dir).resolve() / '.executions')
     token = uuid4().hex
     completed, active = {}, {}
     produced = dict(config.sources)
@@ -537,7 +537,7 @@ def _run_ready(items, available, config, client, owner, bind, on_event, stop_on_
     def save(item, step, notify=True):
         outcome = replace(step.outcome, invocation_id=item.invocation_id,
                           authored_key=item.authored_key, operation=item.operation)
-        contributed = produced_by(item, outcome, root=config.root) if outcome.outcome == 'succeeded' else {}
+        contributed = produced_by(item, outcome, records_dir=config.records_dir) if outcome.outcome == 'succeeded' else {}
         completed[item.invocation_id] = _Step(outcome, contributed)
         produced.update(contributed)
         if notify and on_event:
@@ -690,8 +690,8 @@ def _run_plan_graph(
     *,
     client: Any,
     transports: Mapping[str, Transport] | None = None,
-    root: str,
-    workspace_root: str | None = None,
+    records_dir: str,
+    work_dir: str | None = None,
     commands: Mapping[str, Sequence[str]] | None = None,
     outputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     identity_env: Mapping[str, str] | None = None,
@@ -731,8 +731,8 @@ def _run_plan_graph(
         dict(transports) if transports is not None else {"*": transport}
     )
     config = _RunConfig(
-        root=root,
-        workspace_root=workspace_root,
+        records_dir=records_dir,
+        work_dir=work_dir,
         outputs=outputs,
         sources=dict(source_addresses or {}),
     )

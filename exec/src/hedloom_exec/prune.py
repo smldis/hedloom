@@ -231,8 +231,8 @@ class Skip:
 
 @dataclass(frozen=True, slots=True)
 class Survey:
-    root: Path
-    workspace_root: Path
+    records_dir: Path
+    work_dir: Path
     policy: RetentionPolicy
     candidates: tuple[Candidate, ...]
     skipped: tuple[Skip, ...]
@@ -250,7 +250,7 @@ class Survey:
 
     def as_data(self) -> dict[str, Any]:
         return {
-            "root": str(self.root), "workspace_root": str(self.workspace_root),
+            "records_dir": str(self.records_dir), "work_dir": str(self.work_dir),
             "surveyed_at": self.surveyed_at, "freed_bytes": self.freed_bytes,
             "candidates": [
                 {"identity": item.identity, "try": item.try_number,
@@ -286,15 +286,15 @@ class Survey:
             if limit_bytes is not None and freed >= limit_bytes:
                 stopped = True
                 break
-            journal = AttemptJournal(self.root, proposed.identity)
+            journal = AttemptJournal(self.records_dir, proposed.identity)
             try:
                 with journal.claim():
                     records = tuple(
-                        item for item in scan_attempts(self.root)
+                        item for item in scan_attempts(self.records_dir)
                         if item.identity == proposed.identity
                     )
                     refreshed = survey(
-                        self.root, self.policy, workspace_root=self.workspace_root,
+                        self.records_dir, self.policy, work_dir=self.work_dir,
                         records=records,
                     )
                     current = next(
@@ -424,22 +424,22 @@ def _is_pinned(state: Any, try_number: int) -> bool:
 
 
 def survey(
-    root: str | os.PathLike[str], policy: RetentionPolicy, *,
-    workspace_root: str | os.PathLike[str] | None = None,
+    records_dir: str | os.PathLike[str], policy: RetentionPolicy, *,
+    work_dir: str | os.PathLike[str] | None = None,
     records: Iterable[AttemptRecord] | None = None,
 ) -> Survey:
     """Classify every try without creating or changing anything."""
 
-    record_root = Path(root)
-    work_root = Path(workspace_root) if workspace_root is not None else record_root
-    source = tuple(scan_attempts(record_root) if records is None else records)
+    records_dir = Path(records_dir)
+    work_root = Path(work_dir) if work_dir is not None else records_dir
+    source = tuple(scan_attempts(records_dir) if records is None else records)
     now = datetime.now(timezone.utc)
     floor = _duration(policy.floor, field="retention floor")
     candidates: list[Candidate] = []
     skipped: list[Skip] = []
 
     for record in source:
-        journal = AttemptJournal(record_root, record.identity)
+        journal = AttemptJournal(records_dir, record.identity)
         state = journal.fold()
         if not state.tries:
             skipped.append(Skip(record.identity, None, "non-terminal", "no try"))
@@ -521,6 +521,6 @@ def survey(
                 candidates.append(selected)
 
     return Survey(
-        record_root, work_root, policy, tuple(candidates), tuple(skipped),
+        records_dir, work_root, policy, tuple(candidates), tuple(skipped),
         now.isoformat(timespec="microseconds"),
     )

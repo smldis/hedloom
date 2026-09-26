@@ -128,6 +128,11 @@ separately; strict mutation/recovery readers retain their existing behavior.
 - A record is named by that identity. A try workspace and every external job
   are named `<record>-<n>`; discovery, cancellation, and watcher matching use
   that try name, never the bare record identity.
+- The public record location is `records_dir`; journals remain beneath
+  `records_dir/<identity>/`. The optional `work_dir` places try files beneath
+  `work_dir/<identity>-<n>/`. When omitted, the lower-level API retains its
+  fallback beside the records. Reusing a try follows its recorded workdir
+  receipt, even if the current caller supplies a different `work_dir`.
 - Every record declares layout version 1 and contains an append-only
   `events.jsonl`, immutable `manifest/<n>.json` terminal evidence, and an
   atomically replaced `standing.json` selecting reusable evidence. State is
@@ -296,7 +301,7 @@ separately; strict mutation/recovery readers retain their existing behavior.
   given an invented state, and a job absent from LSF while the record says live
   is left to reconciliation, which owns the attempt.
 - `Durability` is declared per invocation, never inferred from placement.
-  `EPHEMERAL` touches no filesystem, requires no identity or root, and reruns
+  `EPHEMERAL` touches no filesystem, requires no identity or `records_dir`, and reruns
   on every call. `RECORDED` runs the full protocol and completes from an
   selected standing evidence without rerunning the payload.
 - `RetentionPolicy` is operator-owned storage policy. Conditions within one
@@ -309,7 +314,7 @@ separately; strict mutation/recovery readers retain their existing behavior.
   no directory, measures actual workspace trees rather than manifest size
   claims, and explains every exclusion. Standing reusable evidence, pinned
   tries, non-terminal and unreconciled tries, tries newer than the floor, and
-  workspaces escaping the declared root are never candidates. Every one of
+  workspaces escaping the declared `work_dir` are never candidates. Every one of
   those is a property of the evidence; none asks who requested it.
 - `Survey.apply()` is the only destructive retention operation. Each proposed
   try is reclassified while its non-blocking record claim is held; contention

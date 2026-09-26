@@ -35,7 +35,7 @@ def test_recorded_execution_leaves_a_readable_attempt(tmp_path):
         transport(),
         BUNDLE,
         durability=Durability.RECORDED,
-        root=str(tmp_path),
+        records_dir=str(tmp_path),
 
 
     )
@@ -53,7 +53,7 @@ def test_recorded_execution_reuses_a_published_result(tmp_path):
     shared = transport(runs)
     common = {
         "durability": Durability.RECORDED,
-        "root": str(tmp_path),
+        "records_dir": str(tmp_path),
 
 
     }

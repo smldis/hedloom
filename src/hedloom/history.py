@@ -12,7 +12,7 @@ import warnings
 
 from hedloom.addresses import invocation_addresses
 
-SCHEMA = 2
+SCHEMA = 3
 
 
 class HistoryError(ValueError):
@@ -196,19 +196,21 @@ class HistoryWriter:
     def __init__(self, site, name, study_name, document, options, client=None, *, reproducibility=None):
         validate_name(name)
         addresses = invocation_addresses(document)
-        if site.history_root is None:
-            raise HistoryError('Hedloom submission requires Site.history_root / [study] history_root')
-        root = Path(site.history_root).resolve()
-        for other in (site.root, site.workspace_root):
+        if site.runs_dir is None:
+            raise HistoryError('Hedloom submission requires Site.runs_dir / [study] runs_dir')
+        root = Path(site.runs_dir).resolve()
+        for other in (site.records_dir, site.work_dir):
             if other is not None:
                 other = Path(other).resolve()
                 if root == other or root in other.parents or other in root.parents:
-                    raise HistoryError('history_root must not overlap record or workspace roots')
+                    raise HistoryError('runs_dir must not overlap record or workspace roots')
         mkdir(root)
+        if (root / 'runs').exists() or (root / 'allocations').exists():
+            raise HistoryError(f'{root} has the previous saved-run layout; migrate saved data manually before writing here')
         limit = os.pathconf(root, 'PC_NAME_MAX')
         if len(os.fsencode(name + '.1')) > limit:
             raise HistoryError('submission name and occurrence exceed filesystem component length')
-        reservations = root / 'allocations' / name
+        reservations = root / '_meta' / 'allocations' / name
         mkdir(reservations)
         number = 1
         while True:
@@ -217,12 +219,20 @@ class HistoryWriter:
             try:
                 (reservations / str(number)).mkdir()
                 fsync_dir(reservations)
+                location = root / f'{name}.{number}'
+                try:
+                    location.mkdir()
+                    fsync_dir(root)
+                except FileExistsError:
+                    (reservations / str(number)).rmdir()
+                    fsync_dir(reservations)
+                    number += 1
+                    continue
                 break
             except FileExistsError:
                 number += 1
         self.run_id = f'{name}.{number}'
-        self.location = root / 'runs' / self.run_id
-        mkdir(self.location)
+        self.location = root / self.run_id
         self.errors = []
         self.seq = 0
         self.append_failed = False
@@ -244,7 +254,7 @@ class HistoryWriter:
         self._append('run_started', {})
         publish(self.location / 'run.json', dict(run_id=self.run_id, name=name,
                 occurrence=number, study_name=study_name, at=now(),
-                record_root=str(Path(site.root).resolve()), workspace_root=site.workspace_root,
+                records_dir=str(Path(site.records_dir).resolve()), work_dir=site.work_dir,
                 options=options, reproducibility='reproducibility.json' if reproducibility is not None else None), immutable=True)
 
     @property

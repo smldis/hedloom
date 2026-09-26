@@ -37,7 +37,7 @@ from hedloom_run.driver import run_plan
 
 report = run_plan(
     document, transports=transports,
-    root=str(work / "attempts"), workspace_root=str(work / "work"),
+    records_dir=str(work / "records"), work_dir=str(work / "work"),
     source_addresses=site.source_addresses(document, fingerprints),
     source_fingerprints=fingerprints,
 )
@@ -170,19 +170,19 @@ against call signatures.
 ## `Site`
 
 `hedloom_run.site.Site` holds what a Plan must not carry and a run needs anyway:
-which substrate provides each named placement, the roots attempt records and
-workspaces are written under, the address spaces a declared source resolves
+which substrate provides each named placement, the independent record, run,
+and try work directories, the address spaces a declared source resolves
 through, and the thread count the graph kernel runs at.
 
 ```python
 site = Site(
-    root=str(work / "attempts"),
-    workspace_root=str(work / "work"),
+    records_dir=str(work / "records"),
+    work_dir=str(work / "work"),
     address_spaces={"repository-relative": str(repo_root)},
 )
 ```
 
-`Site.__post_init__` anchors `root`, `workspace_root`, and every address
+`Site.__post_init__` anchors `records_dir`, `runs_dir`, `work_dir`, and every address
 space to absolute paths at construction time; a relative root used to
 silently break `shell()` operations run from a working directory other than
 the one the study was authored in.
@@ -293,8 +293,8 @@ handle's `publish_selection` method receives Exec's selected reference directly;
 there is no per-consumer selection adapter. Exec results and handled failures
 carry that reference even without a publisher. Run adds the consumer identity
 when building its report; publication and handle-accounting errors appear in
-`observation_errors` without changing computation. `Site.history_root` is
-anchored and propagated with existing roots; its history format belongs to
+`observation_errors` without changing computation. `Site.runs_dir` is
+anchored and propagated with the other storage locations; its history format belongs to
 Hedloom.
 
 The owner is scoped to one Session, including concurrent sequential submissions,
