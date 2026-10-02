@@ -5,18 +5,19 @@ Plan; someone else wrote a binding supplying implementations, commands, output
 paths, transports and roots; a third caller walked the result. Each seam was a
 place where the study could mean something different from what was authored.
 
-`submit()` joins them. It is deliberately not a new capability: it materializes
+`Runtime.submit()` joins them. It is deliberately not a new capability: it materializes
 the same Plan, binds the same operations, and calls the same kernel. What it
 removes is the opportunity to bind them inconsistently.
 
 The invariant:
 
-    Nothing is spent until `submit`, and what runs is what the Plan showed.
+    No authored body runs before acceptance, and what runs is what the Plan showed.
 
 `study.plan` is complete and inspectable before submission — the manifesto's
 requirement to materialize jobs before spending compute — and the
 operations that run are the ones the Plan names, because both come from the
-same declaration rather than from two files that must agree.
+same declaration rather than from two files that must agree. Creating a Runtime
+can start the Site's configured execution resources before the first submission.
 """
 
 from __future__ import annotations
@@ -28,25 +29,22 @@ from threading import Event, Thread
 from typing import Any, Callable, Mapping
 import warnings
 import sys
-from hedloom.history import HistoryWriter, HistoryPersistence, RunReference
-from hedloom.reproducibility import Reproducibility, EnvironmentSnapshot, capture
+from hedloom.history import HistoryPersistence
 
 from hedloom_exec.prune import RetentionPolicy, survey
 from hedloom_exec.transport import Transport, TransportError
 from hedloom_exec.watch import AttemptStatus, LSFStatusReader, live_attempts, observe
 from hedloom_run.binding import output_value
-from hedloom_run.driver import InvocationOutcome, RunReport, run_plan
+from hedloom_run.driver import InvocationOutcome, RunReport
 from hedloom_run.site import Site
 
-from hedloom.binding import BoundTransport
 
 __all__ = [
     "OutputUnavailable",
     "Study",
     "StudyOutput",
-    "StudyRun",
+    "RunResult",
     "start_watcher",
-    "submit",
 ]
 
 _WATCH_INTERVAL_SECONDS = 10.0
@@ -115,7 +113,7 @@ class StudyOutput:
         A file or directory output resolves to its recorded address rather than
         its bytes: the artifact is the result, and reading it is the caller's
         decision. This is the same resolution a downstream input receives,
-        because it is the same rule, shared with both kernels in
+        because it is the same rule, shared with the controller in
         ``hedloom_run.binding``.
         """
 
@@ -187,7 +185,7 @@ class StudyOutputs(MappingABC):
 
 
 @dataclass(frozen=True, slots=True)
-class StudyRun:
+class RunResult:
     """What a run produced, addressable under ``study_name`` as authored.
 
     Outcomes and exported outputs are evidence. Whether an evaluation passed is
@@ -198,8 +196,10 @@ class StudyRun:
     report: RunReport
     document: Mapping[str, Any]
     study_name: str
-    run_id: str
+    run_id: str | None
     history: HistoryPersistence
+    state: str = "SUCCEEDED"
+    error: str | None = None
 
     def __getitem__(self, authored_key: str) -> InvocationOutcome:
         from hedloom.addresses import invocation_addresses, resolve_invocation
@@ -240,7 +240,7 @@ class StudyRun:
     def succeeded(self) -> bool:
         """Whether every invocation succeeded. It judges no returned value."""
 
-        return self.report.succeeded
+        return self.state == "SUCCEEDED" and self.report.succeeded
 
     def summary(self) -> str:
         return self.report.summary()
@@ -302,183 +302,6 @@ class Study:
             )
         return "\n".join(lines)
 
-    def submit(
-        self,
-        *,
-        site: Site,
-        name: str,
-        reproducibility: Reproducibility | None = None,
-        environment: EnvironmentSnapshot | None = None,
-        on_started: Callable[[RunReference], None] | None = None,
-        client: Any = None,
-        override: Mapping[str, Mapping[str, Any]] | None = None,
-        sequential: bool = False,
-        locally: bool = False,
-        watch: bool = False,
-        stop_on_failure: bool = True,
-        on_event: Callable[[InvocationOutcome], None] | None = None,
-        _watch_reader: LSFStatusReader | None = None,
-    ) -> StudyRun:
-        """Run this study, honouring every placement the Plan resolved.
-
-        Concurrency is the site's: this opens the compute the site declares for
-        as long as the run needs it, spends up to each placement's `max_jobs`,
-        and gives it back. A site that declares nothing has capacity one, which
-        is one invocation at a time — there was never a second mode to choose,
-        only a second implementation of the same capacity.
-
-        ``override``, ``sequential`` and ``locally`` are the session's, and mean
-        exactly what they mean there; this is the one-run form of
-
-            with session(site) as farm:
-                farm.submit(study)
-
-        which is what to use for several runs, so they share one cluster, one
-        budget and one watcher.
-
-        ``client`` is the escape hatch for a caller who already holds one, and
-        skips all of that. Nothing here needs it.
-
-        ``stop_on_failure`` also stops work that has not started, as well as the
-        dependents a failure blocks in any case.
-        """
-
-        if client is None:
-            from hedloom.session import session
-
-            with session(
-                site,
-                override,
-                sequential=sequential,
-                locally=locally,
-                watch=watch,
-                _watch_reader=_watch_reader,
-            ) as live:
-                return live.submit(
-                    self, name=name, reproducibility=reproducibility, environment=environment, on_started=on_started, stop_on_failure=stop_on_failure, on_event=on_event
-                )
-
-        return self._run(
-            site=site,
-            name=name,
-            reproducibility=reproducibility,
-            environment=environment,
-            on_started=on_started,
-            client=client,
-            watch=watch,
-            stop_on_failure=stop_on_failure,
-            on_event=on_event,
-            _watch_reader=_watch_reader,
-        )
-
-    def _run(
-        self,
-        *,
-        site: Site,
-        name: str,
-        reproducibility: Reproducibility | None = None,
-        environment: EnvironmentSnapshot | None = None,
-        on_started: Callable[[RunReference], None] | None = None,
-        client: Any = None,
-        execution_owner: Any = None,
-        watch: bool = False,
-        stop_on_failure: bool = True,
-        on_event: Callable[[InvocationOutcome], None] | None = None,
-        _watch_reader: LSFStatusReader | None = None,
-    ) -> StudyRun:
-        """Bind this study to a site and walk it, on the given client or here.
-
-        The seam a `Session` drives. It owns no lifetime of its own: whatever
-        cluster, client or watcher this needs has already been opened by
-        whoever called it, which is why the same body serves one run and many.
-        """
-
-        document = self.document
-        transports = {
-            name: BoundTransport(self.implementations, delegate)
-            for name, delegate in site.transports.items()
-        }
-        # A placement declared as in-process has no transport a TOML can build:
-        # its implementation is the authored body, which lives here. Supplying
-        # one for every placement the site knows about is also what makes
-        # `local` work on a profile that only ever mentions a farm queue —
-        # every operation that declares no policy resolves to `local`, so a run
-        # that cannot provide it refuses the commonest plan there is.
-        for placement in site.placements:
-            transports.setdefault(placement, BoundTransport(self.implementations))
-
-        # One reading of every declared source serves both: its content decides
-        # whether work is stale, and its location is what the body receives.
-        # They are computed together because the second is keyed by the first.
-        fingerprints = site.fingerprints(document)
-        source_addresses = site.source_addresses(document, fingerprints)
-        writer = HistoryWriter(site, name, self.name, document,
-                               {"stop_on_failure": stop_on_failure,
-                                "kernel": "sequential" if client is None else "graph",
-                                "placements": dict(site.placements)}, client,
-                               reproducibility=capture(reproducibility, self.implementations.values(), environment=environment))
-        if execution_owner is None:
-            from hedloom_run.execution import ExecutionOwner
-            execution_owner = ExecutionOwner(Path(site.runs_dir) / '_meta' / 'executions')
-        user_report = _reporter(on_event, watch)
-        def report_to(outcome):
-            try:
-                writer.observe(outcome)
-            except Exception as error:
-                writer.degrade(error)
-            if user_report is not None:
-                user_report(outcome)
-        if watch:
-            print(f"run {writer.run_id}", file=sys.stderr)
-        try:
-            if on_started is not None:
-                on_started(writer.reference)
-        except BaseException as error:
-            writer.interrupted(error)
-            error.history = writer.descriptor
-            raise
-        common = dict(
-            transports=transports,
-            records_dir=site.records_dir,
-            work_dir=site.work_dir,
-            source_fingerprints=fingerprints,
-            source_addresses=source_addresses,
-            stop_on_failure=stop_on_failure,
-            on_event=report_to,
-            execution_owner=execution_owner,
-            on_execution=writer.bind_execution,
-        )
-
-        watcher = start_watcher(site.records_dir, _watch_reader) if watch else None
-        try:
-            if client is None:
-                report = run_plan(document, **common)
-            else:
-                from hedloom_run.graph import run_plan_graph
-
-                report = run_plan_graph(document, client=client, **common)
-        except BaseException as error:
-            writer.interrupted(error)
-            error.history = writer.descriptor
-            raise
-        finally:
-            if watcher is not None:
-                stop, thread = watcher
-                stop.set()
-                # Status is evidence about the run, never part of it. A stuck
-                # scheduler query therefore cannot keep the caller here or
-                # change an otherwise completed outcome.
-                thread.join(timeout=_WATCH_JOIN_SECONDS)
-        writer.finish(report)
-        _apply_automatic_retention(site)
-        return StudyRun(
-            report=report,
-            document=document,
-            study_name=self.name,
-            run_id=writer.run_id,
-            history=writer.descriptor,
-        )
-
 
 def _apply_automatic_retention(site: Site) -> None:
     """Apply only the bounded rules the site names; never change a run result."""
@@ -511,22 +334,6 @@ def _apply_automatic_retention(site: Site) -> None:
             RuntimeWarning,
             stacklevel=2,
         )
-
-
-def _reporter(
-    on_event: Callable[[InvocationOutcome], None] | None, watch: bool
-) -> Callable[[InvocationOutcome], None] | None:
-    if on_event is not None:
-        return on_event
-    if not watch:
-        return None
-
-    def report(outcome: InvocationOutcome) -> None:
-        name = outcome.authored_key or outcome.invocation_id
-        detail = f"  {outcome.error}" if outcome.error else ""
-        print(f"[{outcome.disposition:>9}] {name:<32}{outcome.outcome}{detail}")
-
-    return report
 
 
 def start_watcher(
@@ -583,37 +390,3 @@ def _watch_transition(row: AttemptStatus, previous: str | None) -> str:
         else ""
     )
     return f"[watch] {name} {transition}{queued}"
-
-
-def submit(
-    study: Study,
-    *,
-    site: Site,
-    name: str,
-    reproducibility: Reproducibility | None = None,
-    environment: EnvironmentSnapshot | None = None,
-    on_started: Callable[[RunReference], None] | None = None,
-    on_event: Callable[[InvocationOutcome], None] | None = None,
-    client: Any = None,
-    override: Mapping[str, Mapping[str, Any]] | None = None,
-    sequential: bool = False,
-    locally: bool = False,
-    watch: bool = False,
-    stop_on_failure: bool = True,
-) -> StudyRun:
-    """Run a study. The verb Hedloom Flow reserved and refused until now."""
-
-    return study.submit(
-        site=site,
-        name=name,
-        reproducibility=reproducibility,
-        environment=environment,
-        on_started=on_started,
-        on_event=on_event,
-        client=client,
-        override=override,
-        sequential=sequential,
-        locally=locally,
-        watch=watch,
-        stop_on_failure=stop_on_failure,
-    )

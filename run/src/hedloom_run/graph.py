@@ -1,27 +1,19 @@
-"""Admit ready invocations and execute them under declared placement capacity.
+"""Worker execution helpers for the async ready-only controller.
 
-Run resolves static dependencies on the controller and asks Exec to finalize
-identity before admitting each invocation. The Session owner joins compatible
-active work after that resolution. Waiting controllers occupy no worker slot.
-Dask executes ready tasks, each requesting its declared placement resource;
-sequential execution uses the same owner protocol without a scheduler.
-
-A handle gates cancellation and entry and can enter Exec only once. Consumer
-reports project shared execution evidence onto their own authored invocations.
-Result-dependent branching, retries and fallback are not introduced here.
+Static dependency admission lives in controller.py; Dask executes ready recorded
+work. The durable handle refuses replay before Exec is entered.
 """
 
 from __future__ import annotations
 
-import sys
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping
 
 from hedloom_exec.attempt import AttemptError
 from hedloom_exec.durability import Durability, execute
-from hedloom_exec.planned import PlannedInvocation, prepare_invocations, finalize_invocation
+from hedloom_exec.planned import PlannedInvocation
 from hedloom_exec.transport import Transport, TransportError
 
 from hedloom_run.binding import (
@@ -34,45 +26,14 @@ from hedloom_run.binding import (
 from hedloom_run.driver import InvocationOutcome, RunReport
 from hedloom_run.site import PLACEMENT_RESOURCE
 
-__all__ = ["NestedCapacityExhausted", "run_plan_graph"]
+__all__ = ["nested_submission_context"]
 
 
-class NestedCapacityExhausted(RuntimeError):
-    """A nested run cannot be admitted, because its waiters hold every unit.
-
-    Raised before the inner plan spends anything. The alternative is the worst
-    outcome this kernel can produce: every unit of a placement held by an
-    invocation that is blocked waiting for work which needs that same unit, so
-    nothing is ever admitted, nothing fails, and the run hangs against a
-    cluster whose workers all read as busy.
-    """
-
-
-# An invocation body may author and submit a further Plan. When it does, it is
-# blocked for the whole of that inner run while still holding one unit of its
-# own placement — that is not a leak, it is what "this invocation is still
-# running" means. Two facts follow, and together they make the deadlock
-# decidable rather than merely likely:
-#
-#   * every running task holds a unit of its placement (`_admission`), so
-#   * if the number of *blocked* holders reaches a placement's capacity, every
-#     unit is held by something that cannot proceed, and no task of that
-#     placement will ever be admitted again.
-#
-# `_OCCUPANCY` is what lets a nested submission know which unit its caller is
-# holding; `_BLOCKED_UNITS` counts the holders that are waiting. Both are
-# process-global on purpose: this kernel's workers are threads in the
-# submitting process, so a sibling waiter is as much a claim on capacity as an
-# ancestor is.
 _OCCUPANCY = threading.local()
-_BLOCKED_UNITS: dict[str, int] = {}
-_BLOCKED_LOCK = threading.Lock()
 
 
 @contextmanager
 def _occupying(placement: str):
-    """Record which placement's unit the calling thread is holding."""
-
     previous = getattr(_OCCUPANCY, "placement", None)
     _OCCUPANCY.placement = placement
     try:
@@ -81,29 +42,9 @@ def _occupying(placement: str):
         _OCCUPANCY.placement = previous
 
 
-@contextmanager
-def _waiting_on_nested_run():
-    """Count this thread's held unit as blocked, for as long as it is.
-
-    A no-op outside an invocation: a run submitted from the driver holds no
-    unit of anything, and its capacity is whatever the cluster declares.
-    """
-
-    placement = getattr(_OCCUPANCY, "placement", None)
-    if placement is None:
-        yield
-        return
-    with _BLOCKED_LOCK:
-        _BLOCKED_UNITS[placement] = _BLOCKED_UNITS.get(placement, 0) + 1
-    try:
-        yield
-    finally:
-        with _BLOCKED_LOCK:
-            remaining = _BLOCKED_UNITS.get(placement, 0) - 1
-            if remaining > 0:
-                _BLOCKED_UNITS[placement] = remaining
-            else:
-                _BLOCKED_UNITS.pop(placement, None)
+def nested_submission_context() -> bool:
+    """Whether submission is being attempted from an executing body."""
+    return getattr(_OCCUPANCY, "placement", None) is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +54,9 @@ class _RunConfig:
     records_dir: str
     work_dir: str | None = None
     publish_selection: Any = None
+    execution_handle: Any = None
     outputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None
+    priority: int = 0
     sources: Mapping[str, str] = field(default_factory=dict)
     """Declared sources, already located, keyed as input bindings name them.
 
@@ -126,8 +69,8 @@ class _RunConfig:
 class _Step:
     """One task's return: what happened, and what downstream tasks may read.
 
-    The produced map travels along the graph edge rather than through shared
-    state, so a task depends on exactly the outputs it declared inputs from.
+    The controller delivers selected outputs before admitting dependent work;
+    a task receives exactly the inputs its invocation declared.
     """
 
     outcome: InvocationOutcome
@@ -162,13 +105,7 @@ def _run_one(
     config: _RunConfig,
     *upstream: _Step,
 ) -> _Step:
-    """Execute one invocation, recording which placement's unit it holds.
-
-    The unit is the fact a nested submission needs: a body that authors and
-    submits a further Plan is blocked for that whole run while still holding
-    it, and `_require_nesting_headroom` can only decide whether that is
-    survivable if it knows which placement is being held.
-    """
+    """Execute a ready invocation, marking body-held submission unsupported."""
 
     with _occupying(_placement_of(item)):
         return _run_one_here(item, transports, config, *upstream)
@@ -222,6 +159,11 @@ def _run_one_here(
         outputs=config.outputs,
     )
 
+    bundle["scheduling"] = {"priority": config.priority}
+    if config.execution_handle is not None:
+        # Runtime control only: Exec identity and journal select explicit fields.
+        # The command-only farm task never receives this local gate address.
+        bundle["_execution_handle"] = config.execution_handle
     try:
         result = execute(
             chosen,
@@ -287,129 +229,15 @@ def _admission(
     unannotated is what lets it be scheduled onto — and later stolen onto — the
     worker whose threads are the farm's budget.
 
-    The exception is a placement this run cannot serve at all. That invocation
-    is refused by `select_transport` the moment it starts, exactly as it is
-    under the sequential kernel, and refusing one branch must not abandon the
-    others. Annotating it would instead hold it unrunnable forever against a
-    capacity nobody declares, which would make the two kernels disagree about a
-    plan — the one thing this module may not do. It reaches no transport, so
-    the thread it occupies is measured in microseconds and there is nothing for
-    a budget to protect.
+    Unsupported placements are refused during controller preparation, before
+    executor submission. Return no annotation for that defensive helper case;
+    requiring an undeclared resource would leave a task unrunnable forever.
     """
 
     name = _placement_of(item)
     if transports.get(name) is None:
         return {}
     return {f"{PLACEMENT_RESOURCE}{name}": 1}
-
-
-def _declared_placements(client: Any) -> dict[str, float]:
-    """Every placement capacity this cluster offers, summed over its workers."""
-
-    offered: dict[str, float] = {}
-    info = client.scheduler_info() or {}
-    for worker in (info.get("workers") or {}).values():
-        for name, amount in (worker.get("resources") or {}).items():
-            offered[name] = offered.get(name, 0) + amount
-    return offered
-
-
-def _require_admission(
-    client: Any,
-    items: Sequence[PlannedInvocation],
-    transports: Mapping[str, Transport],
-) -> None:
-    """Refuse a cluster that cannot admit this plan, before anything runs.
-
-    A task asking for capacity no worker declares is not slow — it is never
-    scheduled. Dask holds it unrunnable with no exception, no log line at the
-    client, and an idle-looking cluster, which is the worst failure this design
-    can produce: a sweep that appears to be waiting on the farm while the farm
-    has never been asked for anything. Cheaper to refuse here, in the same
-    spirit as `_require_shippable`.
-    """
-
-    offered = _declared_placements(client)
-    # Only placements this run can actually serve. One it cannot is a
-    # per-invocation refusal that both kernels already agree on; see
-    # `_admission`.
-    wanted = sorted(
-        {
-            name
-            for name in (_placement_of(item) for item in items)
-            if transports.get(name) is not None
-        }
-    )
-    missing = [
-        name for name in wanted if f"{PLACEMENT_RESOURCE}{name}" not in offered
-    ]
-    if not missing:
-        return
-    declared = sorted(
-        name[len(PLACEMENT_RESOURCE):]
-        for name in offered
-        if name.startswith(PLACEMENT_RESOURCE)
-    )
-    raise UnsupportedPlacement(
-        f"this cluster declares no capacity for placement "
-        f"{', '.join(repr(name) for name in missing)}, which this plan uses. "
-        f"It offers: {', '.join(declared) or 'no placements at all'}. Every task "
-        "carries the placement it resolved to, so one the cluster does not offer "
-        "is held unrunnable forever rather than failing — the run would appear to "
-        "hang against an idle cluster. Build the cluster with "
-        "hedloom_run.cluster.cluster_for(site), which derives its workers from the "
-        "same profile the placements come from."
-    )
-
-
-def _require_nesting_headroom(
-    client: Any,
-    items: Sequence[PlannedInvocation],
-    transports: Mapping[str, Transport],
-) -> None:
-    """Refuse a nested run whose waiters already hold every unit it needs.
-
-    Sound rather than cautious, and the argument is short. Every running task
-    holds one unit of its placement, so the units held by *blocked* waiters
-    cannot be released until the work they are waiting for runs. If those
-    waiters account for a placement's whole capacity, no task of that placement
-    can be admitted, by anyone, ever — including the one this run is about to
-    submit. That is a deadlock rather than a delay, and it is knowable here,
-    before the inner plan spends anything.
-
-    A run that is not nested reads an empty `_BLOCKED_UNITS` and returns.
-    """
-
-    with _BLOCKED_LOCK:
-        blocked = dict(_BLOCKED_UNITS)
-    if not blocked:
-        return
-
-    offered = _declared_placements(client)
-    wanted = sorted(
-        {
-            name
-            for name in (_placement_of(item) for item in items)
-            if transports.get(name) is not None
-        }
-    )
-    for name in wanted:
-        capacity = offered.get(f"{PLACEMENT_RESOURCE}{name}", 0)
-        held = blocked.get(name, 0)
-        if capacity - held > 0:
-            continue
-        raise NestedCapacityExhausted(
-            f"this plan needs placement {name!r}, whose declared capacity is "
-            f"{capacity:g}, and {held:g} of those units are held by "
-            "invocations that are themselves waiting for a nested run. Every "
-            "unit is therefore held by something that cannot finish until this "
-            "plan does, so nothing here would ever be admitted and the run "
-            "would hang against workers that all read as busy. Give the "
-            "operation that submits a nested plan a placement of its own, so "
-            "its waiting does not consume the capacity the inner plan needs, "
-            f"or declare more {name!r} capacity than there are invocations "
-            "that nest."
-        )
 
 
 def _require_shippable(transports: Mapping[str, Transport]) -> None:
@@ -484,7 +312,8 @@ def _run_handle(handle, item, available, config, *upstream):
     if not handle.enter():
         return _blocked(item)
     try:
-        step = _run_one(item, available, replace(config, publish_selection=handle.publish_selection), *upstream)
+        step = _run_one(item, available, replace(config,
+            publish_selection=handle.publish_selection, execution_handle=handle), *upstream)
     except BaseException:
         # An entered handle cannot replay, even when the task has no result.
         # Keep the original exception if storage is also failing.
@@ -512,239 +341,3 @@ def _execution_contract(item, available, config):
     return sha256(cloudpickle.dumps((item.input_digest, binding, dict(item.policy),
         str(Path(config.records_dir).resolve()), str(Path(config.work_dir).resolve()) if config.work_dir else None,
         config.outputs))).digest()
-
-
-def _run_ready(items, available, config, client, owner, bind, on_event, stop_on_failure):
-    """Admit static dependencies from the controller after their identities resolve.
-
-    Waiting/joining consumes no placement slot. Both kernels use this owner
-    protocol; only the graph kernel submits ready executions to Dask.
-    """
-    from concurrent.futures import Future
-    from pathlib import Path
-    from uuid import uuid4
-    from time import sleep
-    from hedloom_run.execution import ExecutionOwner, ExecutionHandle
-
-    owner = owner or ExecutionOwner(Path(config.records_dir).resolve() / '.executions')
-    token = uuid4().hex
-    completed, active = {}, {}
-    produced = dict(config.sources)
-    remaining = list(items)
-    stopped = False
-    in_flight = []
-
-    def save(item, step, notify=True):
-        outcome = replace(step.outcome, invocation_id=item.invocation_id,
-                          authored_key=item.authored_key, operation=item.operation)
-        contributed = produced_by(item, outcome, records_dir=config.records_dir) if outcome.outcome == 'succeeded' else {}
-        completed[item.invocation_id] = _Step(outcome, contributed)
-        produced.update(contributed)
-        if notify and on_event:
-            on_event(outcome)
-
-    def collect(identifier, notify=True):
-        entry, item, consumer = active.pop(identifier)
-        try:
-            try:
-                step = entry.future.result()
-            except BaseException as error:
-                save(item, _abnormal(item, error), notify)
-                raise
-            save(item, step, notify)
-        finally:
-            owner.release(entry, consumer)
-
-    def withdraw(notify):
-        preserved = []
-        for identifier, (entry, item, consumer) in list(active.items()):
-            decision = owner.withdraw(entry, consumer)
-            if decision == 'preserve':
-                if not entry.future.done():
-                    in_flight.append(item.authored_key)
-                preserved.append(identifier)
-            else:
-                active.pop(identifier)
-                step = (_Step(_outcome(item, disposition='withdrawn', outcome='cancelled',
-                        block_reason='consumer withdrew; shared execution belongs to remaining consumers'))
-                        if decision == 'withdrawn' else _blocked(item))
-                try:
-                    save(item, step, notify)
-                finally:
-                    owner.release(entry, consumer)
-        for item in remaining:
-            save(item, _blocked(item), notify)
-        remaining.clear()
-        # Gate every abandoned pending execution before waiting on entered work.
-        errors = []
-        for identifier in preserved:
-            try:
-                collect(identifier, notify)
-            except BaseException as error:
-                errors.append(error)
-        if errors:
-            raise errors[0]
-
-    try:
-        while remaining or active:
-            for identifier, (entry, item, consumer) in list(active.items()):
-                if entry.future.done():
-                    collect(identifier)
-                    if completed[identifier].outcome.outcome != 'succeeded':
-                        stopped = stopped or stop_on_failure
-            if stopped:
-                withdraw(True)
-                break
-            for spec in list(remaining):
-                if client is None and active:
-                    break
-                if not all(dep in completed for dep in spec.depends_on):
-                    continue
-                remaining.remove(spec)
-                if any(completed[dep].outcome.outcome != 'succeeded' for dep in spec.depends_on):
-                    save(spec, _Step(_outcome(spec, disposition='skipped', outcome='blocked', block_reason='dependency failure')))
-                    continue
-                fresh_handle = ExecutionHandle.create(owner.root) if spec.execution == 'each_submission' else None
-                item = finalize_invocation(spec, produced, fresh_handle.execution_id if fresh_handle else None)
-                try:
-                    placement, chosen = select_transport(item, available)
-                except UnsupportedPlacement as error:
-                    if fresh_handle is not None:
-                        fresh_handle.cancel_before_start()
-                    save(item, _Step(_outcome(item, disposition='refused', outcome='failed', error=str(error))))
-                    stopped = stop_on_failure
-                    if stopped:
-                        break
-                    continue
-                bundle = build_bundle(item, produced=produced, placement_name=placement,
-                                      transport=chosen, outputs=config.outputs)
-                item = replace(item, bundle=bundle)
-                consumer = f'{token}:{spec.invocation_id}'
-                leader = False
-                with owner.lock:
-                    entry = owner.entry(_execution_contract(item, available, config), client, fresh_handle)
-                    try:
-                        if bind:
-                            bind(spec.invocation_id, entry.handle, bundle['input_evidence'])
-                    except BaseException:
-                        if not entry.consumers:
-                            entry.handle.cancel_before_start()
-                            owner.release(entry, consumer)
-                        raise
-                    entry.consumers.add(consumer)
-                    active[item.invocation_id] = (entry, item, consumer)
-                    if entry.future is None:
-                        if client is None:
-                            entry.future = Future()
-                            leader = True
-                        else:
-                            entry.future = client.submit(_run_handle, entry.handle, item, available, config,
-                                key=f'{_task_key(item)}-{entry.handle.execution_id}',
-                                resources=_admission(item, available), pure=False, retries=0)
-                if leader:
-                    try:
-                        entry.future.set_result(_run_handle(entry.handle, item, available, config))
-                    except BaseException as error:
-                        entry.future.set_exception(error)
-                if client is None:
-                    collect(item.invocation_id)
-                    stopped = stop_on_failure and completed[item.invocation_id].outcome.outcome != 'succeeded'
-                    break
-            if active:
-                sleep(0.01)
-    except BaseException as error:
-        try:
-            withdraw(False)
-        except BaseException as cleanup_error:
-            error.cleanup_error = cleanup_error
-        for item in items:
-            completed.setdefault(item.invocation_id, _blocked(item))
-        error.report = _report(items, completed)
-        error.in_flight = tuple(in_flight)
-        raise
-    return _report(items, completed)
-
-
-def run_plan_graph(
-    document: Mapping[str, Any],
-    transport: Transport | None = None,
-    **options: Any,
-) -> RunReport:
-    """Execute a Plan as a Dask graph — see `_run_plan_graph` for the arguments.
-
-    This wrapper exists for one fact that cannot be observed from inside the
-    run: whether the caller is an invocation that will be blocked, holding a
-    unit of its own placement, for as long as this run takes. Counting that
-    here is what lets a nested run be refused instead of deadlocking, and it
-    costs a run submitted from the driver nothing — it holds no unit, so the
-    claim is a no-op.
-    """
-
-    with _waiting_on_nested_run():
-        return _run_plan_graph(document, transport, **options)
-
-
-def _run_plan_graph(
-    document: Mapping[str, Any],
-    transport: Transport | None = None,
-    *,
-    client: Any,
-    transports: Mapping[str, Transport] | None = None,
-    records_dir: str,
-    work_dir: str | None = None,
-    commands: Mapping[str, Sequence[str]] | None = None,
-    outputs: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
-    identity_env: Mapping[str, str] | None = None,
-    source_fingerprints: Mapping[str, str] | None = None,
-    source_addresses: Mapping[str, str] | None = None,
-    stop_on_failure: bool = True,
-    on_event: Callable[[InvocationOutcome], None] | None = None,
-    execution_owner: Any = None,
-    on_execution: Any = None,
-) -> RunReport:
-    """Execute a Plan as a Dask graph and report in the Plan's own order.
-
-    ``client`` is a `distributed.Client`. It is required rather than created
-    here: the cluster's shape is an operational decision — how many concurrent
-    jobs the site tolerates, whether a dashboard is served — and a library that
-    silently started one would be choosing it for the operator.
-
-    ``source_addresses`` locates each declared source and travels to every
-    task, so an operation naming an external file as an input receives it
-    wherever it lands. The path is resolved on this machine, which is a claim
-    about the site: it must mean the same thing on whatever host runs the work.
-
-    ``on_event`` fires as tasks complete, in completion order, so a long sweep
-    is observable while it runs. The returned report stays in plan order, so a
-    run remains comparable with any other run of the same plan.
-
-    With ``stop_on_failure`` (the default), the first failed outcome stops work
-    that has no live worker stack and waits for work already executing. An
-    exception outside an invocation outcome is re-raised with ``report`` and
-    ``in_flight`` attributes, so cleanup does not erase what the run had done.
-    """
-
-    from distributed import as_completed
-
-    available = available_transports(transport, transports)
-    _require_shippable(
-        dict(transports) if transports is not None else {"*": transport}
-    )
-    config = _RunConfig(
-        records_dir=records_dir,
-        work_dir=work_dir,
-        outputs=outputs,
-        sources=dict(source_addresses or {}),
-    )
-
-    items = prepare_invocations(
-        document,
-        commands=commands,
-        outputs=outputs,
-        identity_env=identity_env,
-        source_fingerprints=source_fingerprints,
-    )
-    _require_admission(client, items, available)
-    _require_nesting_headroom(client, items, available)
-    return _run_ready(items, available, config, client, execution_owner,
-                      on_execution, on_event, stop_on_failure)

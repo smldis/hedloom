@@ -5,16 +5,14 @@ placement each invocation resolved to. A *run* binds mechanism: which command
 implements an operation, which substrate provides a placement, and which
 address an upstream output actually landed at.
 
-That binding is identical whether readiness is decided by a sequential loop or
-by a Dask graph, so it lives here and both kernels use it. The invariant this
-module exists to hold:
+The controller and public result projection use the same binding. The invariant
+this module exists to hold:
 
     Changing which kernel decides readiness changes how long a plan takes and
     nothing else — the same results, under the same identities.
 
-Sharing the code is the strongest available guarantee of that. Two copies of
-these rules would drift, and the drift would show up as a study that means
-something different depending on how it was run.
+Sharing these rules keeps downstream delivery and exported result projection
+from disagreeing about the computation that ran.
 """
 
 from __future__ import annotations

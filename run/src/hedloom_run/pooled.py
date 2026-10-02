@@ -73,10 +73,16 @@ from __future__ import annotations
 
 import logging
 import shlex
-import subprocess
+import asyncio
+import signal
+import sys
+import time
 from typing import Any, Mapping
 
-from hedloom_exec.transport import Observation, SubmissionRefused, TransportError
+from hedloom_exec.lsf import SubprocessRunner
+from hedloom_exec.transport import (
+    Observation, SubmissionRefused, TransportError, placement_options,
+)
 
 __all__ = [
     "POOL_ATTRIBUTE",
@@ -88,6 +94,9 @@ __all__ = [
     "open_pools",
     "attach_pools",
     "close_pools",
+    "open_pools_async",
+    "attach_pools_async",
+    "close_pools_async",
     "run_command",
 ]
 
@@ -98,6 +107,226 @@ An attribute on the worker rather than a module global, because a worker is the
 thing whose lifetime the client shares: `teardown` runs when the worker goes,
 and nothing is left behind pointing at a scheduler that has closed.
 """
+
+COMMAND_RESOURCE = "hedloom-command"
+"""One whole-worker command reservation, independent of allocated cores."""
+
+_INTERRUPT_TIMEOUT = 40.0
+
+
+def _force_support():
+    from hedloom_exec.lsf import _LIBC
+    return sys.platform.startswith("linux") and _LIBC is not None
+
+
+def _locate_interrupt(key, client_id, dask_scheduler=None):
+    task = dask_scheduler.tasks.get(key)
+    if task is None:
+        return {"state": "unregistered"}
+    if task.state in {"memory", "erred"}:
+        return {"state": "completed"}
+    owner = dask_scheduler.clients.get(client_id)
+    if owner is None or task.who_wants != {owner} or task.dependents:
+        raise RuntimeError("pooled cancellation refused: unrelated scheduling consumers")
+    return {"state": "located", "worker":
+            task.processing_on.address if task.processing_on else None}
+
+
+def _pause_command(key, dask_worker=None):
+    """Freeze actual worker admission before distinguishing queued from entered."""
+    from distributed.core import Status
+    worker = dask_worker
+    task = worker.state.tasks.get(key)
+    if task is None:
+        return {"state": "unregistered"}
+    if task.state in {"memory", "error"}:
+        return {"state": "completed"}
+    if worker.status != Status.running and getattr(worker, "_hedloom_interrupt_key", None):
+        # Another waiter owns this temporary admission fence. Re-locate after
+        # it cancels/resumes or restarts; never overwrite its ownership marker.
+        return {"state": "busy"}
+    if worker.status != Status.running:
+        raise RuntimeError("pooled cancellation refused: worker is already unavailable")
+    worker._hedloom_interrupt_key = key
+    worker.status = Status.paused  # setter delivers WorkerState PauseEvent
+    executing = {task.key for task in worker.state.executing | worker.state.long_running}
+    return {"state": "paused", "worker": worker.address,
+            "entered": key in executing, "executing": sorted(executing),
+            "supported": _force_support()}
+
+
+def _resume_command_worker(key, dask_worker=None):
+    from distributed.core import Status
+    if getattr(dask_worker, "_hedloom_interrupt_key", None) != key:
+        return False
+    del dask_worker._hedloom_interrupt_key
+    if dask_worker.status == Status.paused:
+        dask_worker.status = Status.running
+    return True
+
+
+def _worker_released(key, dask_worker=None):
+    return key not in dask_worker.state.tasks
+
+
+def _resume_interrupted_worker(worker, dask_scheduler=None):
+    state = dask_scheduler.workers.get(worker)
+    if state is not None and state.status.name == "paused":
+        dask_scheduler.handle_worker_status_change(
+            status="running", worker=worker, stimulus_id="hedloom-interrupt-aborted"
+        )
+
+
+def _prepare_interrupt(key, client_id, worker_snapshot=None,
+                       dask_scheduler=None):
+    """Inspect, fence and withdraw scheduling interest in one scheduler turn.
+
+    The scheduler handlers used here also back Dask's public cancellation and
+    worker status protocol (verified on distributed 2023.9.2 and 2026.7.1).
+    Doing these together prevents queued work entering between inspection and
+    cancellation, or unrelated work entering the worker before its restart.
+    """
+    scheduler = dask_scheduler
+    task = scheduler.tasks.get(key)
+    if task is None:
+        return {"state": "unregistered"}
+    if task.state in {"memory", "erred"}:
+        return {"state": "completed"}
+    owner = scheduler.clients.get(client_id)
+    if owner is None or task.who_wants != {owner} or task.dependents:
+        raise RuntimeError("pooled cancellation refused: unrelated scheduling consumers")
+    worker = task.processing_on
+    address = None
+    if worker is not None:
+        if worker_snapshot is None:
+            # Assignment may change between the location and withdrawal RPCs.
+            # Retry the actual-worker checkpoint before withdrawing anything.
+            return {"state": "moved"}
+        if worker_snapshot["worker"] != worker.address:
+            raise RuntimeError("pooled command moved after worker admission was paused")
+        entered = worker_snapshot["entered"]
+        supported = worker_snapshot["supported"]
+        executing = set(worker_snapshot["executing"])
+        if entered:
+            if not supported:
+                raise RuntimeError("pooled force cancellation needs verified Linux parent-death binding")
+            if not worker.nanny:
+                raise RuntimeError("pooled force cancellation requires a nanny-managed worker")
+            if executing != {key}:
+                raise RuntimeError("pooled cancellation refused: worker carries unrelated executing tasks")
+        if worker.status.name not in {"running", "paused"}:
+            raise RuntimeError("pooled cancellation refused: worker is already unavailable")
+        address = worker.address
+        scheduler.handle_worker_status_change(
+            status="paused", worker=address, stimulus_id=f"hedloom-interrupt-{key}"
+        )
+    try:
+        scheduler.client_releases_keys(
+            keys=[key], client=client_id, stimulus_id=f"hedloom-interrupt-{key}"
+        )
+    except BaseException:
+        if address:
+            scheduler.handle_worker_status_change(
+                status="running", worker=address, stimulus_id=f"hedloom-interrupt-aborted-{key}"
+            )
+        raise
+    return {"state": "withdrawn", "worker": address}
+
+
+def _interrupt_ack(key, worker, dask_scheduler=None):
+    if key in dask_scheduler.tasks:
+        return False
+    if worker:
+        state = dask_scheduler.workers.get(worker)
+        if state is None or state.status.name != "paused":
+            raise RuntimeError("pooled cancellation lost its exclusive paused worker")
+    return True
+
+
+async def _interrupt_command(client, future):
+    """Run on the existing pooled-client loop; return only confirmed outcomes."""
+    worker = None
+    restart_started = False
+
+    async def interrupt():
+        nonlocal worker, restart_started
+        while True:
+            if future.done():
+                return None
+            # A busy/unregistered checkpoint belongs to the previous location;
+            # a restart may leave this command temporarily unassigned.
+            snapshot = None
+            location = await client.run_on_scheduler(
+                _locate_interrupt, key=future.key, client_id=client.id
+            )
+            if location["state"] == "completed":
+                return None
+            if location["state"] != "unregistered":
+                worker = location["worker"]
+                if worker:
+                    snapshots = await client.run(_pause_command, key=future.key,
+                                                 workers=[worker])
+                    snapshot = snapshots[worker]
+                    if snapshot["state"] == "completed":
+                        return None
+                    if snapshot["state"] != "paused":
+                        await asyncio.sleep(.02)
+                        continue
+                decision = await client.run_on_scheduler(
+                    _prepare_interrupt, key=future.key, client_id=client.id,
+                    worker_snapshot=snapshot
+                )
+                if decision["state"] == "completed":
+                    return None
+                if decision["state"] == "moved":
+                    await asyncio.sleep(.02)
+                    continue
+                if decision["state"] != "unregistered":
+                    break
+                raise RuntimeError("pooled command disappeared before cancellation acknowledgement")
+            # submit uses an asynchronous scheduler stream. Absence before
+            # registration is not evidence that the command was cancelled.
+            await asyncio.sleep(.02)
+        worker = decision["worker"]
+        await client.cancel(future, force=True)
+        while not await client.run_on_scheduler(
+            _interrupt_ack, key=future.key, worker=worker
+        ):
+            await asyncio.sleep(.02)
+        entered = snapshot is not None and snapshot["entered"]
+        if worker and not entered:
+            # Scheduler assignment includes resource-constrained queued tasks.
+            # Keep worker admission frozen until its free-key message arrives.
+            while not (await client.run(_worker_released, key=future.key,
+                                       workers=[worker]))[worker]:
+                await asyncio.sleep(.02)
+        if worker and entered:
+            restart_started = True
+            restarted = await client.restart_workers([worker], timeout=30,
+                                                     raise_for_error=False)
+            if restarted.get(worker) != "OK":
+                raise RuntimeError(f"pooled worker restart not confirmed: {restarted!r}")
+        return {"reason": "force stop requested", "worker": worker,
+                "worker_restarted": bool(worker and entered)}
+
+    try:
+        return await asyncio.wait_for(interrupt(), timeout=_INTERRUPT_TIMEOUT)
+    finally:
+        if worker and not restart_started:
+            # No intentional worker loss occurred. Worker-side resource
+            # reservations still prevent overlapping commands while it drains.
+            # An uncertain restart instead leaves the old worker quarantined;
+            # resuming it could overlap a replacement with surviving work.
+            try:
+                resumed = await asyncio.wait_for(client.run(
+                    _resume_command_worker, key=future.key, workers=[worker]), timeout=2)
+                if resumed.get(worker):
+                    await asyncio.wait_for(client.run_on_scheduler(
+                        _resume_interrupted_worker, worker=worker), timeout=2)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "could not restore pooled worker after unconfirmed interruption"
+                )
 
 POOL_OPTIONS = (
     "cores",
@@ -138,18 +367,23 @@ def run_command(
     honest about the dependency — if `hedloom-run` is not installed on the farm
     node, that should fail loudly at once rather than appear to work.
 
+    Commands use Exec's subprocess runner, including its environment merge and
+    Linux SIGKILL parent-death binding of the immediate child to this worker.
+    That binding does not bind the
+    batch worker to the Runtime: orderly pool close remains necessary, and
+    abrupt submit-host loss has different guarantees.
+
     Failure is a recordable outcome, not an exception: a non-zero status is
     what this returns, and the caller decides what it means. Raising here would
     turn a failed piece of work into a failed *transport*, which is a different
     thing and reconciles differently.
     """
 
-    completed = subprocess.run(
+    completed = SubprocessRunner()(
         list(argv),
         cwd=cwd,
         env=dict(env) if env else None,
-        capture_output=True,
-        text=True,
+        parent_death_signal=signal.SIGKILL,
     )
     return {
         "returncode": completed.returncode,
@@ -158,25 +392,30 @@ def run_command(
     }
 
 
-def install_pools(worker: Any, addresses: Mapping[str, str]) -> None:
+async def install_pools(worker: Any, addresses: Mapping[str, str]) -> None:
     """Give one worker a client into each pool. Runs on the worker."""
 
     from distributed import Client
 
     clients = {}
-    for pool, address in addresses.items():
-        # Never the process default: a second default silently displaces the
-        # first, and this worker already holds one for its own cluster.
-        clients[pool] = Client(address, set_as_default=False)
     setattr(worker, POOL_ATTRIBUTE, clients)
+    try:
+        for pool, address in addresses.items():
+            clients[pool] = Client(
+                address, asynchronous=True, set_as_default=False
+            )
+            await clients[pool]
+    except BaseException:
+        await remove_pools(worker)
+        raise
 
 
-def remove_pools(worker: Any) -> None:
+async def remove_pools(worker: Any) -> None:
     """Give the clients back when the worker goes. Runs on the worker."""
 
     for client in (getattr(worker, POOL_ATTRIBUTE, None) or {}).values():
         try:
-            client.close()
+            await client.close()
         except Exception:  # pragma: no cover - teardown must not mask a result
             pass
     setattr(worker, POOL_ATTRIBUTE, {})
@@ -211,11 +450,11 @@ def PooledClientPlugin(pools: Mapping[str, str]) -> Any:
             # worker, and a client cannot survive that.
             self._addresses = dict(addresses)
 
-        def setup(self, worker: Any) -> None:
-            install_pools(worker, self._addresses)
+        async def setup(self, worker: Any) -> None:
+            await install_pools(worker, self._addresses)
 
-        def teardown(self, worker: Any) -> None:
-            remove_pools(worker)
+        async def teardown(self, worker: Any) -> None:
+            await remove_pools(worker)
 
     return _PooledClientPlugin(pools)
 
@@ -287,12 +526,9 @@ class LSFPooledTransport:
         except ValueError as error:
             raise SubmissionRefused(
                 f"placement {self.pool!r} is pooled, and pooled work runs only "
-                "on the graph kernel: it reaches its pool through a client that "
-                "a Dask worker holds, and there is no worker here. The "
-                "sequential kernel walks the plan in this thread and has no "
-                "pool to reach, so this invocation cannot run there. Use "
-                "hedloom.session(...) without sequential=True, or give this "
-                "operation a direct placement."
+                "on a Runtime placement worker: it reaches its pool through "
+                "that worker's client, and there is no worker here. Submit "
+                "through hedloom.runtime(...), or use a direct placement."
             ) from error
 
         client = (getattr(worker, POOL_ATTRIBUTE, None) or {}).get(self.pool)
@@ -302,7 +538,7 @@ class LSFPooledTransport:
                 "is opened beside the readiness cluster and handed to every "
                 "worker by PooledClientPlugin; a run that built its own cluster "
                 "has the workers but not the plugin. Build the cluster with "
-                "hedloom.session(...), which opens both."
+                "hedloom.runtime(...), which opens both."
             )
         return client
 
@@ -323,6 +559,7 @@ class LSFPooledTransport:
                 "command line, not an in-process callable"
             )
 
+        self._validate_requirements(bundle)
         client = self._client()
         workdir = bundle.get("workdir") or bundle.get("cwd")
         future = client.submit(
@@ -337,9 +574,27 @@ class LSFPooledTransport:
             # digest, and it has already been taken by the time we are here.
             pure=False,
             key=f"pooled-{identity}",
+            retries=0,
+            resources={COMMAND_RESOURCE: 1},
+            priority=(bundle.get("scheduling") or {}).get("priority", 0),
+            fifo_timeout="0 ms",
         )
         try:
-            result = future.result()
+            execution = bundle.get("_execution_handle")
+            cancelled = None
+            if execution is None:
+                result = future.result()
+            else:
+                while True:
+                    if not future.done() and execution.interrupt_requested():
+                        cancelled = client.sync(_interrupt_command, client, future,
+                                                callback_timeout=_INTERRUPT_TIMEOUT + 5)
+                        if cancelled is not None:
+                            break
+                    if future.done():
+                        result = future.result()
+                        break
+                    time.sleep(.1)
         except Exception as error:
             # The pool could not be reached or the worker died: indeterminate,
             # not a refusal. The command may or may not have run.
@@ -348,7 +603,7 @@ class LSFPooledTransport:
                 f"({type(error).__name__}: {error})"
             ) from error
 
-        return {
+        completed = {
             "transport": self.name,
             "identity": identity,
             "kind": "completed",
@@ -359,10 +614,37 @@ class LSFPooledTransport:
             # the record carries the pool's shape instead of an invented one.
             "settings": dict(self.settings),
             "command": shlex.join(list(command)),
-            "returncode": result["returncode"],
-            "stdout": result["stdout"],
-            "stderr": result["stderr"],
         }
+        if cancelled is not None:
+            completed["cancellation"] = cancelled
+        else:
+            completed.update(result)
+        return completed
+
+    def _validate_requirements(self, bundle: Mapping[str, Any]) -> None:
+        """Refuse demands the already allocated worker cannot express.
+
+        A command reserves a whole worker; this bounds aggregate CPU/memory
+        requests without introducing an invocation-level licence arbiter.
+        These are scheduling reservations, not OS resource enforcement.
+        """
+        for name, value in placement_options(bundle).items():
+            if name in ("cores", "memory_mb"):
+                capacity = int(self.settings.get(name) or (1 if name == "cores" else 1000))
+                if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                    raise SubmissionRefused(f"pooled {name} must be a positive integer")
+                if value <= capacity:
+                    continue
+                raise SubmissionRefused(
+                    f"pool {self.pool!r} allocates {name}={capacity} per worker; "
+                    f"this invocation requests {value}. Use a larger pool or direct placement."
+                )
+            if name in ("project", "queue", "walltime") and value == self.settings.get(name):
+                continue
+            raise SubmissionRefused(
+                f"pool {self.pool!r} cannot honour per-invocation {name}={value!r}; "
+                "workers are allocated before commands. Use a matching pool or direct placement."
+            )
 
     def discover(self, identity: str) -> Mapping[str, Any] | None:
         """Always `None`, which callers may not read as "nothing was accepted".
@@ -376,6 +658,8 @@ class LSFPooledTransport:
     def poll(self, handle: Mapping[str, Any]) -> Observation:
         """Read a completed handle. There is no other kind."""
 
+        if "cancellation" in handle:
+            return Observation("cancelled", dict(handle["cancellation"]))
         if "returncode" not in handle:
             return Observation("absent")
         returncode = handle["returncode"]
@@ -394,11 +678,10 @@ class LSFPooledTransport:
     def cancel(self, handle: Mapping[str, Any]) -> None:
         """Nothing to cancel: `submit` only returns once the work is over.
 
-        Recording the intent remains the caller's job, as it is for any
-        transport whose work is already terminal by the time anyone could ask.
-        Cancelling a pool's *workers* is a different act — it stops every
-        invocation in flight, not this one — and belongs to whoever opened the
-        pool.
+        Runtime force-stop intent is read by the submit-host waiter while its
+        Future is live. Confirmed cancellation is returned as a completed
+        handle and reconciled normally; there is nothing left to interrupt at
+        this terminal transport boundary.
         """
 
         return None
@@ -502,6 +785,7 @@ def open_pools(site: Any) -> dict[str, Any]:
                 memory=f"{memory_mb}MB",
                 walltime=str(options.get("walltime") or "1:00"),
                 processes=1,
+                worker_extra_args=["--resources", f"{COMMAND_RESOURCE}=1"],
                 n_workers=0,
                 # Louder than dask-jobqueue's default, not quieter. It silences
                 # a `JobQueueCluster` at ERROR, which takes the pool's warnings
@@ -516,7 +800,7 @@ def open_pools(site: Any) -> dict[str, Any]:
                 scheduler_options=dict(scheduler_options),
             )
             clusters[name] = cluster
-            cluster.scale(jobs=int(options.get("workers") or options["max_jobs"]))
+            cluster.scale(jobs=int(options.get("workers", options["max_jobs"])))
     except BaseException:
         # A pool that half-started still holds farm jobs. Give them back before
         # the exception leaves, or a failed run leaves workers on the queue.
@@ -557,3 +841,69 @@ def close_pools(pools: Mapping[str, Any]) -> None:
             cluster.close()
         except Exception:  # pragma: no cover - teardown must not mask a result
             pass
+
+
+async def open_pools_async(site: Any) -> dict[str, Any]:
+    """Start pooled schedulers on this loop, with one command per farm worker.
+
+    Scaling submits batch workers asynchronously. No wait-for-workers barrier
+    holds up local placements while a farm queue is pending.
+    """
+    pooled = {
+        name: options for name, options in site.placements.items()
+        if isinstance(options, Mapping) and options.get("kind") == "lsf-pooled"
+    }
+    if not pooled:
+        return {}
+    try:
+        from dask_jobqueue import LSFCluster
+    except ImportError as error:
+        raise TransportError(
+            "pooled placement needs dask-jobqueue: install hedloom-run[pooled]"
+        ) from error
+    clusters: dict[str, Any] = {}
+    try:
+        for name, options in pooled.items():
+            cluster = LSFCluster(
+                asynchronous=True,
+                queue=options.get("queue"),
+                project=options.get("project"),
+                cores=int(options.get("cores") or 1),
+                memory=f"{int(options.get('memory_mb') or 1000)}MB",
+                walltime=str(options.get("walltime") or "1:00"),
+                processes=1,
+                n_workers=0,
+                worker_extra_args=["--resources", f"{COMMAND_RESOURCE}=1"],
+                silence_logs=logging.WARNING,
+                scheduler_options=_scheduler_exposure(getattr(site, "dashboard", "none")),
+            )
+            clusters[name] = cluster
+            await cluster
+            cluster.scale(jobs=int(options.get("workers", options["max_jobs"])))
+    except BaseException:
+        try:
+            await close_pools_async(clusters)
+        except Exception:
+            logging.getLogger(__name__).warning("pool startup cleanup failed", exc_info=True)
+        raise
+    return clusters
+
+
+async def attach_pools_async(client: Any, pools: Mapping[str, Any]) -> None:
+    """Install pool clients on placement workers without blocking their loop."""
+    if pools:
+        await client.register_plugin(PooledClientPlugin({
+            name: cluster.scheduler_address for name, cluster in pools.items()
+        }))
+
+
+async def close_pools_async(pools: Mapping[str, Any]) -> None:
+    """Close each owned pool after local worker plugins have released clients."""
+    errors = []
+    for cluster in list(pools.values()):
+        try:
+            await cluster.close()
+        except Exception as error:
+            errors.append(error)
+    if errors:
+        raise TransportError(f"could not close {len(errors)} pool(s): {errors[0]}") from errors[0]

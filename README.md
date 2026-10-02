@@ -11,7 +11,7 @@ This abbreviated example assumes `render`, `RULE`, `POINTS`, and a configured
 `site.toml`; the complete local example is `examples/grid_refinement.py`.
 
 ```python
-from hedloom import Site, artifact, file, flow, local, lsf, operation, parameter, shell, study, sweep
+from hedloom import Site, artifact, file, flow, local, lsf, operation, parameter, runtime, shell, study, sweep
 
 GRID = artifact("grid-declaration")
 
@@ -38,7 +38,8 @@ def refinement(points):
 
 subject = refinement(POINTS)                      # planning, not spending
 print(subject.summary())                          # nothing spent yet
-run = subject.submit(name="investigate-start", site=Site.from_file("site.toml"), watch=True)
+with runtime(Site.from_file("site.toml"), watch=True) as live:
+    run = live.submit(subject, name="investigate-start").wait()
 print(run["coarse:integrate"].artifacts["result"]["address"])
 ```
 
@@ -141,10 +142,9 @@ try paths with durable reasons and attribution.
 ## What it does not change
 
 `hedloom-exec` still owns one durable record and its tries, and imports neither this
-package nor Dask. `hedloom-run` still owns binding and readiness and both of its
-kernels, so a session is the same run with a scheduler deciding readiness rather
-than a loop. Reuse, identity, placement, licences, the watcher — untouched. This
-unit composes; it does not reimplement.
+package nor Dask. `hedloom-run` owns binding and cooperative readiness. The facade Runtime owns
+its controller loop and resource lifetime, and Dask executes ready invocations.
+Exec keeps attempt identity and reuse; this unit composes those contracts.
 
 ```console
 PYTHONPATH=src:flow/src:exec/src:run/src python -m pytest -q
@@ -169,26 +169,24 @@ requires all eight invocations to be reused without new jobs. Results live under
 core per job, and a one-minute walltime; copy the TOML and change those site
 facts when needed.
 
-Both submissions run inside one session, which is the whole of what a study
+Both submissions run inside one runtime, which is the whole of what a study
 author has to hold:
 
 ```python
-with session(site, watch=True) as farm:
-    first = farm.submit(subject, name="investigate-start")
-    second = farm.submit(subject, name="investigate-start")      # reuse, same cluster, same watcher
+with runtime(site, watch=True) as farm:
+    first = farm.submit(subject, name="investigate-start").wait()
+    second = farm.submit(subject, name="investigate-start").wait()      # reuse, same cluster, same watcher
 ```
 
-The session owns the cluster, the client and one queue watcher, and gives them
-back when the block ends — which matters, because under owner-bound lifetime
-leaving it ends any farm job still in flight. There is no kernel to choose:
-capacity is the site's, and a site that declares none has capacity one. Ask for
-`sequential=True` to run one at a time with no scheduler at all (this is what
-keeps `distributed` an optional extra), or `locally=True` to debug the whole
-study in this process without touching the farm. Either can be narrowed for a
-single run without a second profile:
+The Runtime owns the controller, executor and optional queue watcher. Context
+exit drains work and releases resources; automatic cleanup also preserves
+owner-bound lifetime outside a block. Local capacity one uses the same async
+engine as a concurrent Site. `locally=True` serves authored bodies on this host
+for debugging. No sequential execution mode remains. An override can narrow
+capacity or change a queue without another profile:
 
 ```python
-with session(site, {"placement": {"lsf": {"max_jobs": 1, "queue": "express"}}}) as farm:
+with runtime(site, {"placement": {"lsf": {"max_jobs": 1, "queue": "express"}}}) as farm:
     ...
 ```
 
@@ -215,21 +213,21 @@ process that started the work — one interval per job, between the
 `submit_intent` written before the transport is touched and the receipt written
 when `bsub -I` returns:
 
-* **One session, two studies.** A session is one cluster, and a placement's
-  budget belongs to that cluster's workers, so `submit_all` cannot put more on
-  the farm than the site declared however many studies it is given. Eight jobs
+* **One runtime, two studies.** A runtime is one cluster, and a placement's
+  budget belongs to that cluster's workers. Concurrent submissions stay within
+  the declared farm share however many studies use it. Eight jobs
   are wanted, `max_jobs` is two, and no more than two are ever in flight.
-* **One session, the same study twice.** Compatible ready invocations
-  share Session-owned execution handles. Both submissions succeed and retain
+* **One runtime, the same study twice.** Compatible ready invocations
+  share Runtime-owned execution handles. Both submissions succeed and retain
   exact live history; completed evidence is still reused through Exec on later runs.
-* **Two sessions, the same study.** Different key namespaces, so both callers
+* **Two runtimes, the same study.** Different key namespaces, so both callers
   really do reach the attempt protocol and the journal claim is what prevents
   the duplicate. The loser is refused by name rather than made to wait. This is
-  also the arrangement where the cap does *not* hold: each session has its own
+  also the arrangement where the cap does *not* hold: each runtime has its own
   cluster and therefore its own budget, so two controllers can put twice
   `max_jobs` on the farm.
 
-A fourth pass resubmits all of it from one session and must spend nothing.
+A fourth pass resubmits all of it from one runtime and must spend nothing.
 `tests/test_farm_multi_client_example.py` runs the whole thing against the fake
 `bsub`, checking the same numbers from the submission records rather than from
 the journals, so the two instruments have to agree.

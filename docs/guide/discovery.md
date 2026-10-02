@@ -10,16 +10,20 @@ runs_dir = "runs"
 ```
 
 ```python
-run = subject.submit(site=site, name="investigate-start", watch=True)
+with runtime(site, watch=True) as live:
+    receipt = live.submit(subject, name="investigate-start")
+    reference = receipt.accepted()
+    run = receipt.wait()
 print(run.run_id)       # investigate-start.1, then investigate-start.2
 print(run.history)      # persistence status and immutable errors
 ```
 
 `Study.name` identifies the authored definition. Submission names identify each
-request, including reused requests. `Session.submit_all({name: subject, ...})`
-uses the mapping keys; `label` is presentation only. `on_started(reference)`
-receives the complete address and history location after durable initialization,
-before execution. Watch mode prints the address to stderr immediately.
+request, including reused requests. Each call to `Runtime.submit` provides its
+own name. `receipt.accepted()` waits for saved Plan/header publication and
+returns its durable reference before preparation finishes. Submission itself
+returns an in-memory receipt immediately. Watch mode prints the address after
+durable initialization; accepted preparation can still fail without execution.
 
 Names are case-sensitive and match `[A-Za-z0-9][A-Za-z0-9._-]*`. Addresses always
 include a positive unpadded occurrence: name `experiment.2` starts at
@@ -99,14 +103,18 @@ attachment. Workspace binding arrives separately. No selection, unreported
 binding, no workspace, missing directory and recorded reclamation remain
 distinct. Missing alone does not prove reclamation.
 
-Initial persistence failure prevents execution. Later failure continues work,
+Initial history publication failure rejects the receipt before acceptance.
+Preparation or preparation-evidence failure after acceptance fails the Run
+without execution. Later observation failure continues work,
 emits a warning and leaves `run.history.status` degraded. Selection errors
 travel back with task outcomes. Final evidence can recover a reference with
 late provenance, without claiming it was available during execution. After an
 append failure the controller stops writing its log and preserves outcomes in
-memory. Escaping exceptions carry `.history` alongside any partial `.report`.
+memory. Terminal Run results preserve lifecycle and errors separately from any partial
+report. `receipt.wait()` provides unsuccessful results for inspection;
+`receipt.result()` raises on unsuccessful completion.
 
-Within one Session, compatible ready invocations share execution handles.
+Within one Runtime, compatible ready invocations share execution handles.
 Each invocation has a durable binding to its handle before new work is scheduled;
 the worker publishes the actual selected try and workspace once beneath that
 handle. A later consumer can immediately read an existing selection. Queries
@@ -120,7 +128,7 @@ Equivalent runtime artifact identities may refer to different suitable paths.
 Each consumer records its own candidate inputs; the shared try records the inputs
 actually used. Completed producer artifacts remain in each run's result map.
 A later lookup of a completed execution creates a dispatch and lets Exec decide
-reuse or a new try. Independent Sessions share completed evidence through Exec; joining
+reuse or a new try. Independent Runtimes share completed evidence through Exec; joining
 their running work is unsupported and contention may still refuse.
 
 If a consumer stops while another needs the execution, its unfinished outcomes
@@ -131,16 +139,16 @@ already-entered work is awaited and reported truthfully. These decisions do not
 cancel the shared Dask future. A dispatch cannot enter Exec twice: automatic
 worker replay refuses explicitly rather than redirecting history to a new try.
 
-The same durable handle/selection relationship is used sequentially, without
-Dask or an observer thread. Exec owns selection accounting and returns it on
-results and handled failures. The handle only publishes that evidence; Run adds
-each consumer's identity when constructing its report.
+Exec owns selection accounting and returns it on results and handled failures.
+The handle publishes that evidence; Run adds each consumer's identity to its
+report. Current histories use schema 4; schema-3 readers and compatibility are
+retired without deleting saved files.
 
 The metadata store requires a coherent shared filesystem with atomic mkdir,
 rename, hard links, fsync and working advisory locks for the short dispatch gate.
-Graph preflight uses an out-of-band worker challenge
-and acknowledgement before scheduling, verifying visibility in both directions.
-It is not a remote history service.
+Local in-process workers share the submit-host paths. Pool commands need the
+configured shared filesystem on farm nodes; this is not a remote history
+service or proof of cross-host filesystem coherence.
 
 ## Computations without consumer history
 
@@ -154,21 +162,27 @@ operation, times, state, standing status, pins and observed payload availability
 They acquire no invented study owner. Run occurrences start at 1; Exec's existing
 try numbers start at 0 and are preserved exactly.
 
-This remains a prototype. Local subprocess tests prove live discovery for both
-kernels with a bounded barrier before completion. Fake-farm evidence tests
+This remains a prototype. Historical local subprocess tests proved live
+discovery with a bounded barrier before completion. The async Runtime adds
+receipt and acceptance boundaries requiring its own lifecycle checks. Fake-farm evidence tests
 placement and concurrency; this feature has not run on a real farm. Comparisons,
 GUI, log following, previews, deletion, renaming, migration, retention redesign
 and wider inquiry ownership remain outside this release.
 
 ## Reproducibility records
 
-Every submission saves a compact `reproducibility.json` before execution, including
-submissions that reuse earlier results. Capture is enabled by default.
+Accepted submissions publish compact `reproducibility.json` during preparation,
+before execution, including submissions that reuse earlier results. Capture is
+enabled by default. During accepted preparation,
+`RunHistory.reproducibility(run_id)` can return `{"status": "pending", "reason": ...}`.
+If a Run ends before publishing its capture, the result is `status="unavailable"`.
+A missing file after the durable `run_prepared` event is corruption and raises
+`HistoryError`; it is not silently treated as pending.
 Configure capture with `reproducibility=Reproducibility(...)` and read it with
 `RunHistory.reproducibility(run_id)`. The module is `hedloom.reproducibility`,
 and CLI JSON uses the `reproducibility` field. The initial `Provenance` class and
-`provenance=` keyword are removed; the reader still accepts records saved under
-the old filename without rewriting them.
+`provenance=` keyword are removed; current schema-4 history uses the reproducibility
+filename only.
 
 The record has two observations, with separate `captured_at` timestamps:
 
@@ -182,17 +196,17 @@ The record has two observations, with separate `captured_at` timestamps:
   working directory and arguments are captured for every run.
 
 ```python
-from hedloom import Reproducibility, RunHistory, session
+from hedloom import Reproducibility, RunHistory, runtime
 
-with session(site) as live:
+with runtime(site) as live:
     first = live.submit(subject, name="baseline", reproducibility=Reproducibility(
         text="Toolchain release 4",
         files=("setup.sh", "site.toml"),
-    ))
-    second = live.submit(subject, name="repeat")
+    )).wait()
+    second = live.submit(subject, name="repeat").wait()
     # After changing installed packages or editable dependency sources:
     live.refresh_environment()
-    third = live.submit(subject, name="updated")
+    third = live.submit(subject, name="updated").wait()
 
 evidence = RunHistory(site.runs_dir).reproducibility(first.run_id)
 print(evidence["environment"]["captured_at"])
@@ -200,18 +214,18 @@ print(evidence["captured_at"])
 ```
 
 The first enabled submission discovers the environment. Later submissions in the
-same Session reuse it, including concurrent `submit_all` calls. A lock ensures
+same Runtime reuse it, including concurrent receipt submissions. A lock ensures
 that simultaneous first submissions share one discovery. There is no dependency
 metadata rescan, dependency manifest reread, or dependency Git command on a cache
 hit. Study Git state is observed separately for every submission. The environment
 is **assumed unchanged** until explicit refresh: installing a package, editing an
 editable dependency, or changing its manifest requires `refresh_environment()`
-or a new session. Refresh failures leave the previous snapshot intact; runs
+or a new Runtime. Refresh failures leave the previous snapshot intact; runs
 already holding it retain their original observation.
 
 `Reproducibility(project_root=...)` selects a different project. The default is
-the submission working directory. Sessions cache separately for each absolute
-project-root spelling, so a session serving several projects cannot confuse
+the submission working directory. Runtimes cache separately for each absolute
+project-root spelling, so a Runtime serving several projects cannot confuse
 manifests. Refresh a nondefault entry using
 `live.refresh_environment(project_root=...)`. No persistent or global automatic
 cache is used, and no filesystem change detection is implied.
@@ -219,25 +233,26 @@ cache is used, and no filesystem change detection is implied.
 Standalone submissions can share an explicit immutable snapshot too:
 
 ```python
-from hedloom import capture_environment
+from hedloom import capture_environment, runtime
 
 environment = capture_environment(project_root="/path/to/project")
-first = subject.submit(site=site, name="first", environment=environment)
-second = other.submit(site=site, name="second", environment=environment)
+with runtime(site) as live:
+    first = live.submit(subject, name="first", environment=environment)
+    second = live.submit(other, name="second", environment=environment)
+    first_result, second_result = first.wait(), second.wait()
 ```
 
-`environment=` works on `Study.submit`, `submit`, `Session.submit`, and
-`Session.submit_all`. It takes precedence over automatic discovery and the
-configuration's `project_root`. `EnvironmentSnapshot.to_data()` returns a copy;
-editing that copy cannot mutate future records. To refresh an explicitly supplied
-snapshot, capture another and pass it to subsequent submissions. Each standalone
-submission otherwise opens a new session and pays discovery once.
+`environment=` works on `Runtime.submit`. It takes precedence over automatic
+discovery and the configuration's `project_root`.
+`EnvironmentSnapshot.to_data()` returns a copy; editing that copy cannot mutate
+future records. Capture a new snapshot to refresh explicitly supplied evidence.
+Separate Runtimes otherwise discover their environment independently.
 
 Supplied file paths are relative to the submitting working directory. Files are
 copied, never executed; a missing supplied file refuses before operations run.
 `Reproducibility(enabled=False)` records an explicit opt-out and performs no
 environment discovery. You can explicitly attach a lockfile if a particular run
-needs one. Schema-3 runs without the feature return `None` from the history reader.
+needs one. Old schema-3 histories are unsupported; existing files remain unchanged.
 
 `hedloom runs show --site site.toml baseline.1 --json` includes the saved record.
 File bytes are base64-encoded with SHA-256 digests. Dependency manifests appear

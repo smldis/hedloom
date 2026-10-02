@@ -27,7 +27,7 @@ from hedloom import (  # noqa: E402
     lsf,
     operation,
     parameter,
-    session,
+    runtime,
     shell,
     study,
     sweep,
@@ -132,13 +132,13 @@ def farm_sweep():
 def run(subject, farm) -> int:
     """Submit twice, proving the second pass spends no farm work.
 
-    Both submissions go to one session, so they share one cluster, one farm
+    Both submissions go to one runtime, so they share one cluster, one farm
     budget and one queue watcher — and the second pass proves reuse without
     paying to start any of that again.
     """
 
     print("first submission (must launch eight LSF jobs):")
-    first = farm.submit(subject, name="farm-smoke")
+    first = farm.submit(subject, name="farm-smoke").wait()
     if not first.succeeded:
         print(first.summary())
         return 1
@@ -150,7 +150,7 @@ def run(subject, farm) -> int:
         print(summary.read_text(), end="")
 
     print("\nsecond submission (must reuse all eight; no new LSF jobs):")
-    second = farm.submit(subject, name="farm-smoke")
+    second = farm.submit(subject, name="farm-smoke").wait()
     if not second.succeeded or len(second.report.reused) != 8:
         print(second.summary())
         return 1
@@ -169,11 +169,10 @@ def main() -> int:
     print(subject.summary(), "\n")
 
     # There is no kernel to choose. The site says how much farm this study may
-    # spend and the session opens exactly that, for as long as the two runs
+    # spend and the runtime opens exactly that, for as long as the two runs
     # below need it; a site that declares nothing has capacity one, which is
-    # one invocation at a time. Add `sequential=True` for that without a
-    # scheduler, or `locally=True` to debug the whole thing on this host.
-    with session(site, watch=True) as farm:
+    # one invocation at a time. Use `locally=True` to debug the whole thing on this host.
+    with runtime(site, watch=True) as farm:
         return run(subject, farm)
 
 

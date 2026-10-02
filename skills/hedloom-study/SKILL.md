@@ -26,7 +26,16 @@ records_dir = "records"
 work_dir = "work"
 runs_dir = "runs"
 ```
-`runs_dir` cannot overlap the other two storage locations. Call `subject = my_study(...)`, inspect `subject.summary()`, then submit authorized work: `run = subject.submit(site=site, name="request", sequential=True)` for local sequential execution. Preserve requested farm placement/concurrency; several runs can share `with session(site) as s: s.submit(subject, name="request")`.
+`runs_dir` cannot overlap the other two storage locations. Call `subject = my_study(...)` and inspect `subject.summary()`. For authorized execution use the project's installed Dask dependencies:
+
+```python
+from hedloom import runtime
+with runtime(site) as live:
+    receipt = live.submit(subject, name="request")
+    run = receipt.wait()
+```
+
+Submission returns immediately; `accepted()` waits for durable acceptance, `done()`/`snapshot()` inspect progress, and `wait()` returns terminal evidence. `result()` raises on unsuccessful completion. Submit all independent receipts before waiting to overlap Runs; their Runtime shares placement capacity. Preserve requested farm placement/concurrency. Use `locally=True` only when local execution is authorized. `sequential`, `Session`, old submit conveniences and worker-held nesting are retired. Stage a dynamic later Plan from the caller, outside operation bodies. Automatic cleanup is owner-bound; a context gives an explicit drain/release scope without requiring manual close in every script.
 
 **Use results.** Check `run.succeeded` and `run.history.status`; retain actual `run.run_id`. `run.outputs["name"]` has `.available`, `.value`, `.artifact`, `.outcome`. File `.value` is an address; returned `.value` can legitimately be `None`. No `run.value` exists. Execution success does not mean the exported verdict passes. `run.report.outcomes` exposes `.authored_key`, `.reused`, `.record`, `.try_number`, `.error`.
 
@@ -43,4 +52,4 @@ Saved outputs are **dicts**, with `available`, `value`, `artifact`, `accessible`
 
 Use discovered IDs (`request.1`, etc.), never invent a latest alias. Nested invocation addresses use `/`; ambiguous leaves need their full address. CLI equivalents: `hedloom runs list --site site.toml --name request --json`, `hedloom runs show --site site.toml RUN_ID --json`, `hedloom runs path --site site.toml RUN_ID --invocation ADDRESS --workspace`.
 
-For missing details, read only the relevant checkout `docs/guide/` page: `authoring.md` (composition), `running.md`/`sites.md` (sessions/farm), `runtime-artifacts.md` (fresh acquisition/identity), `discovery.md` (history/CLI). Discovery field questions resolve in `src/hedloom/discovery.py`; dated `design/` proposals are not current contracts.
+For missing details, read only the relevant checkout `docs/guide/` page: `authoring.md` (composition), `running.md`/`sites.md` (Runtime/farm), `runtime-artifacts.md` (fresh acquisition/identity), `discovery.md` (history/CLI). Discovery field questions resolve in `src/hedloom/discovery.py`; dated `design/` proposals are not current contracts.

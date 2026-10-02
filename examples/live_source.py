@@ -4,9 +4,9 @@ Run with ``python examples/live_source.py``. A local dictionary stands in for
 an external service. Acquisition is an ordinary operation in one static Plan;
 content identity stops unchanged observations invalidating downstream work.
 
-The three submissions share one Session. For an operation that submits an inner
-study through that same Session, see ``nested_studies.py``. Nesting is still
-supported, but fetching fresh data no longer requires it.
+The three submissions share one Runtime. Acquisition and analysis compose in
+one static Plan; worker-held nested submissions are deferred. For caller-level
+staging across Plans, see ``nested_studies.py``.
 """
 from pathlib import Path
 import sys
@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 for unit in ("flow", "exec", "run"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / unit / "src"))
 
-from hedloom import Site, artifact, file, flow, local, operation, returned, session, study
+from hedloom import Site, artifact, file, flow, local, operation, returned, runtime, study
 
 DOCUMENT = artifact("served-document")
 TALLY = artifact("word-tally")
@@ -73,12 +73,12 @@ def live_source():
 
 def main():
     print(live_source().summary())
-    with session(SITE) as live:
+    with runtime(SITE) as live:
         for label, document in (("new", SERVICE["document"]),
                                 ("unchanged", SERVICE["document"]),
                                 ("changed", "alpha beta gamma delta delta\n")):
             SERVICE["document"] = document
-            run = live.submit(live_source(), name="live-source")
+            run = live.submit(live_source(), name="live-source").wait()
             print(label, run.summary(), sep="\n")
             if not run.succeeded:
                 return 1

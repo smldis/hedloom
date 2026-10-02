@@ -203,8 +203,8 @@ class BoundTransport:
                 # A local placement runs the command here. The runner is the
                 # one `hedloom_exec` already uses for `bsub`: it keeps the child in
                 # this process's group and asks the kernel to signal it if we
-                # die, so a command outliving its owner is no more possible
-                # locally than on the farm.
+                # die. This binds a local command to its immediate process
+                # owner; remote batch-owner cleanup needs the farm lifecycle.
                 self._results[identity] = _run_locally(produced, bundle)
                 return _local_handle(self.name, identity, bundle)
             handle = self._delegate.submit(

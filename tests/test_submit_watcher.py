@@ -5,6 +5,8 @@ façade only has to keep that observer alive beside a submission, print its
 transitions, and get out of the way if status cannot be read.
 """
 
+from runtime_helpers import run_study
+
 import importlib
 from pathlib import Path
 import time
@@ -135,7 +137,7 @@ def test_a_local_study_never_calls_the_status_reader_and_keeps_completion_output
     reader = ReplayReader(AssertionError("local work called bjobs"))
     site = Site(records_dir=str(tmp_path / "attempts"), runs_dir=str(tmp_path / "attempts") + "-history")
 
-    run = local_study().submit(site=site, watch=True, _watch_reader=reader, name="test-run")
+    run = run_study(local_study(), site=site, watch=True, _watch_reader=reader, name="test-run")
 
     output = capsys.readouterr().out
     assert run.succeeded
@@ -169,12 +171,7 @@ def test_a_wedged_reader_leaves_only_a_daemon_and_cannot_hold_submit(tmp_path):
     reader = WedgedReader(try_name(journal.identity, 0))
     started = time.monotonic()
 
-    run = local_study().submit(
-        site=Site(records_dir=str(root), runs_dir=str(root) + "-history"),
-        watch=True,
-        _watch_reader=reader,
-        name="test-run",
-    )
+    run = run_study(local_study(), site=Site(records_dir=str(root), runs_dir=str(root) + "-history"), watch=True, _watch_reader=reader, name="test-run")
 
     elapsed = time.monotonic() - started
     lingering = [
@@ -222,54 +219,39 @@ class RefusingReader:
         raise TransportError("bjobs is too old for -o")
 
 
-def test_a_status_reader_failure_prints_once_and_cannot_fail_the_run(
-    tmp_path, capsys
-):
-    """Unsupported LSF reporting is evidence failure, not execution failure."""
-
-    global _WATCHER_REACHED_READER
-
-    _WATCHER_REACHED_READER = False
-    root = tmp_path / "attempts"
-    submitted_attempt(root, "existing-farm-job")
+def test_a_status_reader_failure_prints_once_and_cannot_fail_the_run(tmp_path, capsys):
+    from hedloom import runtime
+    root = tmp_path / 'attempts'
+    submitted_attempt(root, 'existing-farm-job')
     reader = RefusingReader()
-
-    run = waiting_study().submit(
-        site=Site(records_dir=str(root), runs_dir=str(root) + "-history"),
-        watch=True,
-        _watch_reader=reader,
-        name="test-run",
-    )
-
+    with runtime(Site(records_dir=str(root), runs_dir=str(root) + '-history'),
+                 watch=True, _watch_reader=reader) as live:
+        live.ready()
+        deadline = time.monotonic() + 2
+        while reader.calls == 0:
+            assert time.monotonic() < deadline, 'watcher never reached reader'
+            time.sleep(.001)
+        run = live.submit(local_study(), name='test-run').wait()
     output = capsys.readouterr().out
     assert run.succeeded, run.summary()
-    assert run.outputs["value"].value == 41
+    assert run.outputs['value'].value == 7
     assert reader.calls == 1
-    assert output.count("[watch disabled]") == 1
-    assert "bjobs is too old for -o" in output
-    assert "point" in output and "succeeded" in output
+    assert output.count('[watch disabled]') == 1
+    assert 'bjobs is too old for -o' in output
+    assert 'point' in output and 'succeeded' in output
 
 
-def test_a_raised_run_still_stops_and_joins_its_poller(tmp_path, monkeypatch):
-    """The poller is scoped to submit even when the kernel has no report."""
-
-    study_module = importlib.import_module("hedloom.study")
-
-    def fail_run(document, **kwargs):
-        raise RuntimeError("kernel escaped")
-
-    monkeypatch.setattr(study_module, "run_plan", fail_run)
-
-    with pytest.raises(RuntimeError, match="kernel escaped"):
-        local_study().submit(
-            site=Site(records_dir=str(tmp_path / "attempts"), runs_dir=str(tmp_path / "attempts") + "-history"),
-            sequential=True,
-            watch=True,
-            _watch_reader=ReplayReader(AssertionError("local work called bjobs")),
-            name="test-run",
-        )
-
-    assert not any(
-        thread.name == _WATCH_THREAD_NAME and thread.is_alive()
-        for thread in threads()
-    )
+def test_a_rejected_run_still_stops_and_joins_its_poller(tmp_path, monkeypatch):
+    runtime_module = importlib.import_module("hedloom.runtime")
+    def fail_prepare(*args, **kwargs):
+        raise RuntimeError("preparation escaped")
+    monkeypatch.setattr(runtime_module.Runtime, "_prepare", fail_prepare)
+    run = run_study(local_study(),
+                    site=Site(records_dir=str(tmp_path / "attempts"),
+                              runs_dir=str(tmp_path / "attempts") + "-history"),
+                    watch=True,
+                    _watch_reader=ReplayReader(AssertionError("local work called bjobs")),
+                    name="test-run")
+    assert run.state == "FAILED" and "preparation escaped" in run.error
+    assert not any(thread.name == _WATCH_THREAD_NAME and thread.is_alive()
+                   for thread in threads())

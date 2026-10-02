@@ -1,11 +1,16 @@
 # Results, reuse, and looking before you run
 
-## Reading a run: `StudyRun`
+`Runtime.submit` returns a Run receipt. Its `wait()` returns terminal evidence;
+`result()` additionally requires success. A partial report with no failures
+does not make a stopped or rejected Run successful.
+
+## Reading a completed Run: `RunResult`
 
 ```python
 run.outputs["verdict"].value  # what the study exported under that name
 run["coarse:integrate"].artifacts["result"]["address"]
-run.succeeded                 # True iff every invocation succeeded
+run.succeeded                 # True only for successful lifecycle completion
+run.state                     # SUCCEEDED, FAILED, STOPPED or REJECTED
 run.summary()                 # one line per invocation: disposition, key, outcome
 run.report.outcomes           # every InvocationOutcome, in plan order
 run.document                  # the Plan this run executed
@@ -27,7 +32,8 @@ def characterise():
     measured = measure.named("measure")(write_grid.named("grid")(steps=64))
     return {"measurements": measured, "verdict": evaluate.named("evaluate")(measured)}
 
-run = characterise().submit(name="characterise", site=site)
+with runtime(site) as live:
+    run = live.submit(characterise(), name="characterise").wait()
 
 run.outputs["measurements"].value       # 6
 run.outputs["verdict"].value            # {"passes": False, "measured": 6}
@@ -67,7 +73,8 @@ and its recorded error. `None` returned by a succeeded body is a result and
 stays one; the two are never the same answer.
 
 ```python
-run = characterise().submit(name="characterise", site=site, stop_on_failure=False)
+with runtime(site) as live:
+    run = live.submit(characterise(), name="characterise", stop_on_failure=False).wait()
 verdict = run.outputs["verdict"]
 if verdict.available:
     decide(verdict.value)
@@ -109,6 +116,13 @@ its result. Reused results have `disposition="reused"`, fresh claims use
 Other dispositions include `"skipped"`, `"refused"`, and `"withdrawn"`.
 `item.reused` tests for reuse; `item.ran` includes claims and attachments.
 
+Incomplete and cancelled attempts are excluded from automatic reuse. Their
+evidence remains inspectable; submitting the same computation after a confirmed
+cancellation allocates a new try in the same record. An ordinary stop can let an
+entered invocation finish successfully, and that completed result remains
+reusable even though the consumer Run was stopped. An indeterminate transport
+failure may instead refuse a later launch because acceptance cannot be resolved.
+
 ```python
 for item in run.report.outcomes:
     print(
@@ -125,7 +139,8 @@ same public vocabulary. Older saved invocation outcomes may contain
 results and execution selection records still use `"completed"`, describing
 selection of an already-published result. Consumers comparing public disposition
 strings should replace `"completed"` with `"reused"` (or use `item.reused`);
-tools reading historical outcome data must recognize both spellings.
+Exec selection vocabulary stays unchanged. The current schema-4 history
+reader does not support schema-3 outcome compatibility.
 
 `record` and `try_number` are the exact execution this invocation landed on:
 the content-addressed record, and the try whose evidence was published or
@@ -134,8 +149,8 @@ stated by the run rather than reconstructed afterwards. An invocation that was
 blocked or refused reached no execution and leaves both `None`.
 
 The report is in **plan order** regardless of completion order, so two runs of
-one plan stay comparable; `on_event` fires in completion order, because those
-are two different questions.
+one Plan stay comparable. Runtime watch output follows completion, while
+Run snapshots provide nonblocking progress observations.
 
 Execution outcome, evaluation verdict, and accepted conclusion answer different
 questions. An evaluation operation can run successfully and return

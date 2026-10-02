@@ -80,18 +80,27 @@ class RunHistory:
             raise HistoryError(f'{self.root} has the previous saved-run layout; migrate saved data manually before reading here')
 
     def reproducibility(self, run_id):
-        """Read schema-3 evidence, including the earlier provenance filename."""
+        """Read the selected schema-4 submission's preparation evidence."""
         parse_run_id(run_id)
         directory = self.root / run_id
         header = read_json(directory / 'run.json')
         if 'records_dir' not in header or 'work_dir' not in header:
             raise HistoryError(f'incompatible run location metadata: {directory / "run.json"}')
-        key = 'reproducibility' if 'reproducibility' in header else 'provenance'
+        key = 'reproducibility'
         reference = header.get(key)
         if reference is None:
             return None
         if reference != key + '.json':
             raise HistoryError('invalid reproducibility reference')
+        if not (directory / reference).exists():
+            events, _ = read_events(directory / 'events.jsonl')
+            if any(row['event'] == 'run_prepared' for row in events):
+                raise HistoryError('prepared run is missing its reproducibility evidence')
+            terminal = next((row['data'] for row in reversed(events)
+                             if row['event'] == 'run_finished'), None)
+            return {'status': 'unavailable' if terminal else 'pending',
+                    'reason': 'submission ended before preparation evidence was published' if terminal
+                              else 'preparation evidence has not been published'}
         return read_json(directory / reference)
 
     def read_run(self, run_id):
@@ -203,7 +212,7 @@ class RunHistory:
         if diagnostics and status == 'complete':
             status = 'degraded'
         return RunSnapshot(run_id, name, occurrence, header['study_name'], header['at'], last,
-            status, 'unreported' if final is None else 'succeeded' if final['succeeded'] else 'failed',
+            status, 'unreported' if final is None else final.get('state', 'SUCCEEDED' if final['succeeded'] else 'FAILED').lower(),
             tuple(sorted(rows, key=lambda row: row.address)), tuple(dict.fromkeys(diagnostics)))
 
     def list_runs(self, *, name=None, study=None, since=None):

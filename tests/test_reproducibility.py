@@ -1,10 +1,12 @@
+
+from runtime_helpers import run_study
 import base64
 import json
 import subprocess
 
 import pytest
 
-from hedloom import Reproducibility, RunHistory, session, submit, capture_environment
+from hedloom import Reproducibility, RunHistory, runtime, capture_environment
 from hedloom.reproducibility import capture
 from test_discovery import site_for, subject
 
@@ -42,8 +44,8 @@ def test_editable_revision_and_file_bytes_survive_edits(tmp_path, monkeypatch):
     assert evidence['text'] == 'load toolchain 2'
 
 
-@pytest.mark.parametrize("sequential", [True, False])
-def test_saved_before_execution_and_distinct_for_reuse(tmp_path, monkeypatch, sequential):
+def test_saved_before_execution_and_distinct_for_reuse(tmp_path, monkeypatch):
+    from hedloom.binding import BoundTransport
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', lambda: [])
     site = site_for(tmp_path)
@@ -51,13 +53,20 @@ def test_saved_before_execution_and_distinct_for_reuse(tmp_path, monkeypatch, se
     config = tmp_path / 'setup.sh'
     config.write_text('first')
     seen = []
-    first = submit(subject(), site=site, name='environment', sequential=sequential,
-                   on_started=lambda ref: seen.append(history.reproducibility(ref.run_id)),
-                   reproducibility=Reproducibility(files=(config,)))
+    original = BoundTransport.submit
+    def verify_before_execution(self, identity, bundle):
+        seen.append(history.reproducibility('environment.1'))
+        return original(self, identity, bundle)
+    with monkeypatch.context() as check:
+        check.setattr(BoundTransport, 'submit', verify_before_execution)
+        first = run_study(subject(), site=site, name='environment',
+                          reproducibility=Reproducibility(files=(config,)))
     config.write_text('second')
-    with session(site, sequential=sequential) as live:
-        second = live.submit(subject(), name='environment', reproducibility=Reproducibility(text='second', files=(config,)))
-        disabled = live.submit_all({'disabled': subject()}, reproducibility=Reproducibility(enabled=False))['disabled']
+    with runtime(site) as live:
+        second = live.submit(subject(), name='environment',
+                             reproducibility=Reproducibility(text='second', files=(config,))).wait()
+        disabled = live.submit(subject(), name='disabled',
+                               reproducibility=Reproducibility(enabled=False)).wait()
     assert second['answer.1'].reused
     assert base64.b64decode(seen[0]['files'][str(config)]['content']) == b'first'
     assert base64.b64decode(history.reproducibility(second.run_id)['files'][str(config)]['content']) == b'second'
@@ -66,9 +75,9 @@ def test_saved_before_execution_and_distinct_for_reuse(tmp_path, monkeypatch, se
 
 
 def test_missing_attachment_refuses_before_execution(tmp_path):
-    with pytest.raises(ValueError, match='cannot capture reproducibility file'):
-        subject().submit(site=site_for(tmp_path), name='missing', sequential=True,
-                         reproducibility=Reproducibility(files=(tmp_path / 'missing',)))
+    run = run_study(subject(), site=site_for(tmp_path), name='missing',
+                    reproducibility=Reproducibility(files=(tmp_path / 'missing',)))
+    assert run.state == 'FAILED' and 'cannot capture reproducibility file' in run.error
     assert not (tmp_path / 'records').exists()
 
 
@@ -87,9 +96,9 @@ def test_older_history_and_missing_new_record(tmp_path, monkeypatch):
     history = RunHistory(tmp_path / 'history')
     assert history.reproducibility(writer.run_id) is None
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', lambda: [])
-    run = subject().submit(site=site_for(tmp_path), name='newer', sequential=True)
+    run = run_study(subject(), site=site_for(tmp_path), name='newer')
     (tmp_path / 'history' / run.run_id / 'reproducibility.json').unlink()
-    with pytest.raises(HistoryError, match='cannot read'):
+    with pytest.raises(HistoryError, match='prepared run is missing its reproducibility evidence'):
         history.reproducibility(run.run_id)
 
 
@@ -101,16 +110,15 @@ def test_reproducibility_persistence_failure_refuses_execution(tmp_path, monkeyp
             raise OSError('injected reproducibility failure')
         return original(path, *args, **kwargs)
     monkeypatch.setattr(history, 'publish', fail)
-    with pytest.raises(OSError, match='injected reproducibility failure'):
-        subject().submit(site=site_for(tmp_path), name='failure', sequential=True)
+    run = run_study(subject(), site=site_for(tmp_path), name='failure')
+    assert run.state == 'FAILED' and 'injected reproducibility failure' in run.error
     assert not (tmp_path / 'records').exists()
 
 
 def test_cli_exposes_saved_environment(tmp_path, monkeypatch, capsys):
     from hedloom.cli import main
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', lambda: [])
-    run = subject().submit(site=site_for(tmp_path), name='inspect', sequential=True,
-                           reproducibility=Reproducibility(text='recorded setup'))
+    run = run_study(subject(), site=site_for(tmp_path), name='inspect', reproducibility=Reproducibility(text='recorded setup'))
     profile = tmp_path / 'site.toml'
     profile.write_text('[study]\nrecords_dir="records"\nruns_dir="history"\n')
     assert main(['runs', 'show', '--site', str(profile), run.run_id, '--json']) == 0
@@ -140,7 +148,7 @@ def test_compact_environment_omits_lockfiles_and_extra_ancestors(tmp_path, monke
     assert 'platform' not in data and 'python' not in data
 
 
-def test_session_cache_refresh_and_fresh_attachments(tmp_path, monkeypatch):
+def test_runtime_cache_refresh_and_fresh_attachments(tmp_path, monkeypatch):
     from pathlib import Path
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', lambda: [])
@@ -150,8 +158,8 @@ def test_session_cache_refresh_and_fresh_attachments(tmp_path, monkeypatch):
     config.write_text('first config')
     site = site_for(tmp_path)
     history = RunHistory(site.runs_dir)
-    with session(site, sequential=True) as live:
-        first = live.submit(subject(), name='first', reproducibility=Reproducibility(files=(config,)))
+    with runtime(site) as live:
+        first = live.submit(subject(), name='first', reproducibility=Reproducibility(files=(config,))).wait()
         manifest.write_text('second environment')
         config.write_text('second config')
         with monkeypatch.context() as guarded:
@@ -164,9 +172,9 @@ def test_session_cache_refresh_and_fresh_attachments(tmp_path, monkeypatch):
                 assert path != manifest, 'cached manifest was reread'
                 return original(path)
             guarded.setattr(Path, 'read_bytes', read)
-            second = live.submit(subject(), name='second', reproducibility=Reproducibility(files=(config,)))
+            second = live.submit(subject(), name='second', reproducibility=Reproducibility(files=(config,))).wait()
         refreshed = live.refresh_environment()
-        third = live.submit(subject(), name='third')
+        third = live.submit(subject(), name='third').wait()
     a, b, c = [history.reproducibility(run.run_id) for run in (first, second, third)]
     assert a['environment'] == b['environment']
     assert base64.b64decode(b['files'][str(config)]['content']) == b'second config'
@@ -188,7 +196,7 @@ def test_explicit_environment_reusable_across_standalone_submissions(tmp_path, m
     monkeypatch.setattr('hedloom.reproducibility.capture_environment', refuse)
     site = site_for(tmp_path)
     for name in ('first', 'second'):
-        run = submit(subject(), site=site, name=name, sequential=True, environment=environment)
+        run = run_study(subject(), site=site, name=name, environment=environment)
         assert RunHistory(site.runs_dir).reproducibility(run.run_id)['environment'] == environment.to_data()
 
 
@@ -205,8 +213,9 @@ def test_concurrent_submissions_discover_once_with_slow_metadata(tmp_path, monke
         return []
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', slow_distributions)
     site = site_for(tmp_path)
-    with session(site) as live:
-        runs = live.submit_all({'first': subject(), 'second': subject()})
+    with runtime(site) as live:
+        receipts = {name: live.submit(subject(), name=name) for name in ('first', 'second')}
+        runs = {name: receipt.wait() for name, receipt in receipts.items()}
     assert len(calls) == 1
     history = RunHistory(site.runs_dir)
     assert history.reproducibility(runs['first'].run_id)['environment'] == history.reproducibility(runs['second'].run_id)['environment']
@@ -217,23 +226,22 @@ def test_disabled_capture_does_not_discover_environment(tmp_path, monkeypatch):
         pytest.fail('disabled reproducibility performed discovery')
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', refuse)
     monkeypatch.setattr('hedloom.reproducibility._git', refuse)
-    run = subject().submit(site=site_for(tmp_path), name='disabled', sequential=True,
-                           reproducibility=Reproducibility(enabled=False))
+    run = run_study(subject(), site=site_for(tmp_path), name='disabled', reproducibility=Reproducibility(enabled=False))
     assert RunHistory(tmp_path / 'history').reproducibility(run.run_id)['status'] == 'disabled'
 
 
 def test_failed_refresh_preserves_previous_snapshot(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr('hedloom.reproducibility.metadata.distributions', lambda: [])
-    with session(site_for(tmp_path), sequential=True) as live:
+    with runtime(site_for(tmp_path)) as live:
         before = live.refresh_environment()
         def broken(*args, **kwargs):
             raise OSError('environment temporarily inaccessible')
         from importlib import import_module
-        monkeypatch.setattr(import_module('hedloom.session'), 'capture_environment', broken)
+        monkeypatch.setattr(import_module('hedloom.runtime'), 'capture_environment', broken)
         with pytest.raises(OSError, match='temporarily inaccessible'):
             live.refresh_environment()
-        run = live.submit(subject(), name='cached')
+        run = live.submit(subject(), name='cached').wait()
         assert RunHistory(tmp_path / 'history').reproducibility(run.run_id)['environment'] == before.to_data()
 
 
@@ -245,9 +253,9 @@ def test_project_roots_have_separate_caches(tmp_path, monkeypatch):
     (first / 'pyproject.toml').write_text('first')
     (second / 'pyproject.toml').write_text('second')
     site = site_for(tmp_path)
-    with session(site, sequential=True) as live:
-        a = live.submit(subject(), name='first', reproducibility=Reproducibility(project_root=first))
-        b = live.submit(subject(), name='second', reproducibility=Reproducibility(project_root=second))
+    with runtime(site) as live:
+        a = live.submit(subject(), name='first', reproducibility=Reproducibility(project_root=first)).wait()
+        b = live.submit(subject(), name='second', reproducibility=Reproducibility(project_root=second)).wait()
     history = RunHistory(site.runs_dir)
     assert history.reproducibility(a.run_id)['environment']['project_root'] == str(first)
     assert history.reproducibility(b.run_id)['environment']['project_root'] == str(second)
@@ -316,14 +324,14 @@ def test_no_git_and_explicit_attachments_always_preserve_bytes(tmp_path, monkeyp
     assert not fallback['sources']
 
 
-def test_reader_accepts_old_record_filename(tmp_path):
-    from hedloom.history import HistoryWriter, publish
+def test_reader_refuses_schema3_without_rewriting_saved_evidence(tmp_path):
+    from hedloom.history import HistoryError, HistoryWriter
     writer = HistoryWriter(site_for(tmp_path), 'old', 'empty', {'invocations': []}, {})
-    location = tmp_path / 'history' / writer.run_id
-    header_path = location / 'run.json'
+    header_path = tmp_path / 'history' / writer.run_id / 'run.json'
     header = json.loads(header_path.read_text())
-    header.pop('reproducibility', None)
-    header['provenance'] = 'provenance.json'
-    publish(header_path, header)
-    publish(location / 'provenance.json', {'status': 'disabled'})
-    assert RunHistory(tmp_path / 'history').reproducibility(writer.run_id)['status'] == 'disabled'
+    header['schema_version'] = 3
+    header_path.write_text(json.dumps(header))
+    before = header_path.read_bytes()
+    with pytest.raises(HistoryError, match='incompatible'):
+        RunHistory(tmp_path / 'history').read_run(writer.run_id)
+    assert header_path.read_bytes() == before

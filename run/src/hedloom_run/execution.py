@@ -1,4 +1,4 @@
-"""Session-owned dispatch references, independent of Exec computation identity.
+"""Runtime-owned dispatch references, independent of Exec computation identity.
 
 One handle may enter Exec at most once. Cancellation and entry use the same
 durable gate; observers never grant permission to execute or to replay work.
@@ -6,11 +6,9 @@ durable gate; observers never grant permission to execute or to replay work.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import RLock
-from typing import Any
 from uuid import uuid4
 import fcntl
 import json
@@ -102,7 +100,7 @@ class ExecutionHandle:
 
     @contextmanager
     def _gate(self):
-        # The owner is one local Session. Worker/controller use separate file
+        # The owner is one local Runtime. Worker/controller use separate file
         # descriptions even with threaded workers. No lock spans a body call.
         with (Path(self.location) / 'gate.lock').open('r+b') as stream:
             fcntl.flock(stream, fcntl.LOCK_EX)
@@ -140,6 +138,19 @@ class ExecutionHandle:
             if self.state() == 'entered':
                 write_document(Path(self.location) / 'state.json', {'state': 'finished'})
 
+    def request_interrupt(self) -> bool:
+        """Persist force-stop intent without claiming that execution has stopped."""
+        with self._gate():
+            if self.state() != 'entered':
+                return False
+            write_document(Path(self.location) / 'interrupt.json',
+                           {'requested': True}, immutable=True)
+            return True
+
+    def interrupt_requested(self) -> bool:
+        path = Path(self.location) / 'interrupt.json'
+        return path.exists() and read_document(path).get('requested') is True
+
     def publish_selection(self, selection):
         """Publish Exec-owned evidence at this shared execution address."""
         common = dict(execution_id=self.execution_id, record=selection.record,
@@ -150,60 +161,3 @@ class ExecutionHandle:
         if selection.workspace_known:
             write_document(Path(self.location) / 'workspace.json',
                            {**common, 'workspace': selection.workspace}, immutable=True)
-
-
-@dataclass
-class OwnedExecution:
-    handle: ExecutionHandle
-    future: Any = None
-    consumers: set[str] = field(default_factory=set)
-
-
-class ExecutionOwner:
-    """Session table of active invocations with compatible finalized bindings.
-
-    Completed entries can be replaced. Consumers retain their exact entry until
-    release, which checks object identity before removing a table generation.
-    """
-
-    def __init__(self, root):
-        self.root = Path(root).resolve() / uuid4().hex
-        self.lock = RLock()
-        self.groups = {}
-        self.client = None
-
-    def entry(self, key, client=None, handle=None):
-        """Look up one ready compatible invocation. Caller holds the owner lock."""
-        if client is not None:
-            if self.client is not None and self.client is not client:
-                raise ExecutionError('an execution owner cannot span Dask clients')
-            self.client = client
-        entry = self.groups.get(key)
-        if entry is None or (entry.future is not None and entry.future.done()) or entry.handle.state() == 'cancelled':
-            entry = OwnedExecution(handle or ExecutionHandle.create(self.root))
-            self.groups[key] = entry
-        return entry
-
-    def withdraw(self, entry, consumer):
-        with self.lock:
-            entry.consumers.discard(consumer)
-            if entry.future is not None and entry.future.done():
-                return 'preserve'
-            if entry.consumers:
-                return 'withdrawn'
-            if entry.handle.cancel_before_start():
-                return 'blocked'
-            return 'preserve'
-
-    def release(self, entry, consumer):
-        with self.lock:
-            entry.consumers.discard(consumer)
-            # An old consumer can never remove a replacement generation.
-            for key, existing in list(self.groups.items()):
-                if existing is entry and not entry.consumers:
-                    self.groups.pop(key)
-
-    def close(self):
-        with self.lock:
-            self.groups.clear()
-            self.client = None

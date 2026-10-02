@@ -12,7 +12,7 @@ This abbreviated example assumes `render`, `RULE`, `POINTS`, and a configured
 `site.toml`; the complete local example is `examples/grid_refinement.py`.
 
 ```python
-from hedloom import Site, artifact, file, flow, local, lsf, operation, parameter, shell, study, sweep
+from hedloom import Site, artifact, file, flow, local, lsf, operation, parameter, runtime, shell, study, sweep
 
 GRID = artifact("grid-declaration")
 
@@ -39,7 +39,8 @@ def refinement(points):
 
 subject = refinement(POINTS)                      # planning, not spending
 print(subject.summary())                          # nothing spent yet
-run = subject.submit(name="investigate-start", site=Site.from_file("site.toml"), watch=True)
+with runtime(Site.from_file("site.toml"), watch=True) as live:
+    run = live.submit(subject, name="investigate-start").wait()
 print(run["coarse:integrate"].artifacts["result"]["address"])
 ```
 
@@ -88,7 +89,7 @@ files below for runnable studies and checkable results.
   reads something served from outside it, re-read on every run: a
   fresh operation fetches on each submission and publishes a content-identified
   file. Equal bytes reuse downstream work within the same static Plan; changed
-  bytes invalidate it. It needs one placement slot and no nested session.
+  bytes invalidate it. It needs one placement slot and no worker-held nesting.
 * [`examples/retention.py`](../examples/retention.py) — what storage a study
   spends and when it can be taken back: two points diverge, a second pass runs
   the corrections as their own computations, and the survey's promised byte

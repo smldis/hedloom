@@ -39,6 +39,7 @@ from hedloom import (  # noqa: E402
     operation,
     parameter,
     returned,
+    runtime,
     shell,
     study,
     sweep,
@@ -151,7 +152,8 @@ def main() -> int:
     subject = grid_refinement()
     print(subject.summary(), "\n")
 
-    run = subject.submit(site=site, watch=True, name="grid-refinement")
+    with runtime(site, watch=True) as live:
+        run = live.submit(subject, name="grid-refinement").wait()
     print("\nconclusion:", run.outputs["verdict"].value)
     print("coarse grid estimated", run["coarse:estimate"].value)
     return 0 if run.succeeded else 1

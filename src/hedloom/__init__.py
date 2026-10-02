@@ -7,7 +7,7 @@ that let one file be a whole study. `hedloom_flow` still owns authoring and the
 Plan, `hedloom_exec` still owns one attempt's durable record and imports neither
 this package nor Dask, and `hedloom_run` still owns binding and readiness. This
 package composes them and adds the one thing none of them could own alone: a
-`submit` that runs what was authored, because it holds both halves.
+Runtime that executes what was authored, because it holds both halves.
 
 The operation decorator here is `hedloom_flow`'s, wrapped so the body it already
 kept is remembered as something callable. That is the whole difference. Before
@@ -43,13 +43,13 @@ from hedloom_flow.authoring import directory, file, returned, stdout, sweep  # n
 from hedloom_run.site import Site, SiteError  # noqa: F401
 
 from hedloom.binding import BoundTransport, Shell, Workspace, shell, located  # noqa: F401
-from hedloom.session import Session, session  # noqa: F401
+from hedloom.runtime import Runtime, runtime  # noqa: F401
+from hedloom.run import Run, RunSnapshot, AcceptanceError, RunFailed, RuntimeClosed  # noqa: F401
 from hedloom.study import (  # noqa: F401
     OutputUnavailable,
     Study,
     StudyOutput,
-    StudyRun,
-    submit,
+    RunResult,
 )
 
 from hedloom.reproducibility import Reproducibility, EnvironmentSnapshot, capture_environment
@@ -66,13 +66,18 @@ __all__ = [
     "Policy",
     "ResourceContract",
     "Shell",
-    "Session",
+    "Runtime",
+    "Run",
+    "RunSnapshot",
+    "RunResult",
+    "AcceptanceError",
+    "RunFailed",
+    "RuntimeClosed",
     "Site",
     "SiteError",
     "Study",
     "StudyBuilder",
     "StudyOutput",
-    "StudyRun",
     "Workspace",
     "address",
     "artifact",
@@ -91,11 +96,10 @@ __all__ = [
     "planned",
     "pooled",
     "returned",
-    "session",
+    "runtime",
     "shell",
     "stdout",
     "study",
-    "submit",
     "sweep",
 ]
 
@@ -212,12 +216,14 @@ class StudyBuilder:
         )
 
     def __getattr__(self, name: str) -> Any:
-        # The mistake this API invites: `sweep.submit(...)` for `sweep().submit(...)`.
+        # A family must be materialized before its Study can be submitted.
         if name in {"submit", "plan", "document", "summary", "implementations"}:
             called = getattr(self.build, "__name__", "this")
+            advice = (f'live.submit({called}(...), name=...)' if name == 'submit'
+                      else f'{called}(...).{name}')
             raise AttributeError(
                 f"{called!r} is a family of studies, not one: call it first, "
-                f"as {called}(...).{name}"
+                f"then use {advice}"
             )
         raise AttributeError(name)
 
@@ -238,7 +244,7 @@ def study(
         def sweep(name):
             return points.named(name)(POINTS)
 
-        sweep("north").submit(site)
+        runtime(site).submit(sweep("north"), name="north")
 
     Nothing runs inside the body — an operation call records itself and hands
     back a handle — so what comes back is a plan you can inspect before

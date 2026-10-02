@@ -4,10 +4,10 @@ Hedloom's `Study` is the executable part of a wider inquiry: a named Plan
 together with its implementations. An inquiry may involve several executions,
 revised questions, and decisions made from their evidence. This authoring
 surface does not own that wider lifecycle. See
-[reading results](results.md#reading-a-run-studyrun) for the distinction between
+[reading results](results.md#reading-a-completed-run-runresult) for the distinction between
 execution success, an evaluation verdict, and an accepted conclusion.
 
-Three decorators, and only the third one can spend anything.
+Three decorators describe work; Runtime submission starts execution.
 
 | You write | What it is | When its body runs |
 | --- | --- | --- |
@@ -170,13 +170,12 @@ including a measurement that a later step also consumes; see
 
 `default_policy` is where work runs unless a call says otherwise.
 
-Calling `.submit` on the decorated *name* rather than on a study is the mistake
-this shape invites, so it is answered with the call to make instead:
+Call the decorated function to obtain a Study before submitting it:
 
 ```python
-grid_refinement.submit(site=site, name="grid-refinement")
-# AttributeError: 'grid_refinement' is a family of studies, not one:
-#                 call it first, as grid_refinement(...).submit
+with runtime(site) as live:
+    receipt = live.submit(grid_refinement(), name="grid-refinement")
+    run = receipt.wait()
 ```
 
 ### Handles are references, never values
@@ -259,10 +258,10 @@ feature** — if a study needs to branch on a result, raise it rather than worki
 around it. The open architectural question is recorded in
 `docs/vision/open-concepts.md` at the repository root.
 
-*Staged* plans are a different thing and are already demonstrated: an invocation
-may author and submit an inner Plan. The
+*Staged* Plans are a different thing: the caller may author a later Plan
+after an earlier Run supplies ordinary values. The
 [nested-studies example](../../examples/nested_studies.py) demonstrates this
-using [one shared Session](running.md#nested-studies-in-one-session).
+using [caller-level stages](running.md#caller-level-stages).
 Each plan is still fully determined when authored; a later stage is authored only
 after an earlier one produced ordinary Python values. See
 [internals](../internals/index.md#staged-plans).
@@ -282,6 +281,8 @@ their matching bodies rather than silently using the latest replacement.
 Different source functions cannot claim an already registered operation name.
 Moving a study definition within its file does not create a name collision.
 
-This is source reloading, not a snapshot of Python globals, imported libraries,
-or external state. Declare changing dependencies as inputs or configuration;
+Registration pins selected function code with a shallow globals mapping. Later
+source edits can supply a new function to a new Run without replacing a queued
+Run's chosen code. Mutable objects, closures, imported libraries and external
+state are not fully snapshotted or hermetic. Declare changing dependencies as inputs or configuration;
 source-unavailable bodies still require explicit version discipline.

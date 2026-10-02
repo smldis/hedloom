@@ -178,6 +178,13 @@ separately; strict mutation/recovery readers retain their existing behavior.
   binds the job to the submitting client; the client stays in this process's
   group and requests `PR_SET_PDEATHSIG` on Linux, so the job does not survive
   its owner. External work is a command line, not an in-process callable.
+  `SubprocessRunner` permits an explicit Linux `parent_death_signal`, defaulting
+  to SIGTERM; pooled worker recycling selects SIGKILL so an immediate child
+  cannot ignore owner death. The post-binding parent check covers death before
+  the binding was installed. A real local test verifies a SIGTERM-ignoring
+  command dies under the SIGKILL policy. This does not bind detached descendants
+  or remove the remaining Python `preexec_fn` hazard; Exec imports no Dask and
+  does not choose when a pool worker restarts.
 - What a job asks for is resolved per invocation. `placement_options(bundle)`
   reads what the Plan requested; `settings_for(...)` resolves it over the
   transport's site defaults, which the invocation's own options win against.

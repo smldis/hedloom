@@ -17,7 +17,7 @@ hedloom = "hedloom.cli:main"
 # A floor rather than a pin; `hedloom-run` carries the reasoning.
 dask = ["distributed>=2023.9.2"]
 # Pooled LSF placement. Deferred through to `hedloom-run`, which is the unit
-# that owns binding and is the only one allowed to import Dask at all.
+# that owns pooled placement; the facade owns its async Runtime lifecycle.
 pooled = ["hedloom-run[pooled]"]
 
 [tool.uv.workspace]

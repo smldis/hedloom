@@ -45,34 +45,51 @@ every current convenience belongs in this facade: a convenience that repeatedly
 restates a child's rules would challenge the present boundary, even if it works.
 
 Public invocation outcomes use Run's `reused` disposition consistently in live
-reporting, summaries, and newly written consumer history. Exec selection evidence
-keeps its `completed` protocol term; schema-3 consumer events using that spelling
-remain readable without rewriting evidence. This boundary keeps selection facts intact while
-letting study authors report reuse without translating executor terminology.
+reporting, summaries, and consumer history. Exec selection evidence keeps its
+`completed` protocol term; translating it at the consumer boundary preserves
+selection facts without requiring authors to translate executor terminology.
 
-Run history implements the operator-facing join between named submissions and
-shared execution evidence. Every submission requires a chosen name and
-`Site.runs_dir`, independently located from `records_dir` and `work_dir`.
-`runs_dir/<submission>.<occurrence>/` holds the saved Plan and outcomes;
-`runs_dir/_meta/` holds allocation and shared dispatch bookkeeping. Consumer
-history schema 3 records `records_dir` and `work_dir` in `run.json` and does
-not read the earlier nested run tree or schema-2 metadata. Permanent
-occurrences, saved Plans and readable scoped
-addresses preserve each consumer independently. Actual selection and workspace
-binding are published before blocking launch. A Session owns execution handles
-for compatible ready invocations; each consumer records its binding to
-the handle and the worker publishes the selected try once. Exec owns selection
-accounting even when publication fails; Run adds consumer identity at reporting,
-without a per-invocation selection observer. Fresh-process readers
-follow durable references without callbacks or a live scheduler. Queries separate consumer outcome,
-execution state and persistence completeness. Initial persistence failure refuses;
-later failure continues computation with degraded history. Local subprocess
-barrier tests exercise both kernels. This does not establish real-farm or remote
-storage behavior, or settle wider inquiry ownership. Sharing is scoped to one
-Session and conservative invocation compatibility after inputs resolve, including
-execution bindings and placement. Completed dispatches are not a result cache;
-later requests re-enter Exec. This experience exposes execution ownership as part of the
-Session's lifetime, rather than an incidental consequence of equal Dask keys.
+The async replacement adopted on 2026-10-01 makes submission an owned occurrence,
+not a blocking call. `Runtime.submit` immediately returns a `Run` receipt;
+durable acceptance and terminal completion are independently observable. One
+Runtime owns a background asyncio controller and Dask clients/clusters for the
+site. Waiting Runs retain data, without a fixed 32-Run admission cap or a thread
+per Run. Placement capacity bounds outstanding ready executions. Bounded daemon
+lanes keep synchronous preparation, storage and observation off the controller.
+This bounds entered work, not the total memory of arbitrarily many waiting Plans.
+
+Run history joins named consumers to shared execution evidence. Every accepted
+submission requires a chosen name and `Site.runs_dir`, independently located from
+`records_dir` and `work_dir`. `runs_dir/<submission>.<occurrence>/` holds the
+saved Plan and outcomes; `runs_dir/_meta/` holds allocation and dispatch
+bookkeeping. Consumer history schema 4 records lifecycle and storage roots;
+schema 3 and earlier are refused without deleting saved data. Acceptance publishes
+the saved Plan/header before expensive preparation. Prepared evidence and each
+consumer's execution link must be durable before dispatch authority is granted.
+A failed initial publication rejects acceptance; failed preparation settles an
+accepted Run as failed without fabricated execution references. Later observation
+failure degrades persistence independently of actual computation. Readers distinguish
+pending or unavailable preparation evidence from corruption of a prepared record.
+
+Run's controller shares compatible ready invocations within one Runtime, including
+execution bindings and placement, and retains exact Exec record/try references.
+Withdrawing one consumer preserves other consumers; solely owned entered work
+must drain. Completed dispatches are not a result cache: later requests re-enter
+Exec's reuse selection. Output delivery is also distinct from execution: a failed
+projection preserves the actual execution evidence, blocks dependent work, and
+cannot settle unrelated entered work prematurely. This experience places lifetime
+and delivery authority at the composition boundary rather than in Dask key equality.
+
+Context exit drains owned Runs, or requests withdrawal before draining on an
+exception. Manual close is optional; process ownership provides automatic exit
+cleanup outside a context. Local Linux subprocess owner-death tests and fake-farm
+normal-exit pool probes pass. Extended probes on 2026-10-02 also reclaimed the
+active command and fake batch worker automatically after SIGTERM and SIGKILL,
+in about 32.5 seconds. Dask detects scheduler loss immediately but its default
+worker shutdown gives active executor threads a 30-second grace. The earlier
+five-second observation measured this delay, not permanent orphaning. Direct-child
+binding still does not establish an immediate cross-host guarantee, and the async
+path has not been exercised on a real farm.
 
 The unit studies whether one authoring file can connect a Plan to its execution
 while retaining inspection before submission. Its evidence is
@@ -110,8 +127,9 @@ What it has met of a farm, and what it has not, is worth splitting rather than
 totalling. `examples/farm_smoke.py` has run against a real LSF installation and
 proved the `shell` launcher reaching a real `bsub -I` job: argv, `-J` identity,
 an artifact chaining from one job into the next, failure recording and reuse.
-It ran **sequentially**, so it says nothing about the graph kernel, about
-`max_jobs` bounding anything against a real queue, or about the watcher's
+That historical run used the retired **sequential** kernel, so it says nothing
+about the async controller, about `max_jobs` bounding anything against a real
+queue, or about the watcher's
 `bjobs` parsing, none of which have met a farm. Every domain study in
 `../studies/` — `rc_corners.py`, all three `ota_pvt` variants — still runs
 entirely at `local` placement; `ota_pvt.py` carries the one-line policy change
@@ -121,9 +139,10 @@ that would place each point on its own job as a comment rather than a claim.
 
 Submission history captures compact submit-host reproducibility evidence by
 default before execution. Python and installed package versions, selected project
-and editable manifests, and Git commits/patches are captured once per Session
-project root (lazily, under a lock), or explicitly through `capture_environment`.
-Dependencies are assumed unchanged until `refresh_environment` or a new session;
+and editable manifests, and Git commits/patches are captured once per Runtime
+project root (lazily through shared capture), or explicitly through
+`capture_environment`. Dependencies are assumed unchanged until
+`refresh_environment` or a new Runtime;
 there is no cache-hit filesystem validation. An immutable snapshot retains its
 capture time while study Git revisions, supplied configuration and invocation
 context are captured anew for each run. Clean tracked source bytes matching a
@@ -132,7 +151,8 @@ untracked or unverifiable sources retain bytes. Explicit attachments always
 retain bytes. Source Git queries are separate from dependency caching, and known
 source files do not constitute a complete import or data inventory. The public
 API, module, CLI field and new record filename consistently use reproducibility;
-only the history reader accepts the previous record spelling. Automatic lockfile capture and verbose platform,
+schema-4 history uses that spelling without the previous filename fallback.
+Automatic lockfile capture and verbose platform,
 interpreter-path and Git-status metadata are excluded. Dirty dependency patches
 remain supported, with gaps explicit. History still stores each compact snapshot
 per run; discovery caching does not imply storage deduplication.
@@ -146,9 +166,9 @@ environments require supplied evidence. See `docs/guide/discovery.md` and
 
 Runtime-identified outputs test a narrower claim about composition: acquisition can
 be an ordinary operation without a second source lifecycle. The local Git
-A → A → B → A test exercises both kernels: separate observations can reuse the
+A → A → B → A test exercises the async path: separate observations can reuse the
 same analysis while preserving each consumer's candidate provenance. Plan schema
-4 declares execution mode and output identity; history schema 2 binds candidate
+4 declares execution mode and output identity; history schema 4 binds candidate
 inputs and dispatch together. Named returns replace whole-return projection.
 Borrowed locations remain externally owned, including after checkout mutation.
 The author guarantees identity and lifetime; present accessibility is a separate
@@ -156,8 +176,8 @@ query and does not verify revision. General successful-result eviction remains
 outside the current collector. See docs/guide/runtime-artifacts.md.
 
 - Distribution: `hedloom`, Python 3.11 or newer, depending on `hedloom-flow`,
-  `hedloom-exec` and `hedloom-run`. `distributed` remains optional and is reached only
-  when a run is given a client.
+  `hedloom-exec` and `hedloom-run`. Authoring remains independent of Dask;
+  execution needs the optional `hedloom-run[dask]` dependency.
 - `@operation` is `hedloom_flow`'s decorator, wrapped so the body it already kept is
   registered as callable under the operation identity the Plan records. The
   registry resolves a name the document names and refuses a different body
@@ -193,30 +213,43 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   `<point>:<operation>` unless they name a key. These are stable readable Plan
   addresses; computation reuse depends on declarations and resolved inputs,
   independently of authored keys.
-- `study(plan, name=...).summary()` shows the study name and every invocation, its operation and its
-  placement, and spends nothing. `submit(site=..., name=...)` then runs it, opening the
-  compute the site declares for as long as the run needs it and giving it back
-  afterwards. There is no kernel to choose: concurrency is each placement's own
-  `max_jobs`, and a site that declares none has capacity one. `sequential=True`
-  asks for one invocation at a time and builds no cluster, which is what keeps
-  `distributed` optional; `locally=True` additionally serves every placement by
-  its authored body in this process, for debugging a farm study on the submit
-  host. A caller who already holds a `distributed.Client` may pass it instead.
-- `session(site, override=None, ...)` is the form for more than one run: it owns
-  one cluster, one client and one queue watcher for a `with` block, so several
-  runs share a budget rather than each opening their own. Its lifetime is
-  deliberately visible, because leaving the block ends the runs inside it and,
-  under owner-bound lifetime, their farm jobs with them. `Session.submit_all`
-  runs several studies against that one cluster, which is what makes the shared
-  budget structural rather than a convention.
-- An override — `session(site, {"placement": {"lsf": {"max_jobs": 1}}})` —
-  changes how a run executes and never what it means. Nothing it may reach is
-  identity-bearing, so an overridden run lands on the same attempt identities as
-  a plain one and the two reuse each other's work. Roots are refused, because
-  moving the record changes what is reused, which is a different installation
-  rather than a different way of running this one.
-- `StudyRun` retains `study_name` and is addressable the way the study was
-  authored: `run["coarse:integrate"]` is that invocation's outcome.
+- `study(plan, name=...).summary()` shows the study name, invocations and
+  placement without spending compute. `runtime(site).submit(subject, name=...)`
+  registers work against one shared site budget. `Run.accepted()` observes durable
+  acceptance; `Run.wait()` returns any terminal `RunResult`; `Run.result()` requires
+  success. `await run` observes completion without making the caller own the loop.
+  Timeout or cancellation of an observer does not withdraw the Run.
+- `Run.stop()` requests withdrawal; it does not preempt entered Python or shell
+  work. Live `snapshot()` and `result_if_done()` are in-memory observations.
+  `Runtime.close()` closes admission and drains, and a context handles it
+  automatically. Legacy Session, blocking submit helpers, sequential mode and
+  worker-held nested submissions are removed. `locally=True` serves authored
+  bodies locally through the same async scheduler, rather than a second kernel.
+  `Run.stop(force=True)` can escalate an ordinary withdrawal and interrupt
+  solely owned pooled commands through Dask's nanny-managed worker restart,
+  retaining the allocation. Shared consumers remain protected. The existing
+  submit-host waiter observes durable interrupt intent, cancels scheduler
+  interest before worker loss, and lets Exec publish the confirmed cancelled
+  outcome with its exact reference. Queued work needs no destructive restart;
+  scheduler assignment alone is not evidence that a command entered. Pool
+  commands select Linux SIGKILL immediate-child binding so they cannot ignore
+  owner death. Other placements and Python bodies still drain; detached
+  descendants are outside this binding. Unconfirmed interruption is reported
+  honestly. Force requests do not make incomplete work eligible for automatic
+  reuse; a confirmed cancelled attempt can be followed by a new try.
+- Submission `priority` orders eligible preparation, controller nominations and
+  Dask/pool work. Higher values go first; equal-priority Runs rotate dispatch.
+  Priority is outside computation identity and offers neither preemption nor LSF
+  queue priority. Continuous high-priority work can delay lower-priority work;
+  aging and live reprioritization are not implemented.
+- An override — `runtime(site, {"placement": {"lsf": {"max_jobs": 1}}})` —
+  changes execution mechanism without changing computation identity. Roots are
+  refused, because changing the store is a different installation. Pooled commands
+  occupy one worker each: `workers` bounds farm allocations and `max_jobs` bounds
+  outstanding gateway work. Unsupported per-command requests are refused before
+  submission rather than silently reduced to fit a pool.
+- `RunResult` retains `study_name` and is addressable as authored:
+  `result["coarse:integrate"]` returns that invocation's outcome.
 - `run.outputs` is what the study's Plan exported, under the names its author
   gave those outputs. Authored names decide it; report order and completion
   order do not, so appending an invocation cannot change what a study produced.
@@ -228,7 +261,7 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   and reuse are inspectable without guessing an authored key. `.value` resolves
   that exported **port** — one invocation declaring both a file and a returned
   output exports two different things — through `hedloom_run.binding`, shared
-  with both kernels so an exported output and a downstream input cannot
+  with the controller so an exported output and a downstream input cannot
   disagree. A file or directory output resolves to its recorded address; the
   bytes are the caller's to read.
 - An output nobody produced is refused rather than answered. `.value` and
@@ -239,13 +272,13 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   durably serializable: what an attempt record can hold is unchanged by being
   exported.
 - Execution, verdict, and accepted conclusion are three questions.
-  `run.succeeded` reports the first, over invocation outcomes only: an
+  `result.succeeded` requires successful Run settlement and invocation outcomes: an
   evaluation returning `{"passes": False}` succeeded. The second is the value
   that evaluation exported, which this unit neither interprets nor prefers by
   name. The third depends on criteria, assumptions and interpretation, and is
   inferred here from nothing — not from execution, not from reuse, not from a
   pin.
-- The aggregate `StudyRun.value` is **removed**. It answered with the last
+- The aggregate result `.value` remains **removed**. It answered with the last
   invocation in report order, which is a study's conclusion only when the
   conclusion happens to be authored last, and stopped being it silently as soon
   as anything was appended. The removal is breaking, and deliberately has no
@@ -283,6 +316,43 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   can supply. Named `retention.automatic.after_run` rules run only after a
   completed run and warn rather than changing its result. No `submit(prune=...)`
   surface exists: a study decides what is produced, never what is kept.
+
+## Execution learning and possibilities
+
+The [replacement concept](design/interactive-execution-redesign-2026-09-29.md),
+[internals census](design/interactive-execution-internals-census-2026-09-29.md),
+[proposal](design/interactive-execution-proposal-and-plan-2026-09-29.md) and
+[usability review](design/interactive-execution-usability-review-2026-10-01.md)
+retain the dated inquiry. The user's later authorization adopted the async
+replacement while reconsidering its resource proposals. Explicit resource
+management now means observable ownership and bounded entered work; it does not
+mean mandatory manual close or an arbitrary receipt quota. A responsive prompt
+alone would be insufficient: priority and separate preparation/storage lanes also
+make progress inspectable when execution capacity is occupied.
+
+Selected function code and referenced same-module helpers are pinned at
+registration, then serialization and reproducibility capture happen off-loop.
+Mutable external objects, imported module state and closure contents remain
+author-owned dependencies. Source files read during preparation may have changed
+since registration; code hashes identify selected code but are not a hermetic
+source archive. These limits matter for interactive reload rather than being
+claims of complete environment capture.
+
+The retained Dask path passes local and fake-farm checks with the ASS environment
+(Dask/distributed 2026.7.1). Run tests and facade lifecycle checks also pass on
+cached 2023.9.2 and 2024.8.0 versions without a dependency floor increase.
+Jobqueue 0.9.0's cold import installs SIGINT handling, so the first pooled Runtime
+bootstraps it on the main thread and restores the caller's handler before its
+controller starts. A cold background-thread construction refuses startup; this
+is a dependency boundary, not a reason to import Jobqueue for local studies.
+
+Worker-held nesting is deferred, not excluded in principle. Maintained dynamic
+consumers now stage discovery, ordinary corner work and reporting at the caller,
+with recorded operations and exported artifacts. Future hierarchical composition
+must return coordination to an owner that does not consume the child's execution
+slot. Real-farm async scheduling, immediate abrupt pooled-owner cleanup and source
+capture beyond the declared dependencies remain unverified possibilities; the
+unit remains a prototype.
 
 ## Contribution to the parent
 

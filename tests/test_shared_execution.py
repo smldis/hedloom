@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from hedloom import Site, RunHistory, artifact, file, operation, parameter, returned, session, study
+from hedloom import Site, RunHistory, artifact, file, operation, parameter, returned, runtime, study
 from hedloom.history import HistoryWriter, read_json, slot
 from hedloom_run.execution import ExecutionError, ExecutionHandle, read_document
 
@@ -104,12 +104,12 @@ def test_staggered_consumers_share_live_paths_and_keep_their_names(tmp_path, fai
     profile = tmp_path / 'site.toml'
     profile.write_text('[study]\nrecords_dir="records"\nwork_dir="work"\nruns_dir="history"\n')
     history = RunHistory(site.runs_dir)
-    with session(site) as live, ThreadPoolExecutor(2) as threads:
-        first = threads.submit(live.submit, shared_plan(str(tmp_path), fail, 'alpha'),
+    with runtime(site) as live:
+        first = live.submit(shared_plan(str(tmp_path), fail, 'alpha'),
                                name='first', stop_on_failure=False)
         try:
             wait_for(lambda: (tmp_path / 'started').exists())
-            second = threads.submit(live.submit, shared_plan(str(tmp_path), fail, 'beta'),
+            second = live.submit(shared_plan(str(tmp_path), fail, 'beta'),
                                     name='second', stop_on_failure=False)
             wait_for(lambda: len(bound(tmp_path, 'second')) == 1)
             paths = []
@@ -123,7 +123,7 @@ def test_staggered_consumers_share_live_paths_and_keep_their_names(tmp_path, fai
             assert not first.done() and not second.done()
         finally:
             (tmp_path / 'release').touch()
-        a, b = first.result(timeout=15), second.result(timeout=15)
+        a, b = first.wait(timeout=15), second.wait(timeout=15)
         assert a.succeeded == b.succeeded == (not fail)
         assert a.history.status == b.history.status == 'complete'
         assert (tmp_path / 'calls').read_text().splitlines() == ['call']
@@ -131,7 +131,7 @@ def test_staggered_consumers_share_live_paths_and_keep_their_names(tmp_path, fai
         assert a['alpha'].try_number == b['beta'].try_number
         assert b['read-beta'].outcome == ('blocked' if fail else 'succeeded')
         old_id = history.invocation(a.run_id, 'alpha').execution_id
-        later = live.submit(shared_plan(str(tmp_path), fail), name='later', stop_on_failure=False)
+        later = live.submit(shared_plan(str(tmp_path), fail), name='later', stop_on_failure=False).wait()
         later_row = history.invocation(later.run_id, 'work')
         assert later_row.execution_id != old_id
         assert later_row.try_number == a['alpha'].try_number + int(fail)
@@ -140,6 +140,7 @@ def test_staggered_consumers_share_live_paths_and_keep_their_names(tmp_path, fai
 
 
 def test_binding_failure_prevents_that_invocation_admission(tmp_path, monkeypatch):
+    from runtime_helpers import run_study
     (tmp_path / "release").touch()
     original = HistoryWriter.bind_execution
     calls = []
@@ -149,29 +150,29 @@ def test_binding_failure_prevents_that_invocation_admission(tmp_path, monkeypatc
             raise OSError('second binding failed')
         return original(self, identifier, handle, inputs)
     monkeypatch.setattr(HistoryWriter, 'bind_execution', broken)
-    with pytest.warns(RuntimeWarning), pytest.raises(OSError, match='second binding'):
-        shared_plan(str(tmp_path)).submit(site=site_for(tmp_path), name='broken')
+    result = run_study(shared_plan(str(tmp_path)), site=site_for(tmp_path), name='broken')
+    assert result.state == 'FAILED' and 'second binding failed' in result.error
     assert (tmp_path / 'calls').read_text().splitlines() == ['call']
     assert len(list((tmp_path / 'records').glob('*/events.jsonl'))) == 1
 
 
 def test_worker_reentry_cannot_select_a_second_try(tmp_path):
+    from hedloom_run.graph import _run_handle
     site = site_for(tmp_path)
-    with session(site) as live, ThreadPoolExecutor(1) as threads:
-        first = threads.submit(live.submit, shared_plan(str(tmp_path), True), name='first', stop_on_failure=False)
+    with runtime(site) as live:
+        first = live.submit(shared_plan(str(tmp_path), True), name='first', stop_on_failure=False)
         try:
             wait_for(lambda: (tmp_path / 'started').exists())
-            with live._execution_owner.lock:
-                entry = next(iter(live._execution_owner.groups.values()))
-            selection = read_document(Path(entry.handle.location) / 'selection.json')
+            ref = read_json(bound(tmp_path, 'first')[0])
+            handle = ExecutionHandle(ref['location'], ref['execution_id'])
+            selection = read_document(Path(handle.location) / 'selection.json')
         finally:
             (tmp_path / 'release').touch()
-        run = first.result(timeout=15)
+        run = first.wait(timeout=15)
         assert not run.succeeded
-        live.client.retry([entry.future])
         with pytest.raises(ExecutionError, match='replay refused'):
-            entry.future.result(timeout=10)
-        assert read_document(Path(entry.handle.location) / 'selection.json') == selection
+            _run_handle(handle, None, None, None)
+        assert read_document(Path(handle.location) / 'selection.json') == selection
         assert (tmp_path / 'calls').read_text().splitlines() == ['call']
 
 
@@ -197,11 +198,11 @@ def test_late_arrival_keeps_finished_predecessor_and_active_successor(tmp_path):
     (first_dir / 'release').touch()
     site = site_for(tmp_path)
     subject = staged_plan(str(first_dir), str(second_dir))
-    with session(site) as live, ThreadPoolExecutor(2) as threads:
-        a = threads.submit(live.submit, subject, name='a')
+    with runtime(site) as live:
+        a = live.submit(subject, name='a')
         try:
             wait_for(lambda: (second_dir / 'started').exists())
-            b = threads.submit(live.submit, subject, name='b')
+            b = live.submit(subject, name='b')
             wait_for(lambda: len(bound(tmp_path, 'b')) == 2)
             history = RunHistory(site.runs_dir)
             assert history.invocation('a.1', 'held_file.1').execution_id != history.invocation('b.1', 'held_file.1').execution_id
@@ -210,107 +211,86 @@ def test_late_arrival_keeps_finished_predecessor_and_active_successor(tmp_path):
                 assert history.resolve_path('a.1', invocation, workspace=True) == history.resolve_path('b.1', invocation, workspace=True)
         finally:
             (second_dir / 'release').touch()
-        assert a.result(timeout=15).succeeded and b.result(timeout=15).succeeded
+        assert a.wait(timeout=15).succeeded and b.wait(timeout=15).succeeded
     assert (first_dir / 'calls').read_text().splitlines() == ['call']
     assert (second_dir / 'calls').read_text().splitlines() == ['call']
 
 
-def test_callback_withdrawal_leaves_other_consumer_running(tmp_path):
+def test_explicit_withdrawal_leaves_other_consumer_running(tmp_path):
     site = site_for(tmp_path)
-    def callback(outcome):
-        if outcome.authored_key == 'done':
-            (tmp_path / 'callback-ready').touch()
-            wait_for(lambda: (tmp_path / 'withdraw').exists())
-            raise RuntimeError('consumer A stopped')
-
-    with session(site) as live, ThreadPoolExecutor(2) as threads:
-        with pytest.warns(RuntimeWarning, match='history persistence degraded'):
-            a = threads.submit(live.submit, withdrawal_plan(str(tmp_path)), name='a', on_event=callback)
-            try:
-                wait_for(lambda: (tmp_path / 'callback-ready').exists() and (tmp_path / 'started').exists())
-                b = threads.submit(live.submit, withdrawal_plan(str(tmp_path)), name='b')
-                wait_for(lambda: len(bound(tmp_path, 'b')) == 2)
-                (tmp_path / 'withdraw').touch()
-                with pytest.raises(RuntimeError, match='consumer A stopped') as caught:
-                    a.result(timeout=10)
-                outcomes = {row.authored_key: row for row in caught.value.report.outcomes}
-                assert outcomes['work'].outcome == 'cancelled'
-                assert outcomes['work'].disposition == 'withdrawn'
-                assert not b.done()
-            finally:
-                (tmp_path / 'withdraw').touch()
-                (tmp_path / 'release').touch()
-            assert b.result(timeout=15).succeeded
+    with runtime(site) as live:
+        a = live.submit(withdrawal_plan(str(tmp_path)), name='a')
+        try:
+            wait_for(lambda: (tmp_path / 'started').exists())
+            b = live.submit(withdrawal_plan(str(tmp_path)), name='b')
+            wait_for(lambda: len(bound(tmp_path, 'b')) == 2)
+            assert a.stop()
+            stopped = a.wait(timeout=10)
+            assert stopped.state == 'STOPPED'
+            assert stopped['work'].outcome == 'cancelled'
+            assert stopped['work'].disposition == 'withdrawn'
+            assert not b.done()
+        finally:
+            (tmp_path / 'release').touch()
+        assert b.wait(timeout=15).succeeded
     assert (tmp_path / 'calls').read_text().splitlines() == ['call']
 
 
 def test_last_consumer_waits_for_entered_work_instead_of_misreporting_blocked(tmp_path):
-    site = site_for(tmp_path)
-    def callback(outcome):
-        if outcome.authored_key == 'done':
+    with runtime(site_for(tmp_path)) as live:
+        a = live.submit(withdrawal_plan(str(tmp_path)), name='last')
+        try:
             wait_for(lambda: (tmp_path / 'started').exists())
-            (tmp_path / 'callback-raised').touch()
-            raise RuntimeError('last consumer stopped')
-    with session(site) as live, ThreadPoolExecutor(1) as threads:
-        with pytest.warns(RuntimeWarning, match='history persistence degraded'):
-            a = threads.submit(live.submit, withdrawal_plan(str(tmp_path)), name='last', on_event=callback)
-            try:
-                wait_for(lambda: (tmp_path / 'callback-raised').exists())
-                assert not a.done()
-            finally:
-                (tmp_path / 'release').touch()
-            with pytest.raises(RuntimeError, match='last consumer stopped') as caught:
-                a.result(timeout=15)
-    outcomes = {row.authored_key: row for row in caught.value.report.outcomes}
-    assert outcomes['work'].outcome == 'succeeded'
-    assert outcomes['work'].record is not None
+            assert a.stop()
+            wait_for(lambda: a.snapshot().state == 'STOPPING')
+            assert not a.done()
+        finally:
+            (tmp_path / 'release').touch()
+        result = a.wait(timeout=15)
+    assert result.state == 'STOPPED'
+    assert result['work'].outcome == 'succeeded'
+    assert result['work'].record is not None
 
 
 def test_last_consumer_cancels_before_entry_even_when_dask_started_the_wrapper(tmp_path, monkeypatch):
-    import hedloom_run.graph as graph
-    original = graph._run_handle
+    import hedloom_run.controller as controller
+    original = controller._run_handle
     def delayed(handle, item, available, config, *upstream):
         if item.authored_key == 'work':
             (tmp_path / 'before-entry').touch()
             wait_for(lambda: (tmp_path / 'allow-entry').exists())
         return original(handle, item, available, config, *upstream)
-    monkeypatch.setattr(graph, '_run_handle', delayed)
-    def callback(outcome):
-        if outcome.authored_key == 'done':
-            wait_for(lambda: (tmp_path / 'before-entry').exists())
-            raise RuntimeError('cancel before entry')
-    with session(site_for(tmp_path)) as live, ThreadPoolExecutor(1) as threads:
+    monkeypatch.setattr(controller, '_run_handle', delayed)
+    with runtime(site_for(tmp_path)) as live:
+        live.ready()
         def no_cancel(*args, **kwargs):
             raise AssertionError('consumer must not cancel a shared Dask key')
-        monkeypatch.setattr(live.client, 'cancel', no_cancel)
-        with pytest.warns(RuntimeWarning, match='history persistence degraded'):
-            a = threads.submit(live.submit, withdrawal_plan(str(tmp_path)), name='cancel', on_event=callback)
-            try:
-                with pytest.raises(RuntimeError, match='cancel before entry') as caught:
-                    a.result(timeout=15)
-                outcomes = {row.authored_key: row for row in caught.value.report.outcomes}
-                assert outcomes['work'].outcome == 'blocked'
-                assert outcomes['work'].record is None
-                assert not (tmp_path / 'calls').exists()
-            finally:
-                (tmp_path / 'allow-entry').touch()
-                (tmp_path / 'release').touch()
+        monkeypatch.setattr(live._client, 'cancel', no_cancel)
+        a = live.submit(withdrawal_plan(str(tmp_path)), name='cancel')
+        try:
+            wait_for(lambda: (tmp_path / 'before-entry').exists())
+            assert a.stop()
+            result = a.wait(timeout=15)
+            assert result.state == 'STOPPED'
+            assert result['work'].outcome == 'blocked'
+            assert result['work'].record is None
+            assert not (tmp_path / 'calls').exists()
+        finally:
+            (tmp_path / 'allow-entry').touch()
+            (tmp_path / 'release').touch()
     assert not (tmp_path / 'calls').exists()
 
 
-def test_same_owner_does_not_share_different_record_and_workspace_bindings(tmp_path):
+def test_separate_runtime_bindings_do_not_share_records_and_workspaces(tmp_path):
     site = site_for(tmp_path)
     other = replace(site, records_dir=str(tmp_path / 'other-records'),
                     work_dir=str(tmp_path / 'other-work'))
     subject = shared_plan(str(tmp_path))
-    with session(site) as live, ThreadPoolExecutor(2) as threads:
-        a = threads.submit(live.submit, subject, name='a')
+    with runtime(site) as first, runtime(other) as second:
+        a = first.submit(subject, name='a')
         try:
             wait_for(lambda: (tmp_path / 'started').exists())
-            # The explicit Run owner is also usable by an advanced caller;
-            # its compatibility check must include the complete Site binding.
-            b = threads.submit(subject._run, site=other, client=live.client,
-                               execution_owner=live._execution_owner, name='b')
+            b = second.submit(subject, name='b')
             wait_for(lambda: len((tmp_path / 'calls').read_text().splitlines()) == 2)
             history = RunHistory(site.runs_dir)
             row_a = history.invocation('a.1', 'work')
@@ -320,19 +300,19 @@ def test_same_owner_does_not_share_different_record_and_workspace_bindings(tmp_p
             assert history.resolve_path('a.1', 'work', workspace=True) != history.resolve_path('b.1', 'work', workspace=True)
         finally:
             (tmp_path / 'release').touch()
-        assert a.result(timeout=15).succeeded and b.result(timeout=15).succeeded
+        assert a.wait(timeout=15).succeeded and b.wait(timeout=15).succeeded
 
 
 def test_consumers_can_choose_different_stop_policies(tmp_path):
     site = site_for(tmp_path)
-    with session(site) as live, ThreadPoolExecutor(2) as threads:
-        a = threads.submit(live.submit, failure_branches(str(tmp_path)), name='a', stop_on_failure=True)
+    with runtime(site) as live:
+        a = live.submit(failure_branches(str(tmp_path)), name='a', stop_on_failure=True)
         try:
             wait_for(lambda: (tmp_path / 'failure-started').exists() and (tmp_path / 'started').exists())
-            b = threads.submit(live.submit, failure_branches(str(tmp_path)), name='b', stop_on_failure=False)
+            b = live.submit(failure_branches(str(tmp_path)), name='b', stop_on_failure=False)
             wait_for(lambda: len(bound(tmp_path, 'b')) == 2)
             (tmp_path / 'fail-now').touch()
-            stopped = a.result(timeout=15)
+            stopped = a.wait(timeout=15)
             assert stopped['bad'].outcome == 'failed'
             assert stopped['work'].disposition == 'withdrawn'
             assert stopped['work'].outcome == 'cancelled'
@@ -341,7 +321,7 @@ def test_consumers_can_choose_different_stop_policies(tmp_path):
         finally:
             (tmp_path / 'fail-now').touch()
             (tmp_path / 'release').touch()
-        continued = b.result(timeout=15)
+        continued = b.wait(timeout=15)
         assert continued['bad'].outcome == 'failed'
         assert continued['work'].outcome == 'succeeded'
         assert continued.history.status == 'complete'

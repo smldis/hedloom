@@ -1,251 +1,177 @@
 # Hedloom Run Ontology
 
-This is the ongoing self-study of the component rooted here. Briefly inhabit
-its perspective as you work: what are you learning about what it is, why it
-exists, and what it might become? Help this account evolve when you have
-something useful to add.
+This is the ongoing self-study of the component rooted here. Its account
+separates current commitments, observed evidence, and possibilities.
 
 ## Purpose and scope
 
-Hedloom Run walks a validated Plan and executes it. It owns dependency order,
-readiness, the threading of each invocation's outputs into the inputs that
-reference them, and what happens to the rest of a plan when something fails.
+Hedloom Run joins a static validated Plan to durable executions. It owns
+readiness, selected-output threading, binding compatibility, consumer sharing,
+and the effect of failure or withdrawal on remaining work. Exec owns computation
+identity, record selection, attempts, reuse, transports and artifacts. Flow owns
+the Plan. Run imports neither the facade nor Flow.
 
-The original loop joined a static Plan to durable attempts. The Dask kernel,
-adopted in August 2026, supplied concurrent execution and placement capacity.
-Runtime artifact identity later required resolving consumer identity before
-looking up shared execution, which moved dependency admission onto the Run
-controller. This revises the earlier choice to send the complete dependency
-graph to Dask. Dask remains the concurrent executor of ready invocations.
-
-Binding rules and controller admission are shared by both execution choices.
-Exec still owns identity and reuse; Run supplies selected artifacts and decides
-when their consumer is ready. The common path gives a direct way to compare
-sequential and concurrent behavior without maintaining two identity rules.
+The August 2026 Dask kernel supplied concurrent execution and placement
+capacity. Selected artifact identity subsequently moved dependency admission
+back onto Run: a consumer identity cannot be finalized until its producers have
+selected their artifacts. The October 2026 async replacement preserves that
+boundary. Dask receives ready work rather than unresolved dependent tasks.
 
 ## Mode of being
 
 **Development state:** `prototype`
 
-Two kernels exist with a commitment to preserve the meaning of the bound work.
+On 2026-10-01, user direction authorized replacement of the blocking execution
+paths, reconsidering uncalibrated resource restrictions and retaining automatic
+owner-bound lifetime. `controller.Controller` now owns readiness on the facade
+Runtime's one background asyncio loop. `driver` contains immutable reports;
+`graph` contains serializable worker helpers. The synchronous `run_plan` and
+`run_plan_graph` APIs, sequential mode, synchronous owner table, and worker-held
+nested scheduling were retired. This is an explicit architectural change,
+without changing static Plan interpretation or Exec identity.
 
-`driver.run_plan` executes one invocation at a time in the order the Plan
-already determines. It needs no scheduler and remains the reference: its
-evidence is a plan that runs, reuses everything on a second run, reruns exactly
-the edited branch and its dependents on a third, blocks successors of a failure
-rather than running them against inputs that do not exist, and passes a file
-written by one step to the step that reads it.
-
-`graph.run_plan_graph` admits ready invocations to Dask for concurrent execution. The cross-kernel cases in
-`tests/test_graph.py` provide evidence of equal input digests and values for
-their tested Plans, and reuse of a result recorded by the other kernel.
-Adoption is recorded, but the kernel has not yet run a real study; its concurrency,
-dashboard, and failure isolation are untested against anything but fakes.
-
-Those observations support the shared-binding design without establishing
-that two kernels will always earn their maintenance cost. Their value as an
-execution choice and a reference for comparison remains a question for actual
-workloads. The failure differences and shared-filesystem assumption described
-below qualify this account; they must remain visible when interpreting its
-equivalence claims.
+The new controller tests exercise one-slot dependency progress and reuse,
+staggered sharing, independent withdrawal, stopping during durable binding,
+entered-work drain, failure propagation, priority selection, more than 32 waiting
+receipts, and binding-error settlement. Migrated source, file and placement tests
+exercise the same async path through a test-only synchronous harness. These are
+local and fake-farm observations. The Run suite also passes with matching
+Dask/distributed 2023.9.2 and 2024.8.0 supplied by cached-package overlays under
+Python 3.11.16, alongside the ASS venv's 2026.7.1. These do not establish actual farm scheduling,
+NFS across hosts, or arbitrary process termination.
 
 ## Current contracts
 
-Fresh acquisition exposed a limitation of whole-graph sharing: compatible consumer
-work cannot be recognized until upstream artifact identities arrive. The adopted
-controller admission loop resolves dependencies and asks Exec to finalize each
-ready invocation, then uses the existing owner table. Dask retains placement
-capacity and concurrent execution; it receives ready work rather than unresolved
-consumer tasks. Both kernels use the same admission and projection code. Tests
-exercise convergence from independent observations, per-consumer provenance,
-replay refusal, generation-safe release, withdrawal and one-slot progress. Fresh
-records deliberately differ across submissions while equal selected artifacts
-can give downstream consumers equal computation identities.
+- One loop owns active Runs and compatible execution entries. Coordination uses
+  cooperative tasks, not one controller thread per Run. `ControlRun.wait()`
+  observes a report without cancelling execution when its waiter is interrupted.
+- Each Run retains authored report order and individual consumer provenance.
+  Static dependencies are admitted only after successful predecessor outcomes;
+  failed dependencies block consumers without entering Exec. No branch, retry,
+  fallback or result-dependent expansion is introduced.
+- Finalized computation identity plus execution binding, placement, roots and
+  output contract determines sharing compatibility. Scheduling priority is
+  excluded. Fresh `each_submission` handles contribute their acquisition identity
+  before compatibility is computed. Equal selected output identities may allow
+  downstream consumers to converge even when their producer acquisitions differ.
+- Each consumer's durable execution link is awaited before its attachment may
+  authorize dispatch. A slow or failed link does not silently submit its body.
+  Preparation, hashing, serialization, gate operations and record projection use
+  the Runtime's owned offload facility, avoiding filesystem waits on the loop.
+- There are at most two concurrent preparation operations. Each Run prepares
+  at most a placement-capacity window of work; a large static Plan does not
+  eagerly materialize all its execution handles. Waiting Run receipts have no
+  fixed admission count. Their retained Plan and result memory is still real
+  resource use, rather than a promise of unlimited memory.
+- Per-placement outstanding Dask executions are bounded by that placement's
+  configured capacity. Ready nominations consider higher numeric Run priority
+  first and rotate equal-priority Runs. Dask receives the same numeric priority,
+  zero-millisecond FIFO grouping, declared placement resources, `pure=False`,
+  and `retries=0`. This describes dispatch opportunities, not preemption, equal
+  CPU time, starvation prevention, or LSF queue priority.
+- Shared pending executions use the highest attached consumer priority. An
+  already submitted Dask Future is not dynamically reprioritized. Computation
+  identity never changes because an operator chooses urgency.
+- Entry and withdrawal use the same durable `ExecutionHandle` gate. An entered
+  handle never re-enters Exec, including on Dask replay. With other consumers,
+  withdrawal reports this consumer cancelled while shared work continues. With
+  no other consumer, the gate prevents unentered work; entered work is drained
+  and its actual outcome reported. Worker stack snapshots do not establish that
+  execution never happened.
+  Explicit force withdrawal persists interrupt intent for solely owned pooled
+  executions, and can escalate an ordinary drain. A committed interrupt seals
+  later sharing until that execution settles. The existing pooled waiter pauses
+  worker admission, distinguishes resource-waiting commands from executing work,
+  removes scheduler interest before restarting a nanny, and returns confirmed
+  cancelled evidence for Exec to publish. The outer invocation Future stays
+  alive for accounting. Queued cancellation preserves another executing command;
+  worker restart retains its allocation. Pool commands select Linux SIGKILL
+  immediate-child owner binding, including commands that ignore SIGTERM.
+  Other placements still drain; detached descendants and real-farm deadlines
+  remain outside the verified contract. Indeterminate restart is not cancellation.
+- `stop_on_failure=True` requests withdrawal of remaining owned work after a
+  failed outcome; already entered work drains. `False` permits independent
+  branches to continue, while failed dependencies remain blocked. A controller
+  or binding exception settles its receipt with an inspectable partial report
+  and error, rather than leaving a waiter indefinitely pending.
+- Output delivery is distinct from computation outcome. The actual selected
+  result and exact record/try are retained before projecting outputs. Delivery
+  failure is a Run coordination error with a visible observation diagnostic;
+  it blocks further admission without inventing computation failure. A child
+  is ready only after its selected inputs were successfully delivered.
+  Unrelated Runs continue. A catastrophic controller failure withdraws and
+  drains entered work before making receipts terminal.
+- Withdrawal of a large Plan uses one cooperative outcome-projection coroutine
+  per Run, yielding periodically; it does not create one task per blocked node.
+- `Controller.close()` requests withdrawal and drains its Runs. The facade owns
+  automatic Runtime lifetime and orderly close, and closes readiness clients
+  before pooled resources. Run neither creates a cluster in its controller nor
+  takes ownership of an arbitrary supplied client.
+- Bodies cannot submit nested Runs. The worker occupancy marker lets the facade
+  refuse this explicitly instead of deadlocking. Hierarchical use cases are
+  deferred for a future design; they are not permanently excluded.
+- Consumer outcomes retain Exec's exact `record` and `try_number`. Public
+  `disposition="reused"` projects Exec's completed selection. Publication and
+  handle-accounting failures are visible as `observation_errors`; they do not
+  redefine successful execution. Blocked work has a `block_reason` separate from
+  computation errors. Per-consumer names do not enter Exec computation identity.
+- Binding honors each invocation's resolved placement. Missing transports
+  refuse rather than fall back. Invocation resource options travel to transport
+  without entering computation identity. File outputs contribute their recorded
+  addresses; other ports contribute named values. `binding.output_value` is
+  shared with the facade so downstream input and caller export interpretation
+  agree.
+- Site owns independent `records_dir`, `runs_dir`, `work_dir`, address spaces,
+  placement capacities and retention policy. Profile-relative paths are anchored
+  at load. Source fingerprints identify content and source addresses deliver it;
+  omitting fingerprints can reuse stale evidence after an in-place source edit.
+  The submitter assumes resolved addresses mean the same thing on executing
+  hosts; this unit provides no staging mechanism.
+- Cluster construction derives worker resources and capacities from the same
+  Site. Exposure is explicit: `none` suppresses HTTP listeners for in-process
+  workers; `loopback` binds locally; `network` opts into Dask defaults. A transport
+  copied to a worker must be serializable; diagnostics name the failing placement.
+- Pool workers are LSF allocations. One command reserves a whole pool worker's
+  command token, independently of its Dask thread count. Per-invocation CPU and
+  memory requests must fit that allocation; unsupported or incompatible farm
+  requests refuse before command submission. Site `max_jobs` bounds gateway
+  executions and may exceed pool worker count; pool `workers` determines LSF jobs.
+  Commands receive Run priority. Force interruption removes scheduler interest
+  before intentional worker loss, preventing replay of the cancelled command.
+  The dispatch gate prevents re-entry into Exec; it does not guard the separate
+  pooled command task against rescheduling after unexpected worker loss.
+  `retries=0` is not a worker-loss replay policy. That wider pool guarantee
+  remains unresolved rather than being implied by the wrapper's entry gate.
 
-Both kernels construct consumer outcomes from Exec-owned results and failures.
-There is no per-invocation selection observer: the execution handle publishes
-Exec's selected reference, and report construction supplies the consumer's
-invocation identity. Publication and handle-accounting diagnostics return as
-`InvocationOutcome.observation_errors` without deciding execution. Post-selection
-handled failures retain exact references, including without a publisher.
-Blocked work reports `block_reason` separately from computation errors.
-Optional `Site.runs_dir` survives Site transformations. Run owns a durable dispatch-handle format, separate from
-the facade's consumer history and Exec's computation records. An explicit
-`ExecutionOwner`, held by the facade Session, shares compatible ready invocations.
-The facade places this bookkeeping beneath `runs_dir/_meta/executions/`;
-lower-level Run calls without run persistence retain their existing
-`records_dir/.executions/` fallback. Neither location changes computation
-identity.
-Its table keys finalized computation identity plus execution bindings, placement,
-transport and roots. Run admits dependencies from the controller; Dask executes
-ready tasks with placement resources. Concurrent sequential submissions use the
-same table with in-process completions. No waiting task occupies a worker slot.
-Each invocation occurrence retains its own consumer binding and report. Completed
-entries can be replaced; releasing an old entry cannot remove its replacement.
+## Experience and possibilities
 
-Entry and cancellation use the same short durable gate. An entered handle never
-re-enters Exec, including on Dask replay. A withdrawing consumer cannot cancel a
-future another consumer needs. With no remaining consumer, unentered work is
-prevented at the gate; entered work is awaited and reported from its result.
-This closes the facade's start/cancel classification race without treating a
-Dask stack snapshot as evidence that execution never happened. Low-level calls without an owner use isolated owners with the same gate protocol.
-Cross-Session joining and automatic recovery remain outside this prototype.
+The replacement makes an important distinction visible: an execution capacity
+limits work entering Dask, while accepting another waiting study need not consume
+another thread or farm allocation. Retained Plans still consume memory. The old
+proposal's fixed 32-Run cap conflated these responsibilities and was contested by
+the operator; the implementation uses derived execution and preparation windows
+without introducing a configurable budget framework.
 
-- Distribution: `hedloom-run`, Python 3.10 or newer, depending on `hedloom-exec`. It
-  does not import `hedloom_flow`: the Plan arrives as a document.
-- `run_plan(document, transport, ...)` executes every invocation in dependency
-  order and returns a `RunReport`.
-- `run_plan_graph(document, ..., client=...)` executes the same Plan as a Dask
-  graph and returns the same `RunReport`, in the same plan order. The
-  `distributed.Client` is required rather than created: a cluster's shape is an
-  operational decision — how many concurrent jobs a site tolerates, whether a
-  dashboard is served — and a library that started one silently would be making
-  it for the operator. `distributed` is an optional dependency reached by
-  explicit import.
-- Concurrency under the graph kernel is one worker per placement, sized by
-  that placement's `max_jobs`. A waiting invocation costs about 16 KiB of
-  thread and one client process, so the number is a budget rather than a
-  scarce resource of this host. It is the share of the farm this study may
-  spend, deliberately *below* the site's MAX JOB policy, which counts every
-  job running under your user from any source; per-user process limits and the
-  licence count are the other ceilings above it.
-- `cluster_for(site)` builds that cluster from the profile — the concurrency,
-  and how much of it the installation exposes. It does not weaken the rule
-  above: `run_plan_graph` still requires a client and still creates none. A
-  site defaults to `dashboard = "none"`, which opens no listening socket, and
-  may explicitly declare `"loopback"` or `"network"` (Dask's own behaviour,
-  passing no address at all). `"none"` is refused for a multi-process cluster,
-  whose workers must dial a listener to exist. Exposure changes how a run can
-  be watched and nothing about what it computes.
-- A transport is copied to the worker that runs an invocation, because Dask
-  serializes every task — even on an in-process cluster. A transport that
-  cannot be serialized is refused by placement name before anything runs, and
-  one that must stay a singleton has to be built on the worker rather than
-  passed to it.
-- An invocation that submits a further Plan holds one unit of its own placement
-  for the whole of that inner run. When the waiters hold every unit of a
-  placement the inner plan needs, the inner run is refused with
-  `NestedCapacityExhausted` before it spends anything, because no task of that
-  placement could ever be admitted again. Sound rather than cautious: every
-  running task holds a unit, so waiters reaching capacity means nothing can
-  release. A run submitted from the driver holds no unit and is never refused
-  for this.
-- Task keys are named after the authored key, so an operator watching a sweep
-  sees points rather than digests. Tasks are submitted impure: reuse is
-  `hedloom-exec`'s decision against declared inputs, never Dask's against call
-  signatures.
-- `transports` maps a policy name to the substrate providing it. Each
-  invocation lands on the placement Hedloom Flow already resolved for it, so one
-  point may take a dedicated LSF job while cheap reductions stay local. A
-  placement no transport provides is fatal: running work somewhere other than
-  where it was asked to run would change what a study means.
-- A single `transport` provides every placement, which suits a uniform run and
-  is wrong as soon as placements differ.
-- Each attempt records requested, resolved, and observed placement separately.
-- The placement's *options* travel with it on the bundle. This unit does not
-  interpret them: which queue or licence an option names is a fact about the
-  substrate, so the transport reads them. A transport that cannot express a
-  declared option refuses, and the run reports the invocation as failed rather
-  than running it under conditions nobody asked for.
-- `hedloom_run.site.Site` holds what a run needs and a Plan must not carry: which
-  substrate provides each placement, independent `records_dir`, `runs_dir`,
-  and `work_dir` locations, the address spaces a declared source resolves through, and the
-  thread count the graph kernel runs at. `Site.from_file` reads it from TOML,
-  anchoring relative paths to the profile rather than the working directory, so
-  a study run from elsewhere means the same thing. A placement kind it cannot
-  build is refused rather than skipped, since a missing placement would surface
-  later as `UnsupportedPlacement` and blame the Plan for a configuration error.
-- `Site.retention` carries strict, operator-owned `[retention]` data alongside
-  the three storage locations. It is preserved by overrides, local debugging, and
-  transport binding because changing how work runs must not silently discard
-  how that installation keeps spent work. Unknown policy keys and automatic
-  rule names are refused when the Site is built.
-- `site.fingerprints(document)` identifies each declared source by its
-  **content**, and both kernels pass the result to `prepare_invocations`. This closes a
-  real defect: a source's declared address does not change when the file at it
-  is edited, so before this an edited input file was invisible and a study reported
-  results computed from a file that no longer existed in that form. Content
-  rather than mtime, because an authored input is kilobytes and a hash does not
-  churn on `git checkout`; a directory source covers everything under it; a
-  source that cannot be resolved or does not exist is fatal before anything
-  runs. A run that supplies no fingerprints keeps the old, stale behaviour.
-- `site.source_addresses(document, fingerprints)` locates each declared source
-  under the string its input bindings carry, and both kernels seed that map
-  before walking the plan. A source has always been *identified* as something
-  produced before it is used; this is what finally delivers it, so an operation
-  may declare an external file as an input and receive it. The fingerprints are
-  a required argument because the key is derived from them, and a mismatched
-  mapping would name strings nothing looks up — a miss indistinguishable from
-  having no sources. A run that supplies no addresses leaves such an input
-  resolving to nothing, as every run did before.
-- Addresses resolve on the submitting machine, which asserts that a path means
-  the same thing on whatever host runs the work. True on a shared filesystem
-  and assumed rather than checked; a site without one would need staging, which
-  this unit does not do.
-- `commands` and `outputs` bind an operation to how it actually runs — a
-  command line, and which files or streams count as results. The Plan declares
-  meaning; a run binds mechanism. Operations absent from both run in-process.
-- A file output contributes its recorded address to downstream inputs, because
-  that is what a downstream command opens. Other outputs contribute values.
-  `binding.output_value(artifacts, value, name)` is that rule as one function,
-  used by `produced_by` for downstream inputs and by the façade for an output a
-  Plan exports. Promoted rather than restated for the reason the rest of this
-  module is shared: two copies would let a study mean one thing to a downstream
-  input and another to the caller reading the same output. It reads a recorded
-  result and resolves no addresses, so it acquires no new authority here.
-- Work whose inputs are unchanged is reused rather than repeated; that decision
-  belongs to `hedloom-exec` and is not re-implemented here.
-- Both kernels return the executor's `record` and `try_number` on
-  `InvocationOutcome`, so a consumer holds the exact execution an invocation
-  landed on without either readiness kernel recomputing identity or scanning
-  the store. Public `disposition="reused"` distinguishes reused evidence from a
-  fresh launch. The shared projection translates Exec's `completed` selection
-  into `reused`; Exec selection records retain their protocol vocabulary.
-  Neither kernel passes any requester name into execution: a record is selected
-  by the declared computation, and the authored key stays where it belongs, on
-  the report.
-- On failure the sequential kernel stops. Successors are reported as `blocked`,
-  never run against inputs that do not exist. `stop_on_failure=False` continues.
-- The graph kernel blocks *dependents*: a dependent of failed work returns a
-  blocked outcome rather than raising. Whether independent branches also stop
-  is now the caller's, through `stop_on_failure`, which defaults to `True`
-  because the usual answer to a failed point is to debug it rather than to
-  spend the farm on the other forty-nine. With it, the first failure cancels
-  every task that has not acquired a worker thread, waits for the ones already
-  executing, and reports the rest as blocked. With `stop_on_failure=False` the
-  independent branches finish, which is what a sweep wants when the failure is
-  known and local.
-- The two kernels therefore stop at different boundaries — the sequential one
-  blocks plan-order successors, the graph one blocks what has not started.
-  This is a deliberate difference in the scope of failure, and it is the one
-  place the readiness kernel is allowed to change what a run produces.
-- `on_event` reports each outcome as it happens, so a long run is observable
-  without waiting for the report.
+Sharing also means urgency belongs to consumers rather than computation. A
+pending shared execution can inherit their highest urgency without creating a
+second computation; priority after Dask submission and starvation under sustained
+high-priority arrivals remain explicit limitations. Real workloads should decide
+whether those limitations warrant additional scheduling machinery.
 
 ## Contribution to the parent
 
-With `hedloom-flow` and `hedloom-exec` this completes one operator-facing path: author
-a flow, plan it, run it, and rerun it. This unit is the "run it" step.
+Run supplies the static readiness and recorded execution join used by the
+facade's managed nonblocking Runtime and Run receipts. Its durable dispatch
+format remains distinct from facade consumer history and Exec records.
 
 ## Exclusions
 
-Hedloom Run owns no attempt identity, journal, transport, reuse policy, or artifact
-recording — all `hedloom-exec` — and neither produces nor validates a Plan.
-
-It does not branch on results. Every plan it runs was fully determined before it
-started, which is what makes a rerun predictable. Result-dependent control,
-fallback, and recovery remain open architectural questions recorded in
-`docs/vision/open-concepts.md`, not features quietly added here.
-
-It has no scheduling or placement policy of its own, no retry policy, and no
-study lifecycle. Concurrency is no longer its question: under the graph kernel
-it is the cluster's thread count, and under the sequential one there is none.
-
-It does not own the cluster. It neither creates, sizes, nor tears one down, and
-it does not report LSF's view of a job: with `bsub -I` a transport blocks from
-submission to terminal, so nothing here distinguishes a point pending in the
-queue from one running. That observation belongs to a watcher over the
-attempt records, recorded as wanted in `docs/vision/open-concepts.md`.
+Run owns no authoring, computation journal, reuse policy, artifact capture,
+result-dependent control, automatic worker replay, detached execution,
+cross-Runtime joining, or restart recovery. It does not promise global user or
+host quotas, real-farm fair share, command preemption, or cross-host filesystem
+synchronization. Automatic process lifetime is a composed facade/transport
+contract, not a property established merely by an asyncio controller.
 
 ## Child composition
 

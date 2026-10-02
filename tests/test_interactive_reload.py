@@ -1,4 +1,6 @@
 """Reloaded source keeps old plans bound to their authored implementation."""
+
+from runtime_helpers import run_study
 import pytest
 
 from hedloom import Site, study
@@ -26,6 +28,6 @@ subject = reload_study()
     rebuilt = study(first.plan, name="old-rebuilt")
     site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     for subject, expected in ((second, "after"), (first, "before"), (rebuilt, "before")):
-        run = subject.submit(site=site, name="reload", sequential=True)
+        run = run_study(subject, site=site, name="reload")
         assert run.succeeded
         assert run.outputs["value"].value == expected

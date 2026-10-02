@@ -17,9 +17,9 @@ than three TOML files.
 
 Three arrangements, each answering a question by measurement:
 
-  one session, two studies    the placement budget is shared        (8 jobs)
-  one session, one study twice the Dask key namespace is shared     (4 jobs)
-  two sessions, one study     only the study root is shared         (4 jobs)
+  one runtime, two studies    the placement budget is shared        (8 jobs)
+  one runtime, one study twice the Dask key namespace is shared     (4 jobs)
+  two runtimes, one study     only the study root is shared         (4 jobs)
 
 A fourth pass resubmits all of it and must spend nothing.
 
@@ -39,14 +39,14 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 for unit in ("flow", "exec", "run"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / unit / "src"))
 
-from hedloom import Site, session, study  # noqa: E402
+from hedloom import Site, runtime, study  # noqa: E402
 from hedloom_exec.journal import AttemptJournal  # noqa: E402
 
 # The operations under test are the farm smoke test's, imported rather than
@@ -191,17 +191,6 @@ def disagreements(root: str) -> list[str]:
     return broken
 
 
-def announce(label: str | None = None) -> Callable[[Any], None]:
-    prefix = f"[{label}] " if label else "  "
-
-    def report(outcome: Any) -> None:
-        name = outcome.authored_key or outcome.invocation_id
-        detail = f"  {outcome.error}" if outcome.error else ""
-        print(f"{prefix}{outcome.disposition:>9} {name:<34}{outcome.outcome}{detail}")
-
-    return report
-
-
 def failures(run: Any) -> list[str]:
     return [
         f"{outcome.authored_key}: {outcome.outcome}"
@@ -215,23 +204,22 @@ def failures(run: Any) -> list[str]:
 
 
 def shared_budget(site: Site, cap: int) -> bool:
-    """One session, two studies.
+    """One runtime, two studies.
 
     The question an operator actually has: if a second study starts while mine
     is running, do we each get the farm share the site declares, or do we share
-    one? A session is one cluster, and a placement's budget belongs to that
-    cluster's workers, so `submit_all` cannot put more on the farm than the site
-    declared however many studies it is given.
+    one? A runtime is one cluster, and a placement's budget belongs to that
+    cluster's workers. Concurrent submissions stay within the declared
+    capacity however many studies share it.
     """
 
-    print("\n=== one session, two studies")
+    print("\n=== one runtime, two studies")
     print(f"    eight jobs wanted, {cap} may be in flight")
     since = time.time()
-    with session(site) as farm:
-        runs = farm.submit_all(
-            {name: sweep_for(name) for name in ("north", "south")},
-            on_event=announce(),
-        )
+    with runtime(site) as farm:
+        receipts = {name: farm.submit(sweep_for(name), name=name)
+                    for name in ("north", "south")}
+        runs = {name: receipt.wait() for name, receipt in receipts.items()}
 
     spans = farm_spans(site.records_dir, since)
     peak = peak_overlap(spans)
@@ -254,25 +242,25 @@ def shared_budget(site: Site, cap: int) -> bool:
               "not busy enough for the two studies to overlap")
         return False
     print(f"    both studies finished, and {peak} in flight never exceeded {cap}:")
-    print("    one session is one budget, however many studies draw on it")
+    print("    one runtime is one budget, however many studies draw on it")
     return True
 
 
 def same_work_twice(site: Site) -> bool:
     """One active bound graph serves two exact consumer histories."""
 
-    print("\n=== one session, the same study twice")
+    print("\n=== one runtime, the same study twice")
     print("    four jobs wanted, submitted twice")
     since = time.time()
     subject = sweep_for("shared")
-    with session(site) as farm:
-        runs = farm.submit_all(
-            {"first": subject, "second": subject}, on_event=announce(), stop_on_failure=False
-        )
+    with runtime(site) as farm:
+        receipts = {name: farm.submit(subject, name=name, stop_on_failure=False)
+                    for name in ("first", "second")}
+        runs = {name: receipt.wait() for name, receipt in receipts.items()}
 
     spans = farm_spans(site.records_dir, since)
     print(f"    farm jobs: {len(spans)} (eight would mean the work ran twice)")
-    # A Session owns shared handles; both consumers must receive the result.
+    # A Runtime owns shared handles; both consumers must receive the result.
     for run in runs.values():
         if not run.succeeded or run.history.status != 'complete':
             return False
@@ -284,7 +272,7 @@ def same_work_twice(site: Site) -> bool:
 
 
 def two_controllers(site: Site) -> bool:
-    """Two sessions, the same study, one study root.
+    """Two runtimes, the same study, one study root.
 
     Two people on two login hosts, or one study started twice. Nothing is shared
     but the root, so the Dask keys are in different namespaces and both callers
@@ -294,27 +282,26 @@ def two_controllers(site: Site) -> bool:
 
     This is the one arrangement that still needs threads, and that is correct:
     it models two independent processes, and it should not read as routine. Note
-    what is *not* shared — each session has its own cluster and therefore its own
+    what is *not* shared — each runtime has its own cluster and therefore its own
     budget, so two controllers can put twice the declared cap on the farm.
     """
 
-    print("\n=== two sessions, the same study")
+    print("\n=== two runtimes, the same study")
     print("    four jobs wanted; the loser of each claim must not resubmit")
     since = time.time()
     subject = sweep_for("contended")
     runs: dict[str, Any] = {}
 
     def controller(label: str) -> None:
-        with session(site) as farm:
+        with runtime(site) as farm:
             runs[label] = farm.submit(
                 subject,
                 # Both reports are wanted whole. Stopping at the first refusal is
                 # the right default for a study that has gone wrong; here the
                 # refusals are the evidence.
                 stop_on_failure=False,
-                on_event=announce(label),
-                name="farm-multi-client",
-            )
+                name=label,
+            ).wait()
 
     threads = [threading.Thread(target=controller, args=(name,))
                for name in ("host-a", "host-b")]
@@ -369,16 +356,14 @@ def two_controllers(site: Site) -> bool:
 
 
 def all_reused(site: Site) -> bool:
-    """One session, every study again. A concurrent mess must still leave a
+    """One runtime, every study again. A concurrent mess must still leave a
     record that reuses cleanly, or none of the above was worth doing."""
 
-    print("\n=== one session, all four studies again")
+    print("\n=== one runtime, all four studies again")
     since = time.time()
-    with session(site) as farm:
-        runs = farm.submit_all(
-            {name: sweep_for(name) for name in BASES},
-            on_event=lambda outcome: None,
-        )
+    with runtime(site) as farm:
+        receipts = {name: farm.submit(sweep_for(name), name=name) for name in BASES}
+        runs = {name: receipt.wait() for name, receipt in receipts.items()}
 
     spans = farm_spans(site.records_dir, since)
     reused = sum(
@@ -412,7 +397,7 @@ def main() -> int:
         type=int,
         default=2,
         help=(
-            "farm jobs in flight per session. Deliberately smaller than this "
+            "farm jobs in flight per runtime. Deliberately smaller than this "
             "example can keep busy: four jobs are ready at once, so a cap of "
             "two is a cap that binds, and a cap of four would be satisfied "
             "without ever being tested"
@@ -428,7 +413,7 @@ def main() -> int:
 
     site = site_for(args.root, queue=args.queue, cap=args.max_jobs)
     print(f"records directory: {site.records_dir}")
-    print(f"placement 'lsf': {site.capacity['lsf']} job(s) in flight per session")
+    print(f"placement 'lsf': {site.capacity['lsf']} job(s) in flight per runtime")
 
     for act in (
         lambda: shared_budget(site, args.max_jobs),
@@ -447,9 +432,9 @@ def main() -> int:
         return 1
 
     print("\nmulti-client sweep passed:")
-    print("  the placement budget is the session's, shared by every study on it")
-    print("  identical work submitted twice to one session runs once")
-    print("  identical work submitted from two sessions is refused, not duplicated")
+    print("  the placement budget is the runtime's, shared by every study on it")
+    print("  identical work submitted twice to one runtime runs once")
+    print("  identical work submitted from two runtimes is refused, not duplicated")
     print("  and every attempt's record agrees with its published result")
     return 0
 

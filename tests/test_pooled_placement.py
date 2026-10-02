@@ -18,6 +18,8 @@ batch call shapes, and `dask_jobqueue.LSFCluster` builds the pool out of the
 latter.
 """
 
+from runtime_helpers import run_study
+
 import os
 from pathlib import Path
 
@@ -94,7 +96,7 @@ def site_with_pool(tmp_path, **extra):
 def test_a_study_runs_entirely_on_a_pool(tmp_path, farm):
     """The plain case: every point routed to `pool`, one run, real workers."""
 
-    run = all_pooled().submit(site=site_with_pool(tmp_path), name="test-run")
+    run = run_study(all_pooled(), site=site_with_pool(tmp_path), name="test-run")
 
     assert run.succeeded, run.summary()
     assert {item.placement for item in run.report.outcomes} == {"pool"}
@@ -140,7 +142,7 @@ def test_a_mixed_plan_places_some_points_directly_and_some_on_the_pool(
     def build(words=("ab", "cd")):
         return mixed.named("mixed")(words)
 
-    run = build().submit(site=site, name="test-run")
+    run = run_study(build(), site=site, name="test-run")
 
     assert run.succeeded, run.summary()
     placements = {item.authored_key: item.placement for item in run.report.outcomes}
@@ -165,14 +167,13 @@ def test_placement_does_not_reach_the_attempt_identity(tmp_path, farm):
     computation alone (`exec/src/hedloom_exec/identity.py`), so two
     *differently named* studies declaring the same work reach the same record:
     the second run must therefore both carry the same digest and reuse the
-    first run's evidence rather than recompute it. These two submits are
-    sequential, so nothing here depends on the deferred question of what two
-    simultaneous requesters should do.
+    first run's evidence rather than recompute it. These Runs finish
+    one after another; simultaneous sharing is examined separately.
     """
 
     site = site_with_pool(tmp_path)
 
-    on_pool = all_pooled(("ab",)).submit(site=site, name="test-run")
+    on_pool = run_study(all_pooled(("ab",)), site=site, name="test-run")
     assert on_pool.succeeded, on_pool.summary()
 
     # Same work, same inputs, placed directly instead of on the pool.
@@ -180,7 +181,7 @@ def test_placement_does_not_reach_the_attempt_identity(tmp_path, farm):
     def directly(words=("ab",)):
         return notes.named("notes")(words)
 
-    placed_directly = directly().submit(site=site, name="test-run")
+    placed_directly = run_study(directly(), site=site, name="test-run")
     assert placed_directly.succeeded, placed_directly.summary()
 
     # Guards the comparison below: two empty lists are equal for the wrong
@@ -212,14 +213,10 @@ def test_an_overridden_run_reuses_what_the_plain_run_produced(tmp_path, farm):
 
     site = site_with_pool(tmp_path)
 
-    first = all_pooled(("ab",)).submit(site=site, name="test-run")
+    first = run_study(all_pooled(("ab",)), site=site, name="test-run")
     assert first.succeeded, first.summary()
 
-    second = all_pooled(("ab",)).submit(
-        site=site,
-        override={"placement": {"pool": {"cores": 2, "walltime": "1:00"}}},
-        name="test-run",
-    )
+    second = run_study(all_pooled(("ab",)), site=site, override={"placement": {"pool": {"cores": 2, "walltime": "1:00"}}}, name="test-run")
 
     assert second.succeeded, second.summary()
     # `all` over nothing is True, so the count is part of the claim.
@@ -229,20 +226,9 @@ def test_an_overridden_run_reuses_what_the_plain_run_produced(tmp_path, farm):
     )
 
 
-def test_a_pooled_placement_refuses_the_sequential_kernel_by_name(tmp_path, farm):
-    """It cannot work there, so it says so instead of appearing to.
-
-    The sequential kernel walks the plan in this thread. A pooled invocation
-    reaches its pool through a client a Dask worker holds, and there is no
-    worker — so this is a genuine divergence between the kernels, and the only
-    honest thing to do is name it. Silently running the work here instead would
-    be worse: it would succeed, publish an attempt record, and teach the author
-    that `sequential=True` means what it does not.
-    """
-
-    run = all_pooled(("ab",)).submit(site=site_with_pool(tmp_path), sequential=True, name="test-run")
-
-    assert not run.succeeded
-    failure = run.report.outcomes[0]
-    assert failure.outcome == "failed"
-    assert "pooled" in (failure.error or "") and "sequential" in (failure.error or "")
+def test_pooled_transport_refuses_use_outside_a_runtime_worker(tmp_path):
+    from hedloom_exec.transport import SubmissionRefused
+    transport = site_with_pool(tmp_path).transports["pool"]
+    with pytest.raises(SubmissionRefused, match="Runtime placement worker"):
+        transport.submit("unowned", {"command": ["true"]})
+    assert not (tmp_path / "attempts").exists()

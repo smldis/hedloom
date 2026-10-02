@@ -12,7 +12,7 @@ import warnings
 
 from hedloom.addresses import invocation_addresses
 
-SCHEMA = 3
+SCHEMA = 4
 
 
 class HistoryError(ValueError):
@@ -193,7 +193,8 @@ def verify_workers(client, location):
 
 
 class HistoryWriter:
-    def __init__(self, site, name, study_name, document, options, client=None, *, reproducibility=None):
+    def __init__(self, site, name, study_name, document, options, client=None, *, reproducibility=None,
+                 submission_id=None, runtime_id=None, preparation_pending=False):
         validate_name(name)
         addresses = invocation_addresses(document)
         if site.runs_dir is None:
@@ -255,7 +256,14 @@ class HistoryWriter:
         publish(self.location / 'run.json', dict(run_id=self.run_id, name=name,
                 occurrence=number, study_name=study_name, at=now(),
                 records_dir=str(Path(site.records_dir).resolve()), work_dir=site.work_dir,
-                options=options, reproducibility='reproducibility.json' if reproducibility is not None else None), immutable=True)
+                options=options, submission_id=submission_id, runtime_id=runtime_id,
+                reproducibility='reproducibility.json' if reproducibility is not None or preparation_pending else None), immutable=True)
+
+    def prepared(self, reproducibility, bindings):
+        """Preparation evidence must be durable before any execution binding."""
+        publish(self.location / 'reproducibility.json', reproducibility, immutable=True)
+        publish(self.location / 'bindings.json', {'bindings': bindings}, immutable=True)
+        self._append('run_prepared', {})
 
     @property
     def reference(self):
@@ -330,18 +338,22 @@ class HistoryWriter:
         self.outcomes[outcome.invocation_id] = data
         self.append('invocation_outcome', data)
 
-    def finish(self, report):
+    def finish(self, report, *, state=None, error=None):
         for outcome in report.outcomes:
             try:
                 self.observe(outcome)
-            except Exception as error:
-                self.degrade(error)
+            except Exception as persistence_error:
+                self.degrade(persistence_error)
         missing = set(self.addresses) - self.outcomes.keys()
         if missing:
             self.degrade(f'unreported invocations: {sorted(missing)}')
         if not missing:
-            self.append('run_finished', dict(succeeded=report.succeeded,
+            self.append('run_finished', dict(succeeded=state == 'SUCCEEDED' if state is not None else report.succeeded,
+                state=state or ('SUCCEEDED' if report.succeeded else 'FAILED'), error=error,
                 history_status='degraded' if self.errors else 'complete', errors=self.errors))
+
+    def failed(self, report, error, *, state='FAILED'):
+        self.finish(report, state=state, error=error)
 
     def interrupted(self, error):
         partial = getattr(error, 'report', None)
@@ -370,7 +382,7 @@ def read_events(path):
                 raise ValueError('unknown schema or sequence gap')
             if not isinstance(row['data'], dict) or not isinstance(row['at'], str):
                 raise ValueError('invalid event envelope')
-            if row['event'] not in {'run_started', 'invocation_outcome', 'run_finished', 'submission_exception'}:
+            if row['event'] not in {'run_started', 'run_prepared', 'invocation_outcome', 'run_finished', 'submission_exception'}:
                 raise ValueError('unknown event')
         except (ValueError, KeyError, TypeError) as error:
             raise HistoryError(f'corrupt history event {seq} in {path}: {error}') from error

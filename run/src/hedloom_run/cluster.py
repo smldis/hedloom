@@ -1,9 +1,9 @@
 """The cluster a site is willing to run, including what it will not expose.
 
-`run_plan_graph` takes a client and refuses to build one, because how much a
-site tolerates running at once is an operational decision. That stays true.
-What was missing is the other half of the same decision: a Dask cluster opens
-listening sockets, and on a shared submit host those are not private.
+The Runtime controller builds its executor through `async_cluster_for` on its
+owned loop. Placement concurrency and exposure come from the Site: a Dask
+cluster opens listening sockets, and on a shared submit host those are not
+private. Synchronous construction helpers also serve standalone executor checks.
 
 Two facts make this an option rather than a footnote. Both were measured
 against `distributed==2026.7.1`. That was once the version `hedloom-run[dask]`
@@ -69,7 +69,7 @@ from typing import Any, Callable, Mapping
 
 from hedloom_run.site import EXPOSURES, PLACEMENT_RESOURCE, Site, SiteError
 
-__all__ = ["EXPOSURES", "cluster_for", "local_cluster", "spec_cluster"]
+__all__ = ["EXPOSURES", "async_cluster_for", "cluster_for", "local_cluster", "spec_cluster"]
 
 
 _DASHBOARD_IMPORT = "distributed.dashboard"
@@ -250,7 +250,8 @@ def local_cluster(
 
 
 def spec_cluster(
-    workers: Mapping[str, Mapping[str, Any]], *, dashboard: str = "none"
+    workers: Mapping[str, Mapping[str, Any]], *, dashboard: str = "none",
+    asynchronous: bool = False,
 ) -> Any:
     """One worker per placement, each with its own threads and its own capacity.
 
@@ -334,6 +335,7 @@ def spec_cluster(
             scheduler={"cls": scheduler_cls, "options": scheduler},
             workers=spec,
             silence_logs=logging.WARNING,
+            asynchronous=asynchronous,
         ),
         dashboard,
     )
@@ -357,3 +359,26 @@ def cluster_for(site: Site, *, dashboard: str | None = None) -> Any:
     return spec_cluster(
         site.cluster_spec(), dashboard=dashboard or site.dashboard
     )
+
+
+async def async_cluster_for(site: Site, *, dashboard: str | None = None) -> Any:
+    """Start placement workers on the caller's running loop.
+
+    This creates no coordination thread and no process-default Client. Close
+    the Client before awaiting cluster close, so worker plugins release pooled
+    clients before pools disappear.
+    """
+    exposure = dashboard or site.dashboard
+    cluster = spec_cluster(site.cluster_spec(), dashboard=exposure, asynchronous=True)
+    try:
+        return await cluster
+    except BaseException as error:
+        try:
+            await cluster.close()
+        except Exception:
+            logging.getLogger(__name__).warning("cluster startup cleanup failed", exc_info=True)
+        if isinstance(error, Exception) and _blames_the_dashboard(error):
+            def failed():
+                raise error
+            return _built(failed, exposure)
+        raise

@@ -119,7 +119,7 @@ invocation. That matters when an operation has many short invocations and the wa
 to start is a large fraction of the time to run.
 
 What it costs is everything that needs an invocation to *be* a job:
-per-invocation resource requests, per-invocation `bkill`, per-invocation
+per-invocation farm allocations, per-invocation `bkill`, per-invocation
 accounting, per-invocation licence arbitration, and the watcher's ability to
 tell you that one particular invocation is queued. The farm sees the pool's
 workers, never your invocations.
@@ -128,24 +128,44 @@ As a starting rule, pool an operation when its median queue wait is above
 roughly a third of its median runtime and its invocations are uniform enough to
 share one worker shape — otherwise `lsf(...)` is the better deal.
 
-A pooled placement takes a **narrower vocabulary** than a direct one — no
-`licences`, no raw `resources` — and says so rather than accepting them and
-quietly ignoring them: those describe what *one invocation* needs, and a pool's
-workers are claimed before any invocation is routed to them.
+A pooled placement takes a **narrower vocabulary** than a direct one: no
+licences or raw `resources`. Each worker runs one command at a time using its
+`hedloom-command` token. Per-command `cores` and `memory_mb` must fit the
+configured allocation. Queue, walltime and other pool-shape options must agree
+with that allocation; unsupported or unknown requirements refuse. These checks
+avoid silently dropping a resource need, but do not establish the farm's own
+resource enforcement.
+
+`run.stop(force=True)` can interrupt a solely owned pooled command by restarting
+its Dask worker inside the existing allocation. A queued command can be cancelled
+without disturbing another command using that worker. Shared executions remain
+alive for other consumers. Ordinary `stop()` still drains entered work; see
+[stopping and escalation](running.md#receipt-acceptance-and-completion).
+
+Create the first pooled Runtime on the main thread, as ordinary scripts and
+IPython already do. Runtime imports a cold Jobqueue dependency there and restores
+the caller's SIGINT handler: Jobqueue 0.9 installs one during import. This
+bootstrap does not start clusters or wait for farm jobs. Once the dependency is
+loaded, background Runtime construction is supported; a cold background
+constructor instead reports a clear startup error through `ready()` and rejected
+Run receipts. No separate import step is needed in the ordinary workflow.
 
 ```{warning}
-**A pool's workers are not owner-bound.** They are ordinary batch jobs, and
-unlike `bsub -I` they do not die with the client that submitted them. Two things
-stop them: `LSFCluster.close()` when the session ends, and the pool's
-`walltime` if the submit host dies without warning. That walltime is the only
-bound that survives a hard kill, so declare it, and keep it no longer than the
-work needs.
+**Pooled batch workers do not have direct owner-death binding.** Orderly Runtime
+close cancels their allocations. Normal process-exit cleanup also reclaimed
+workers in local fake-farm probes. Extended SIGTERM/SIGKILL probes also observed
+automatic command and worker reclamation in about 32.5 seconds: Dask detected
+scheduler loss immediately, then allowed its default 30-second executor shutdown
+grace. The initial five-second probe had only observed that delay. Immediate
+cross-host death and a deadline under network loss are not established guarantees;
+verify worker shutdown and farm walltime on the actual farm. See
+[farm evidence](first-farm-run.md).
 ```
 
 `workers` and `max_jobs` are different facts — how many LSF jobs the pool holds
 open, and how many invocations may be in flight against it. Usually you want
-them equal; when they differ, the smaller one binds and the other quietly means
-nothing.
+them equal. With one command resource per worker, fewer gateways leave some
+workers idle; more gateways allow commands to wait for pool workers.
 
 ### `kind = "in-process"` — the default, and the debugging one
 

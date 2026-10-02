@@ -31,30 +31,22 @@ the durable record and this façade independently replaceable.
 | what the Plan says, authoring, keys | `hedloom_flow` | `hedloom-flow`'s pages |
 | reuse, identity, the journal, a transport | `hedloom_exec` | `hedloom-exec`'s pages |
 | readiness, binding, placement selection, `Site` | `hedloom_run` | `hedloom-run`'s pages |
-| binding authored bodies to planned invocations, `submit`, `session` | `hedloom` | here |
+| binding authored bodies to planned invocations, Runtime and Run receipts | `hedloom` | here |
 
 That is the whole of what belongs in this package: the composition, and the one
 `submit` that joins the halves.
 
 ## Staged plans
 
-An invocation may itself author and submit an inner Plan — see the
-[nested-studies example](../../examples/nested_studies.py), including its
-[Session and capacity requirements](../guide/running.md#nested-studies-in-one-session).
-Nothing here is result-dependent control:
-no plan branches on its own result. Plans are *staged* instead — each one is
-fully determined at the moment it is authored, and a later stage is authored
-only after the earlier stage has already produced the ordinary Python values it
-needs. The invariant ("a Plan predicts what will run before anything runs")
-holds per plan, exactly where it was always stated; it is just that "a study"
-may now be more than one plan, submitted in sequence by ordinary Python code
-inside one invocation.
+The caller may author a later Plan after an earlier Run supplies ordinary
+values. Each Plan remains complete and inspectable before its own submission;
+no Plan branches on its own result. See [caller stages](../guide/running.md#caller-level-stages)
+and the [historically nested example](../../examples/nested_studies.py).
 
-This is recorded as "already demonstrated: staged plans" in
-`docs/vision/open-concepts.md` at the repository root, along with the open
-questions it leaves: a coarse source fingerprint that invalidates every point
-when only the point list changed, and an inner run's records root arriving as
-authored config, which bakes a machine path into the outer plan's identity.
+Worker-held submission is unsupported in this replacement. Caller staging avoids
+keeping a parent worker occupied while a child needs the same capacity. It also
+keeps Site storage paths out of operation configuration. Future hierarchical
+use cases remain deferred; this is not a permanent exclusion.
 
 ## The pages here
 
@@ -84,15 +76,14 @@ authored config, which bakes a machine path into the outer plan's identity.
   Records one finding — publication runs unlocked — and one surprise:
   `discovery_is_authoritative` is not carrying what it looks like it carries.
 - [**Stopping a sweep, model-checked**](stop-admitting-protocol.md)
-  — the same treatment one layer up, for what `graph.py` does with the rest of
-  a sweep when one invocation fails. The "bounded loss" its own comment admits
-  is a false report line, and the record has to answer for both what ran and
-  what it produced.
+  — the historical graph cancellation model and its counterexample. The async
+  controller now uses durable entry gates and consumer withdrawal; this model
+  is background evidence, not a verification of the replacement.
 
 Neighbouring units document themselves: `hedloom-flow`'s architecture page has
 the authoring model and the Plan IR, `hedloom-exec`'s page has attempt identity
 and the reuse decision this package defers to, and `hedloom-run`'s page has the
-two kernels, the binding rules and `Site`.
+async controller, binding rules and `Site`.
 
 ## Two things that are not documentation
 

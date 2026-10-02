@@ -15,7 +15,7 @@ own.
 | authoring, keys, Plan IR, validation | `hedloom-flow` | `flow/src/hedloom_flow` |
 | attempt identity, journal, transports, reuse, artifact recording | `hedloom-exec` | `exec/src/hedloom_exec` |
 | traversal, readiness, binding, placement selection, `Site`, cluster | `hedloom-run` | `run/src/hedloom_run` |
-| binding authored bodies to planned invocations, `submit`, `session` | `hedloom` | `src/hedloom` |
+| binding authored bodies to planned invocations, Runtime/Run receipts, history | `hedloom` | `src/hedloom` |
 
 `hedloom-exec` must keep importing neither this package nor Dask. That
 independence is what makes the kernel and this façade separately replaceable,
@@ -33,8 +33,9 @@ somewhere else, or nowhere.
     Changing which kernel decides readiness changes how long a plan takes
     and nothing else — the same results, under the same identities.
 
-The two kernels share `hedloom_run.binding` rather than restating it. A change
-that makes them disagree about a plan is a defect even if both halves pass.
+The async controller and public result projection share `hedloom_run.binding`
+rather than restating it. The sequential and blocking paths are retired; changing
+scheduling or placement must still preserve computation identity and delivery.
 
 **Do not add result-dependent control.** `submit` is the surface where it would
 most plausibly arrive disguised as convenience — a `retry=`, `max_iterations=`
@@ -82,8 +83,10 @@ acquire a domain it does not own. Studies that *do* name a simulator belong in
 
 Be exact about what has met a farm, because the honest split matters more than
 the total. `examples/farm_smoke.py` has run against a real LSF installation
-through the **sequential** kernel. The **graph kernel** has not, so concurrency,
-`max_jobs` as a real bound, and the `bjobs` parser are fake-only. Every domain
+through the now retired **sequential** kernel. The new **async controller** has
+not, so concurrency, `max_jobs` as a real bound, and the `bjobs` parser are
+fake-only. Normal pooled process exit is tested; abrupt batch-owner cleanup is
+not an immediate guarantee. Every domain
 study in `../studies/` still runs entirely at `local`.
 `docs/guide/first-farm-run.md` is where that split is maintained; keep it true.
 
@@ -102,7 +105,7 @@ This is also the Read the Docs build, configured by `.readthedocs.yaml`.
 
 **Name all four unit test directories.** Every unit's `pyproject.toml` sets
 `testpaths = ["tests"]`, so a bare `pytest -q` from here collects only the
-façade's 107 tests and silently skips the other 502. It exits zero either way,
+façade tests and silently skips the other three units. It exits zero either way,
 which is the worst shape a check can have.
 
 A successful Sphinx build can still report missing toctree entries and
