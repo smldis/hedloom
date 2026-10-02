@@ -16,6 +16,7 @@ seven dated files.
 
 | File | What it is | Status |
 | --- | --- | --- |
+| `nested-studies-historical-reference-2026-10-02.md` | Recoverable pre-async nesting code, shared-Session and sequential-child approaches, capacity/serialization constraints, and future design questions. | **Historical reference, freshly checked.** Six focused tests pass at `e9dbe70`; hierarchical support remains deferred. |
 | `interactive-execution-redesign-2026-09-29.md` | A replacement concept for staggered interactive submissions with explicit resource ownership. | **Adopted and implemented, 2026-10-01.** Dated concept retained; Runtime owns a background loop, Dask executes ready work, and automatic ownership replaces the proposed mandatory resource ceremony. |
 | `interactive-execution-internals-census-2026-09-29.md` | Source-checked execution, resource, evidence, and consumer census at `e9dbe70`, with targeted local probes and documentation contradictions. | **Investigation complete.** Describes the pre-refactor baseline and evidence limits at its recorded revisions. |
 | `interactive-execution-proposal-and-plan-2026-09-29.md` | Concrete Runtime/Run proposal, decision table, bounded async/Dask integration, lifecycle and storage contracts, and ordered replacement/retirement plan. | **Implemented with reviewed revisions, 2026-10-01.** Dated proposal retained; fixed admission caps and mandatory manual close were not adopted. Current contracts live in docs and ontologies. |

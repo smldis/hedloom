@@ -348,7 +348,10 @@ is a dependency boundary, not a reason to import Jobqueue for local studies.
 
 Worker-held nesting is deferred, not excluded in principle. Maintained dynamic
 consumers now stage discovery, ordinary corner work and reporting at the caller,
-with recorded operations and exported artifacts. Future hierarchical composition
+with recorded operations and exported artifacts. The
+[historical nesting reference](design/nested-studies-historical-reference-2026-10-02.md)
+preserves recoverable working revisions and freshly checked local evidence;
+retiring the mechanism does not erase its demonstrated capability. Future hierarchical composition
 must return coordination to an owner that does not consume the child's execution
 slot. Real-farm async scheduling, immediate abrupt pooled-owner cleanup and source
 capture beyond the declared dependencies remain unverified possibilities; the
