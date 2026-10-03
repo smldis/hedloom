@@ -16,7 +16,7 @@ For example, save this as `manual_study.py`:
 ```python
 import argparse
 
-from hedloom import Site, local, operation, parameter, returned, runtime, study
+from hedloom import Site, local, operation, parameter, returned, run_study, runtime, study
 
 
 @operation(config={"n": parameter(int)}, outputs={"value": returned(kind="number")})
@@ -43,9 +43,8 @@ def main():
     if args.plan_only:
         return 0
 
-    with runtime(Site.from_file(args.site), watch=True) as live:
-        receipt = live.submit(subject, name=args.name)
-        run = receipt.wait()
+    run = run_study(subject, site=Site.from_file(args.site),
+                    name=args.name, watch=True)
     print("Run:", run.run_id)
     print("Succeeded:", run.succeeded)
     output = run.outputs["value"]
@@ -75,8 +74,20 @@ python manual_study.py --n 3
 python manual_study.py --n 4 --name next-check
 ```
 
-Planning executes no operation bodies. Submission returns a Run receipt
-immediately; `wait()` opts into waiting for its terminal result. A Site with
+Planning executes no operation bodies. `run_study` waits for one terminal
+`RunResult` and closes its owned Runtime before returning. Failed runs are
+returned for inspection too; use `require_success=True` to raise `RunFailed`,
+whose `.result` retains the failed result. Startup and argument errors raise
+directly. An interrupted call requests ordinary withdrawal and drains entered
+work before cleanup; it does not force-kill a command.
+
+The helper accepts the same Site overrides, `locally`, `watch`, `priority`,
+`reproducibility`, `environment`, and `stop_on_failure` choices as Runtime and
+submission. Each call opens fresh execution resources, including configured
+pools. Retain one Runtime for repeated or overlapping submissions to share
+capacity and keep pools warm, as in the interactive example below.
+`Runtime.submit` returns a Run receipt immediately; `wait()` explicitly observes
+its terminal result. A Site with
 local capacity one executes one invocation at a time through the same async
 controller and Dask executor as larger Sites. Keep the same storage roots across experiments to reuse
 unchanged work. A new submission name creates a new history occurrence; it does
@@ -203,8 +214,11 @@ result = run.wait()  # Inspect the actual outcomes after interruption settles.
 Force is a request, not a successful-termination receipt. The live snapshot's
 `force_requested` records that request; terminal outcomes and saved attempt
 records establish what happened. If interruption cannot be confirmed, the
-result retains the failure rather than claiming cancellation. A command that
-finishes before interruption retains its actual result. Restarting restores
+result retains the failure rather than claiming cancellation. Failed interruption
+can leave admitted work running or allow queued work to enter while cancellation
+messages are delayed. A worker disappearing from scheduler state is not proof
+that its command stopped. A command that finishes before interruption retains
+its actual result. Restarting restores
 pool capacity and does not automatically rerun the cancelled computation.
 `live.stop(force=True)` applies the same request to all Runs it currently owns.
 

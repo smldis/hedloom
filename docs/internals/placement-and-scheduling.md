@@ -101,6 +101,19 @@ within the same allocation, avoiding a new batch queue wait. Exec's normal
 reconciliation publishes the confirmed cancelled outcome and exact record/try;
 the outer invocation Future remains alive to deliver this evidence.
 
+The owned pool scheduler records assignment loss before removing a worker.
+For a still-pending command, unknown loss makes force interruption indeterminate,
+even if Dask later assigns it elsewhere. A pending owned restart becomes evidence
+only after its physical restart is acknowledged; it certifies that exact worker loss, retaining
+any other uncertainty. This keeps normal queued cancellation and bulk force
+without treating scheduler absence as command termination. Task-local admission
+holds keep pending restart evidence and force withdrawal from admitting queued
+commands on a replacement worker; matching request cleanup releases its hold.
+Scheduler cleanup also checks the pause's key owner, including delayed
+running-status messages.
+The dated TLA+ investigation and source correspondence are retained in
+`design/formal/async-interruption/README.md`.
+
 This suppresses replay during intentional force cancellation. Unexpected pool
 worker loss can still make Dask reschedule the separate command task;
 `retries=0` does not prevent that. The durable dispatch gate protects re-entry
@@ -113,6 +126,8 @@ that binding. Interruption requires a supported nanny-managed Linux worker;
 errors or unconfirmed restart remain visible rather than fabricated cancellation.
 An uncertain restart leaves the old worker paused rather than permitting overlap
 with a possible replacement; pool capacity can therefore remain unavailable.
+Tasks awaiting its confirmation also remain held: an affected Run can keep
+waiting even if a replacement worker is live.
 Force-withdrawing remaining Runs and closing their Runtime releases the owned
 allocations instead of attempting automatic recovery of indeterminate work.
 Closing the whole pool releases Runtime-owned farm allocations. Local fake-farm

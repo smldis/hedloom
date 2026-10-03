@@ -43,7 +43,7 @@ from hedloom_flow.authoring import directory, file, returned, stdout, sweep  # n
 from hedloom_run.site import Site, SiteError  # noqa: F401
 
 from hedloom.binding import BoundTransport, Shell, Workspace, shell, located  # noqa: F401
-from hedloom.runtime import Runtime, runtime  # noqa: F401
+from hedloom.runtime import Runtime, runtime, run_study  # noqa: F401
 from hedloom.run import Run, RunSnapshot, AcceptanceError, RunFailed, RuntimeClosed  # noqa: F401
 from hedloom.study import (  # noqa: F401
     OutputUnavailable,
@@ -97,6 +97,7 @@ __all__ = [
     "pooled",
     "returned",
     "runtime",
+    "run_study",
     "shell",
     "stdout",
     "study",

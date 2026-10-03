@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import asyncio
 import json
+import inspect
 import os
 from pathlib import Path
 import shutil
@@ -134,6 +135,50 @@ def assert_cancelled(site, result, before):
     assert row.run_reported_outcome == row.selected_execution_state == 'cancelled'
     assert (row.record, row.try_number, row.execution_id) == (
         before.record, before.try_number, before.execution_id)
+
+
+@pytest.mark.parametrize('close, expected', [(False, False), (True, False), (True, True)],
+                         ids=['lost-connection', 'closed-worker', 'expected-removal'])
+def test_assignment_removal_does_not_certify_a_surviving_command_as_cancelled(tmp_path, farm, close, expected):
+    held = markers(tmp_path, 'held')
+    with owner(tmp_path) as (live, site):
+        receipt = live.submit(pooled_command(str(held)), name='removed-worker-force')
+        process = wait_for(lambda: entry(held))
+        history = RunHistory(site.runs_dir)
+        before = wait_for(lambda: selected(history, receipt.run_id))
+
+        async def remove_assignment():
+            scheduler = live._pools['pool'].scheduler
+            task = scheduler.tasks[f'pooled-{before.record}-{before.try_number}']
+            address = task.processing_on.address
+            # distributed 2023 names the expected-removal flag "safe".
+            from distributed import Scheduler
+            flag = 'expected' if 'expected' in inspect.signature(Scheduler.remove_worker).parameters else 'safe'
+            await scheduler.remove_worker(address, close=close, **{flag: expected},
+                                          stimulus_id='test-removal-with-live-command')
+            # Request via the public receipt before any new assignment can hide
+            # the lost old copy. Scheduler bookkeeping cannot prove its death.
+            assert receipt.stop(force=True)
+
+        asyncio.run_coroutine_threadsafe(remove_assignment(), live._loop).result(timeout=10)
+        result = receipt.wait(timeout=15)
+        assert result.state == 'STOPPED', result.summary()
+        assert result.history.status == 'complete'
+        outcome = result['work']
+        assert outcome.outcome != 'cancelled'
+        assert (outcome.record, outcome.try_number) == (before.record, before.try_number)
+        assert 'assignment loss is unconfirmed' in (outcome.error or ''), outcome
+        journal = AttemptJournal(site.records_dir, before.record)
+        manifest = journal.read_manifest(before.try_number)
+        assert manifest is None or manifest.get('outcome') != 'cancelled'
+        row = history.invocation(result.run_id, 'work')
+        assert row.run_reported_outcome != 'cancelled'
+        assert row.selected_execution_state != 'cancelled'
+        # This is the dangerous situation: an ignored-TERM payload survives
+        # the bookkeeping removal. The result must state uncertainty honestly.
+        assert alive(process['command_pid'])
+        assert not (held / 'completed').exists()
+        (held / 'release').touch()
 
 
 @pytest.mark.parametrize('escalate', [False, True], ids=['force', 'ordinary-then-force'])
@@ -294,6 +339,10 @@ def test_runtime_force_stop_cancels_active_and_queued_runs_together(tmp_path, fa
         except RuntimeError:
             Path(second_check).touch()
             raise
+        if snapshot['state'] == 'paused':
+            # The real memory monitor tries to resume a low-memory paused worker.
+            # Exercise that competing owner deterministically during the fence.
+            dask_worker.memory_manager._maybe_pause_or_unpause(dask_worker, 0)
         if snapshot['state'] == 'paused' and not Path(first_pause).exists():
             Path(first_pause).touch()
             while not Path(release_pause).exists():

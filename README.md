@@ -57,6 +57,11 @@ is honest.
 
 ## Documentation
 
+For a script running one study, `run_study(subject, site=site, name="check")`
+returns its completed `RunResult` and cleans up automatically. Set
+`require_success=True` to raise `RunFailed` on an unsuccessful result. Retain
+one `runtime(site)` for repeated or overlapping submissions and shared pools.
+
 [`docs/`](docs/index.md) is the guide. Start at
 [authoring a study](docs/guide/authoring.md), then
 [running one](docs/guide/running.md) and

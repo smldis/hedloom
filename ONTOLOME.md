@@ -219,10 +219,18 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   acceptance; `Run.wait()` returns any terminal `RunResult`; `Run.result()` requires
   success. `await run` observes completion without making the caller own the loop.
   Timeout or cancellation of an observer does not withdraw the Run.
+- `run_study(subject, site=..., name=...)` is the blocking one-shot convenience
+  over that same async Runtime. It owns startup, submission, terminal observation
+  and automatic cleanup; `require_success=True` requires successful settlement.
+  Startup and invalid-argument errors raise directly. Interrupted calls withdraw
+  and drain through normal context cleanup. Each call starts fresh resources;
+  retained Runtimes serve repeated submissions, sharing and warm pools. User
+  review adopted this convenience on 2026-10-03: caller-side waiting remains
+  useful independently of the retired synchronous scheduling implementation.
 - `Run.stop()` requests withdrawal; it does not preempt entered Python or shell
   work. Live `snapshot()` and `result_if_done()` are in-memory observations.
   `Runtime.close()` closes admission and drains, and a context handles it
-  automatically. Legacy Session, blocking submit helpers, sequential mode and
+  automatically. Legacy Session, prior submit APIs, sequential mode and
   worker-held nested submissions are removed. `locally=True` serves authored
   bodies locally through the same async scheduler, rather than a second kernel.
   `Run.stop(force=True)` can escalate an ordinary withdrawal and interrupt
@@ -316,6 +324,22 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   can supply. Named `retention.automatic.after_run` rules run only after a
   completed run and warn rather than changing its result. No `submit(prune=...)`
   surface exists: a study decides what is produced, never what is kept.
+- Execution isolation was explicitly adopted on 2026-10-03: ordinary OS users
+  other than the owner and unauthenticated network clients must not submit work
+  or trigger arbitrary code through Hedloom-owned schedulers, workers or pools
+  by default. The boundary assumes OS account isolation and excludes the same
+  account and privileged administrators. Missing protection must fail startup;
+  enabling pools or diagnostics must not silently weaken it. Every enabled or
+  introduced protection has a documented public opt-out, scoped and visible in
+  effective configuration. The maintained requirement and evidence limits are
+  in [execution security](docs/internals/execution-security.md).
+  Runtime readiness communication remains process-local. Networked pools default
+  to per-pool mutual TLS with private temporary credentials in `records_dir`;
+  named `authentication="none"` opts out for that pool. Site and Runtime overrides
+  retain the effective mode. Diagnostic HTTP exposure is independently selected
+  by `dashboard`, is unauthenticated and is not private merely because it binds
+  loopback. Authentication is execution configuration, outside computation
+  identity; it does not make an authorized operation a sandboxed program.
 
 ## Execution learning and possibilities
 
@@ -337,6 +361,32 @@ author-owned dependencies. Source files read during preparation may have changed
 since registration; code hashes identify selected code but are not a hermetic
 source archive. These limits matter for interactive reload rather than being
 claims of complete environment capture.
+
+Reviewing network listeners exposed a distinction between locality and authority:
+loopback is shared by host users, while an unauthenticated farm scheduler can
+accept work outside the authored-Plan path. Execution protection therefore
+belongs to the composed Runtime's resource ownership, rather than to Plan
+validation or a dashboard setting. The adopted per-pool boundary reuses Dask's
+temporary Security support and keeps opt-outs inspectable without introducing
+certificate administration. HTTP routes require separate evidence; local checks
+cannot establish real-farm filesystem or network isolation.
+
+TLS integration exposed a lower transport seam: abrupt Dask connection closes
+could contaminate later RPC error interpretation on the tested Python/OpenSSL
+stack. Owned TLS contexts accept the missing close notification while retaining
+mutual certificate checks; Dask message framing still rejects incomplete data.
+Local fake-farm pool security and async-executor tests now exercise authenticated
+command execution, unauthorized endpoint refusal and credential cleanup. This
+supports the chosen integration without establishing real-farm isolation.
+
+Formal issues discovery distinguished scheduler absence from physical command
+termination: a removed worker could leave its command alive while the earlier
+force path published cancellation. The owned pool scheduler now retains loss
+evidence with each task; acknowledged restarts certify only their own loss,
+and uncertainty stays an indeterminate failure. Exact pause ownership also
+prevents delayed cleanup from changing another interruption's fence. The
+[bounded investigation](design/formal/async-interruption/README.md) records
+source correspondence, counterexamples and the remaining assumptions.
 
 The retained Dask path passes local and fake-farm checks with the ASS environment
 (Dask/distributed 2026.7.1). Run tests and facade lifecycle checks also pass on
