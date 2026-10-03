@@ -61,6 +61,9 @@ use cases remain deferred; this is not a permanent exclusion.
 - [**Placement, clustering and scheduling**](placement-and-scheduling.md)
   — the three concepts, how a placement name becomes a transport, and why each
   placement becomes a worker of its own. Start here before either Dask page.
+- [**Execution security**](execution-security.md)
+  — the accepted isolation requirement, authenticated pool connections,
+  protected runtime credentials, explicit opt-outs and diagnostic HTTP limits.
 - [**How Dask decides where work runs**](dask-scheduling-concepts.md)
   — the same subject as prose: cluster versus farm, placement versus worker, why
   a thread is expensive, and the lockout that annotating every task exists to
@@ -91,10 +94,9 @@ async controller, binding rules and `Site`.
 what its examples have and have not demonstrated. It is the contract surface for
 contributors and agents, kept in the repository rather than published here.
 
-`hedloom/design/` holds reviews, plans and proposals written on a date. They are
-not maintained against the code and are deliberately not built — but two of them
-are live proposals (cancellation, and binding the attempt identity before
-submission), and `design/README.md` says which is which.
+`hedloom/design/` holds dated reviews, plans and proposals. They are deliberately
+not built; `design/README.md` distinguishes implemented decisions, historical
+evidence and proposals still awaiting a decision.
 
 ```{toctree}
 :maxdepth: 1
@@ -102,6 +104,7 @@ submission), and `design/README.md` says which is which.
 
 mechanism
 placement-and-scheduling
+execution-security
 dask-scheduling-concepts
 dask-scheduling-rules
 attempt-claim-protocol

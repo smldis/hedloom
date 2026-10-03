@@ -119,17 +119,21 @@ def _force_support():
     return sys.platform.startswith("linux") and _LIBC is not None
 
 
-def _locate_interrupt(key, client_id, dask_scheduler=None):
+def _locate_interrupt(key, client_id, previous_worker=None, dask_scheduler=None):
     task = dask_scheduler.tasks.get(key)
     if task is None:
-        return {"state": "unregistered"}
-    if task.state in {"memory", "erred"}:
-        return {"state": "completed"}
-    owner = dask_scheduler.clients.get(client_id)
-    if owner is None or task.who_wants != {owner} or task.dependents:
-        raise RuntimeError("pooled cancellation refused: unrelated scheduling consumers")
-    return {"state": "located", "worker":
-            task.processing_on.address if task.processing_on else None}
+        location = {"state": "unregistered"}
+    elif task.state in {"memory", "erred"}:
+        location = {"state": "completed"}
+    else:
+        owner = dask_scheduler.clients.get(client_id)
+        if owner is None or task.who_wants != {owner} or task.dependents:
+            raise RuntimeError("pooled cancellation refused: unrelated scheduling consumers")
+        location = {"state": "located", "worker":
+                    task.processing_on.address if task.processing_on else None}
+    if previous_worker is not None:
+        location["previous_worker_present"] = previous_worker in dask_scheduler.workers
+    return location
 
 
 def _pause_command(key, dask_worker=None):
@@ -141,14 +145,25 @@ def _pause_command(key, dask_worker=None):
         return {"state": "unregistered"}
     if task.state in {"memory", "error"}:
         return {"state": "completed"}
-    if worker.status != Status.running and getattr(worker, "_hedloom_interrupt_key", None):
+    if getattr(worker, "_hedloom_interrupt_key", None):
         # Another waiter owns this temporary admission fence. Re-locate after
         # it cancels/resumes or restarts; never overwrite its ownership marker.
         return {"state": "busy"}
     if worker.status != Status.running:
         raise RuntimeError("pooled cancellation refused: worker is already unavailable")
     worker._hedloom_interrupt_key = key
-    worker.status = Status.paused  # setter delivers WorkerState PauseEvent
+    worker._hedloom_interrupt_memory_pause_fraction = worker.memory_manager.memory_pause_fraction
+    # Dask's memory monitor resumes any paused worker when RSS is low. Keep
+    # this owned admission fence until withdrawal/restart is acknowledged;
+    # spilling and Nanny memory termination remain active.
+    worker.memory_manager.memory_pause_fraction = False
+    try:
+        worker.status = Status.paused  # setter delivers WorkerState PauseEvent
+    except BaseException:
+        worker.memory_manager.memory_pause_fraction = worker._hedloom_interrupt_memory_pause_fraction
+        del worker._hedloom_interrupt_memory_pause_fraction
+        del worker._hedloom_interrupt_key
+        raise
     executing = {task.key for task in worker.state.executing | worker.state.long_running}
     return {"state": "paused", "worker": worker.address,
             "entered": key in executing, "executing": sorted(executing),
@@ -159,6 +174,8 @@ def _resume_command_worker(key, dask_worker=None):
     from distributed.core import Status
     if getattr(dask_worker, "_hedloom_interrupt_key", None) != key:
         return False
+    dask_worker.memory_manager.memory_pause_fraction = dask_worker._hedloom_interrupt_memory_pause_fraction
+    del dask_worker._hedloom_interrupt_memory_pause_fraction
     del dask_worker._hedloom_interrupt_key
     if dask_worker.status == Status.paused:
         dask_worker.status = Status.running
@@ -245,6 +262,7 @@ def _interrupt_ack(key, worker, dask_scheduler=None):
 
 async def _interrupt_command(client, future):
     """Run on the existing pooled-client loop; return only confirmed outcomes."""
+    from distributed.comm.core import CommClosedError
     worker = None
     restart_started = False
 
@@ -264,8 +282,25 @@ async def _interrupt_command(client, future):
             if location["state"] != "unregistered":
                 worker = location["worker"]
                 if worker:
-                    snapshots = await client.run(_pause_command, key=future.key,
-                                                 workers=[worker])
+                    try:
+                        snapshots = await client.run(_pause_command, key=future.key,
+                                                     workers=[worker])
+                    except CommClosedError:
+                        relocated = await client.run_on_scheduler(
+                            _locate_interrupt, key=future.key, client_id=client.id,
+                            previous_worker=worker,
+                        )
+                        if relocated["previous_worker_present"]:
+                            # A lost reply may have installed our fence. Keep
+                            # its address for matching-key cleanup, and retain
+                            # the error instead of guessing at worker state.
+                            raise
+                        # Another force operation can retire this worker after
+                        # location but before the checkpoint RPC. Nothing has
+                        # been withdrawn here; re-inspect ownership/assignment.
+                        worker = None
+                        await asyncio.sleep(.02)
+                        continue
                     snapshot = snapshots[worker]
                     if snapshot["state"] == "completed":
                         return None
@@ -392,7 +427,8 @@ def run_command(
     }
 
 
-async def install_pools(worker: Any, addresses: Mapping[str, str]) -> None:
+async def install_pools(worker: Any, addresses: Mapping[str, str],
+                        securities: Mapping[str, Any] | None = None) -> None:
     """Give one worker a client into each pool. Runs on the worker."""
 
     from distributed import Client
@@ -402,7 +438,8 @@ async def install_pools(worker: Any, addresses: Mapping[str, str]) -> None:
     try:
         for pool, address in addresses.items():
             clients[pool] = Client(
-                address, asynchronous=True, set_as_default=False
+                address, asynchronous=True, set_as_default=False,
+                security=(securities or {}).get(pool),
             )
             await clients[pool]
     except BaseException:
@@ -421,7 +458,8 @@ async def remove_pools(worker: Any) -> None:
     setattr(worker, POOL_ATTRIBUTE, {})
 
 
-def PooledClientPlugin(pools: Mapping[str, str]) -> Any:
+def PooledClientPlugin(pools: Mapping[str, str],
+                       securities: Mapping[str, Any] | None = None) -> Any:
     """A `WorkerPlugin` that builds one client per pool on every worker.
 
     A factory rather than a class, because the base class cannot be named until
@@ -449,9 +487,12 @@ def PooledClientPlugin(pools: Mapping[str, str]) -> Any:
             # Addresses, not clients: this object is itself shipped to every
             # worker, and a client cannot survive that.
             self._addresses = dict(addresses)
+            # Only the in-process readiness workers receive these credentials.
+            # They never become a transport, command bundle or saved setting.
+            self._securities = dict(securities or {})
 
         async def setup(self, worker: Any) -> None:
-            await install_pools(worker, self._addresses)
+            await install_pools(worker, self._addresses, self._securities)
 
         async def teardown(self, worker: Any) -> None:
             await remove_pools(worker)
@@ -688,43 +729,26 @@ class LSFPooledTransport:
 
 
 def _scheduler_exposure(dashboard: str) -> dict[str, Any]:
-    """How much of a pool's scheduler this site is willing to publish.
+    """Diagnostic HTTP exposure is independent of authenticated pool RPC.
 
-    Only the diagnostic HTTP server. A pool's *comm* address must stay
-    network-reachable whatever this says, because that is how its workers get
-    home; closing the dashboard cannot strand them, and no farm worker ever
-    connects to it.
-
-    `"none"` matters for more than exposure, and it is worth being exact about
-    what it does. A `Scheduler` starts an HTTP server unconditionally, so this
-    does **not** leave a pool silent the way `hedloom_run.cluster`'s `_silent`
-    subclass leaves the readiness cluster silent — the listener remains, serving
-    `/health` and `/metrics`. What `dashboard: False` skips is installing the
-    *bokeh* routes.
-
-    That is the part that matters here. Loading them needs bokeh, and an
-    installation whose bokeh is missing or mismatched fails inside
-    `distributed.dashboard.scheduler` with an `AttributeError` naming neither
-    bokeh nor the dashboard. A site that already chose `dashboard = "none"` for
-    its readiness cluster — often for exactly that reason — would otherwise meet
-    the same failure again the moment it declared a pool, raised by a second
-    scheduler it never asked for and cannot see.
-
-    Closing the pool's listener outright would mean substituting the scheduler
-    class, which `dask_jobqueue` does not take as data the way `SpecCluster`
-    does. It is left open deliberately: a pool must be reachable from the farm
-    in any case, so the socket is not the exposure the readiness cluster's is.
-
-    `"network"` passes nothing, so the pool is indistinguishable from a plain
-    `LSFCluster`. Note that Dask's default dashboard port is 8787 for every
-    scheduler, so a site with several pools will see it taken and moved, with a
-    warning — harmless, and not worth choosing a port on the site's behalf.
+    Disabling Bokeh alone still leaves unauthenticated HTTP routes, including
+    logs, information and proxy routes. The accompanying scheduler class below
+    suppresses that listener entirely for ``none``. Loopback/network explicitly
+    expose diagnostics; Jupyter execution is disabled for every owned scheduler.
     """
 
     if dashboard == "none":
         return {"dashboard": False, "dashboard_address": None}
     if dashboard == "loopback":
         return {"dashboard_address": "127.0.0.1:0"}
+    return {}
+
+
+def _pool_scheduler_class(dashboard: str) -> dict[str, Any]:
+    if dashboard == "none":
+        from distributed import Scheduler
+        from .cluster import _silent
+        return {"scheduler_cls": _silent(Scheduler)}
     return {}
 
 
@@ -758,47 +782,50 @@ def open_pools(site: Any) -> dict[str, Any]:
             "dask-jobqueue: install hedloom-run[pooled]"
         ) from error
 
-    # Deliberately no `protocol=` and no loopback *comm* binding, and this is
-    # the one place where copying the readiness cluster would be actively
-    # wrong. That cluster is `inproc` because its scheduler and workers are
-    # objects in one process. A pool's workers are on farm nodes: they reach
-    # this scheduler over the network, so it must listen on an address they can
-    # reach. TCP (or TLS) is the only correct answer here.
-    #
-    # The *dashboard* is a different listener and does transfer, which is why
-    # `dashboard` is read below: no farm worker ever connects to it, so
-    # restricting or closing it cannot strand a pool. That distinction is the
-    # whole of §4's dashboard row — the comm channel must be reachable, the
-    # diagnostic HTTP server need not be.
+    from ._pool_security import PoolCredentials, owned_cluster_type
+
+    # Farm workers need a reachable network channel. TLS authenticates it by
+    # default; explicit authentication=none selects unprotected TCP. Diagnostic
+    # HTTP policy remains separate from this command channel.
     clusters: dict[str, Any] = {}
     scheduler_options = _scheduler_exposure(getattr(site, "dashboard", "none"))
     try:
         for name, options in pooled.items():
             cores = int(options.get("cores") or 1)
             memory_mb = int(options.get("memory_mb") or 1000)
-            cluster = LSFCluster(
-                queue=options.get("queue"),
-                project=options.get("project"),
-                cores=cores,
-                # dask-jobqueue takes a size, and the profile speaks megabytes
-                # because that is what a site's LSF limits are written in.
-                memory=f"{memory_mb}MB",
-                walltime=str(options.get("walltime") or "1:00"),
-                processes=1,
-                worker_extra_args=["--resources", f"{COMMAND_RESOURCE}=1"],
-                n_workers=0,
-                # Louder than dask-jobqueue's default, not quieter. It silences
-                # a `JobQueueCluster` at ERROR, which takes the pool's warnings
-                # with it — and a farm worker that dies, a job that is killed
-                # for memory, or a scheduler that loses a comm are all reported
-                # at WARNING. A pool has no other way to say those things.
-                #
-                # This is the same level `spec_cluster` asks for, so a study
-                # that spans both hears both on the same terms rather than
-                # having one half quietly hold things back.
-                silence_logs=logging.WARNING,
-                scheduler_options=dict(scheduler_options),
-            )
+            credentials = PoolCredentials(site.records_dir, options.get("authentication", "tls"))
+            try:
+                cluster = owned_cluster_type(LSFCluster, credentials)(
+                    security=credentials.security,
+                    protocol=credentials.protocol,
+                    shared_temp_directory=str(credentials.directory) if credentials.directory else None,
+                    queue=options.get("queue"),
+                    project=options.get("project"),
+                    cores=cores,
+                    # dask-jobqueue takes a size, and the profile speaks megabytes
+                    # because that is what a site's LSF limits are written in.
+                    memory=f"{memory_mb}MB",
+                    walltime=str(options.get("walltime") or "1:00"),
+                    processes=1,
+                    worker_extra_args=["--resources", f"{COMMAND_RESOURCE}=1"],
+                    n_workers=0,
+                    # Louder than dask-jobqueue's default, not quieter. It silences
+                    # a `JobQueueCluster` at ERROR, which takes the pool's warnings
+                    # with it — and a farm worker that dies, a job that is killed
+                    # for memory, or a scheduler that loses a comm are all reported
+                    # at WARNING. A pool has no other way to say those things.
+                    #
+                    # This is the same level `spec_cluster` asks for, so a study
+                    # that spans both hears both on the same terms rather than
+                    # having one half quietly hold things back.
+                    silence_logs=logging.WARNING,
+                    scheduler_options={**scheduler_options, "jupyter": False},
+                    **credentials.worker_options(),
+                    **_pool_scheduler_class(getattr(site, "dashboard", "none")),
+                )
+            except BaseException:
+                credentials.close()
+                raise
             clusters[name] = cluster
             cluster.scale(jobs=int(options.get("workers", options["max_jobs"])))
     except BaseException:
@@ -821,7 +848,8 @@ def attach_pools(client: Any, pools: Mapping[str, Any]) -> None:
         return
     client.register_plugin(
         PooledClientPlugin(
-            {name: cluster.scheduler_address for name, cluster in pools.items()}
+            {name: cluster.scheduler_address for name, cluster in pools.items()},
+            {name: cluster.security for name, cluster in pools.items()},
         )
     )
 
@@ -861,22 +889,34 @@ async def open_pools_async(site: Any) -> dict[str, Any]:
         raise TransportError(
             "pooled placement needs dask-jobqueue: install hedloom-run[pooled]"
         ) from error
+    from ._pool_security import PoolCredentials, owned_cluster_type
     clusters: dict[str, Any] = {}
     try:
         for name, options in pooled.items():
-            cluster = LSFCluster(
-                asynchronous=True,
-                queue=options.get("queue"),
-                project=options.get("project"),
-                cores=int(options.get("cores") or 1),
-                memory=f"{int(options.get('memory_mb') or 1000)}MB",
-                walltime=str(options.get("walltime") or "1:00"),
-                processes=1,
-                n_workers=0,
-                worker_extra_args=["--resources", f"{COMMAND_RESOURCE}=1"],
-                silence_logs=logging.WARNING,
-                scheduler_options=_scheduler_exposure(getattr(site, "dashboard", "none")),
-            )
+            credentials = PoolCredentials(site.records_dir, options.get("authentication", "tls"))
+            try:
+                cluster = owned_cluster_type(LSFCluster, credentials)(
+                    security=credentials.security,
+                    protocol=credentials.protocol,
+                    shared_temp_directory=str(credentials.directory) if credentials.directory else None,
+                    asynchronous=True,
+                    queue=options.get("queue"),
+                    project=options.get("project"),
+                    cores=int(options.get("cores") or 1),
+                    memory=f"{int(options.get('memory_mb') or 1000)}MB",
+                    walltime=str(options.get("walltime") or "1:00"),
+                    processes=1,
+                    n_workers=0,
+                    worker_extra_args=["--resources", f"{COMMAND_RESOURCE}=1"],
+                    silence_logs=logging.WARNING,
+                    scheduler_options={**_scheduler_exposure(getattr(site, "dashboard", "none")),
+                                       "jupyter": False},
+                    **credentials.worker_options(),
+                    **_pool_scheduler_class(getattr(site, "dashboard", "none")),
+                )
+            except BaseException:
+                credentials.close()
+                raise
             clusters[name] = cluster
             await cluster
             cluster.scale(jobs=int(options.get("workers", options["max_jobs"])))
@@ -894,7 +934,7 @@ async def attach_pools_async(client: Any, pools: Mapping[str, Any]) -> None:
     if pools:
         await client.register_plugin(PooledClientPlugin({
             name: cluster.scheduler_address for name, cluster in pools.items()
-        }))
+        }, {name: cluster.security for name, cluster in pools.items()}))
 
 
 async def close_pools_async(pools: Mapping[str, Any]) -> None:

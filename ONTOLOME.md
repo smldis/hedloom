@@ -316,6 +316,22 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   can supply. Named `retention.automatic.after_run` rules run only after a
   completed run and warn rather than changing its result. No `submit(prune=...)`
   surface exists: a study decides what is produced, never what is kept.
+- Execution isolation was explicitly adopted on 2026-10-03: ordinary OS users
+  other than the owner and unauthenticated network clients must not submit work
+  or trigger arbitrary code through Hedloom-owned schedulers, workers or pools
+  by default. The boundary assumes OS account isolation and excludes the same
+  account and privileged administrators. Missing protection must fail startup;
+  enabling pools or diagnostics must not silently weaken it. Every enabled or
+  introduced protection has a documented public opt-out, scoped and visible in
+  effective configuration. The maintained requirement and evidence limits are
+  in [execution security](docs/internals/execution-security.md).
+  Runtime readiness communication remains process-local. Networked pools default
+  to per-pool mutual TLS with private temporary credentials in `records_dir`;
+  named `authentication="none"` opts out for that pool. Site and Runtime overrides
+  retain the effective mode. Diagnostic HTTP exposure is independently selected
+  by `dashboard`, is unauthenticated and is not private merely because it binds
+  loopback. Authentication is execution configuration, outside computation
+  identity; it does not make an authorized operation a sandboxed program.
 
 ## Execution learning and possibilities
 
@@ -337,6 +353,23 @@ author-owned dependencies. Source files read during preparation may have changed
 since registration; code hashes identify selected code but are not a hermetic
 source archive. These limits matter for interactive reload rather than being
 claims of complete environment capture.
+
+Reviewing network listeners exposed a distinction between locality and authority:
+loopback is shared by host users, while an unauthenticated farm scheduler can
+accept work outside the authored-Plan path. Execution protection therefore
+belongs to the composed Runtime's resource ownership, rather than to Plan
+validation or a dashboard setting. The adopted per-pool boundary reuses Dask's
+temporary Security support and keeps opt-outs inspectable without introducing
+certificate administration. HTTP routes require separate evidence; local checks
+cannot establish real-farm filesystem or network isolation.
+
+TLS integration exposed a lower transport seam: abrupt Dask connection closes
+could contaminate later RPC error interpretation on the tested Python/OpenSSL
+stack. Owned TLS contexts accept the missing close notification while retaining
+mutual certificate checks; Dask message framing still rejects incomplete data.
+Local fake-farm pool security and async-executor tests now exercise authenticated
+command execution, unauthorized endpoint refusal and credential cleanup. This
+supports the chosen integration without establishing real-farm isolation.
 
 The retained Dask path passes local and fake-farm checks with the ASS environment
 (Dask/distributed 2026.7.1). Run tests and facade lifecycle checks also pass on

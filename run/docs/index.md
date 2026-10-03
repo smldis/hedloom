@@ -91,6 +91,21 @@ Pooled LSF uses separately allocated `dask_jobqueue.LSFCluster` workers. The
 readiness worker holds a client plugin to the pool; a live Client never travels
 inside serialized transport data.
 
+Runtime readiness communication is process-local `inproc`. Networked pools
+default to per-pool `authentication="tls"`, using Dask temporary Security and
+Jobqueue worker credentials. The plugin receives Security separately from the
+transport. Credentials use a private temporary directory (`0700`) under
+`records_dir`, with files `0600`; farm nodes must see the same paths with account
+isolation. Orderly close and failed startup remove that directory. Missing
+authentication support fails startup rather than selecting an unprotected mode.
+
+The explicit per-pool opt-out is `authentication="none"`, through Site or a
+Runtime override, visible in effective `Site.placements`. Diagnostic exposure
+is separate: `dashboard="loopback"` or `"network"` enables unauthenticated HTTP
+and never makes loopback private to one user. See
+[execution security](../../docs/internals/execution-security.md) for the accepted
+requirement, opt-out consequences and verification limits.
+
 Each pooled worker offers one `hedloom-command` resource: one command at a time,
 regardless of its allocation's CPU count. Invocation cores and memory must fit
 that allocation. Licences, incompatible pool options and unknown requirements

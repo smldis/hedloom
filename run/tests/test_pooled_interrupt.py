@@ -122,7 +122,7 @@ def test_assignment_during_location_rpc_requires_worker_checkpoint_before_cancel
     assert "command" in fixture.tasks
 
 
-@pytest.mark.parametrize("status", ["paused", "closing"])
+@pytest.mark.parametrize("status", ["running", "paused", "closing"])
 def test_another_owned_force_pause_waits_without_overwriting_its_owner(status):
     from distributed.core import Status
     worker = SimpleNamespace(status=Status[status], _hedloom_interrupt_key="other",
@@ -130,6 +130,55 @@ def test_another_owned_force_pause_waits_without_overwriting_its_owner(status):
     assert pooled._pause_command("command", worker) == {"state": "busy"}
     assert worker.status == Status[status]
     assert worker._hedloom_interrupt_key == "other"
+
+
+@pytest.mark.parametrize("original_fraction", [False, .8])
+def test_owned_pause_prevents_actual_memory_monitor_resume_and_restores_policy(original_fraction):
+    from distributed.core import Status
+    from distributed.worker_memory import WorkerMemoryManager
+    manager = SimpleNamespace(memory_pause_fraction=original_fraction, memory_limit=1000)
+    worker = SimpleNamespace(status=Status.running, address="worker", memory_manager=manager,
+        state=SimpleNamespace(tasks={"command": SimpleNamespace(state="ready")},
+                              executing=set(), long_running=set()))
+    decision = pooled._pause_command("command", worker)
+    assert decision["state"] == "paused"
+    assert manager.memory_pause_fraction is False
+    WorkerMemoryManager._maybe_pause_or_unpause(manager, worker, 0)
+    assert worker.status == Status.paused
+    assert not pooled._resume_command_worker("other", worker)
+    assert worker.status == Status.paused and manager.memory_pause_fraction is False
+    assert pooled._resume_command_worker("command", worker)
+    assert worker.status == Status.running
+    assert manager.memory_pause_fraction == original_fraction
+    assert not hasattr(worker, "_hedloom_interrupt_key")
+    assert not hasattr(worker, "_hedloom_interrupt_memory_pause_fraction")
+    # The original automatic memory resume policy applies again afterwards.
+    worker.status = Status.paused
+    WorkerMemoryManager._maybe_pause_or_unpause(manager, worker, 0)
+    assert worker.status == (Status.paused if original_fraction is False else Status.running)
+
+
+def test_failed_owned_pause_restores_memory_policy_and_releases_marker():
+    from distributed.core import Status
+    class Worker:
+        address = "worker"
+        memory_manager = SimpleNamespace(memory_pause_fraction=.8)
+        state = SimpleNamespace(tasks={"command": SimpleNamespace(state="ready")})
+
+        @property
+        def status(self):
+            return Status.running
+
+        @status.setter
+        def status(self, value):
+            raise RuntimeError("pause delivery failed")
+
+    worker = Worker()
+    with pytest.raises(RuntimeError, match="pause delivery failed"):
+        pooled._pause_command("command", worker)
+    assert worker.memory_manager.memory_pause_fraction == .8
+    assert not hasattr(worker, "_hedloom_interrupt_key")
+    assert not hasattr(worker, "_hedloom_interrupt_memory_pause_fraction")
 
 
 def test_external_pause_still_refuses_instead_of_claiming_ownership():
@@ -190,6 +239,53 @@ def test_busy_worker_restart_can_leave_waiting_command_unassigned_before_cancell
     assert result["worker"] is None and not result["worker_restarted"]
     assert client.checkpoints == 1
     assert fixture.events == ["release"]
+
+
+@pytest.mark.parametrize("change", ["removed", "live", "shared", "missing"])
+def test_checkpoint_connection_loss_retries_only_after_authoritative_worker_removal(change, monkeypatch):
+    from distributed.comm.core import CommClosedError
+    if change == "missing":
+        monkeypatch.setattr(pooled, "_INTERRUPT_TIMEOUT", .03)
+    fixture = scheduler()
+    checks = []
+    cancellations = []
+
+    class Client:
+        id = "owner"
+
+        async def run(self, function, **kwargs):
+            if function is pooled._pause_command:
+                if change != "live":
+                    fixture.workers.pop("worker")
+                    fixture.tasks["command"].processing_on = None
+                if change == "shared":
+                    fixture.tasks["command"].who_wants.add(object())
+                if change == "missing":
+                    fixture.tasks.pop("command")
+                raise CommClosedError("Address removed or reply lost")
+            return {"worker": False}
+
+        async def run_on_scheduler(self, function, **kwargs):
+            checks.append((function, dict(kwargs)))
+            return function(dask_scheduler=fixture, **kwargs)
+
+        async def cancel(self, *args, **kwargs):
+            cancellations.append("cancel")
+
+    future = SimpleNamespace(key="command", done=lambda: False)
+    if change == "removed":
+        result = asyncio.run(pooled._interrupt_command(Client(), future))
+        assert result["worker"] is None and not result["worker_restarted"]
+        assert fixture.events == ["release"] and cancellations == ["cancel"]
+    else:
+        expected = {"live": CommClosedError, "shared": RuntimeError, "missing": TimeoutError}[change]
+        with pytest.raises(expected):
+            asyncio.run(pooled._interrupt_command(Client(), future))
+        assert fixture.events == [] and cancellations == []
+        if change != "missing":
+            assert "command" in fixture.tasks
+    assert any(function is pooled._locate_interrupt and options.get("previous_worker") == "worker"
+               for function, options in checks)
 
 
 @pytest.mark.parametrize("failure, expected_status", [

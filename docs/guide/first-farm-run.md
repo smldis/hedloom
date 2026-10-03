@@ -126,6 +126,22 @@ for why setting it that high makes the placement spend its budget on queueing.
 
 ### 4. Pooling, only if the shape calls for it
 
+Pools require authenticated Dask execution connections by default. Before this
+step, make sure `records_dir` is visible at the same path on the submit host and
+every farm node, and that private directories and files enforce the owner's
+permissions across hosts. `records_dir` and its ancestors must also prevent
+another user replacing those paths; check filesystem ACLs and UID mapping as
+well as the Unix permission bits. Hedloom generates a private temporary credential
+directory (`0700`) and credential files (`0600`) there. Install the `pooled`
+extra on the submit host; no manual certificate setup is needed. The worker
+environment must support Dask TLS connections.
+
+Keep the default `authentication = "tls"` in the pooled placement. Failure to
+establish it must fail startup. `authentication = "none"` is an explicit
+per-pool opt-out allowing unauthenticated network execution. Dashboard exposure
+is separate and does not change authentication. See [pool authentication](sites.md#pool-authentication)
+and [the security boundary](../internals/execution-security.md).
+
 ```console
 python examples/farm_smoke_pooled.py examples/farm-smoke-pooled.site.toml
 ```
@@ -150,6 +166,10 @@ the next, failure recording, and reuse on resubmission.
   replacement in front of a real queue,
   so concurrency, `max_jobs` as a real bound, and failure isolation between
   branches are exercised only against a fake `bsub` and a real client fixture.
+- **Authenticated pools across real farm hosts.** Local/fake-farm security checks
+  do not establish that the farm preserves private credential permissions,
+  shares paths consistently or admits the required TLS connections. The
+  pooled step above checks those deployment assumptions.
 - **The `bjobs` output parser.** Both call shapes are exercised — `-J <name>`
   for discovery and `-o "job_name stat"` for the watcher — and the fake answers
   with LSF's active-queue semantics, reporting `PEND` and `RUN` and treating a

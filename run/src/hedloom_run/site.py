@@ -178,9 +178,9 @@ class Site:
     dashboard: str = "none"
     """How much of the graph kernel's cluster this installation exposes.
 
-    A Dask scheduler and every worker open an HTTP listener on all interfaces,
-    whether or not anyone opens a browser, and a shared submit host has other
-    users on it. `"none"` is the default and opens no socket at all;
+    Dask normally exposes diagnostic HTTP listeners. `"none"` suppresses these
+    for the in-process executor; pooled communication still needs authenticated
+    network listeners. Diagnostic exposure does not disable pool authentication.
     `"loopback"` keeps the dashboard off the network while retaining it, and
     `"network"` explicitly exposes Dask's dashboard behaviour.
 
@@ -229,6 +229,21 @@ class Site:
             name: (dict(options) if isinstance(options, Mapping) else {"max_jobs": options})
             for name, options in self.placements.items()
         }
+        # Authentication is execution configuration, independently of diagnostic
+        # HTTP exposure. Keep the effective default visible in Site configuration.
+        for name, options in declared.items():
+            if options.get("kind") == "lsf-pooled":
+                authentication = options.setdefault("authentication", "tls")
+                if authentication not in ("tls", "none"):
+                    raise SiteError(
+                        f"placement {name!r} declares authentication={authentication!r}; "
+                        "pooled authentication must be 'tls' or 'none'"
+                    )
+            elif "authentication" in options:
+                raise SiteError(
+                    f"placement {name!r}: authentication applies only to lsf-pooled "
+                    "network execution; in-process execution has no network listener"
+                )
         describes = {
             name: options for name, options in declared.items() if "kind" in options
         }
@@ -386,7 +401,8 @@ class Site:
             runs_dir=self.runs_dir,
             address_spaces=self.address_spaces,
             placements={
-                name: {**options, "kind": "in-process"}
+                name: {**{key: value for key, value in options.items()
+                          if key != "authentication"}, "kind": "in-process"}
                 for name, options in self.placements.items()
             },
             threads=self.threads,
@@ -530,7 +546,7 @@ def _transports_from(
 
     built: dict[str, Transport] = {}
     kernel_keys = {"kind", "max_jobs"}
-    mechanic_keys = {"timeout"}
+    mechanic_keys = {"timeout", "authentication"}
     for name, options in placements.items():
         settings = dict(options)
         kind = settings.get("kind")

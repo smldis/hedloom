@@ -128,9 +128,33 @@ NFS across hosts, or arbitrary process termination.
   The submitter assumes resolved addresses mean the same thing on executing
   hosts; this unit provides no staging mechanism.
 - Cluster construction derives worker resources and capacities from the same
-  Site. Exposure is explicit: `none` suppresses HTTP listeners for in-process
-  workers; `loopback` binds locally; `network` opts into Dask defaults. A transport
-  copied to a worker must be serializable; diagnostics name the failing placement.
+  Site. Runtime readiness communication is always process-local `inproc`, without
+  a network execution listener. Diagnostic exposure is explicit: `none` suppresses
+  readiness and pool-scheduler HTTP listeners; `loopback` binds locally; `network`
+  opts into exposed diagnostics. Farm workers can retain health/metrics endpoints.
+  HTTP is unauthenticated and loopback is shared by users of a host.
+  A transport copied to a worker must be serializable; diagnostics name the
+  failing placement.
+- The composed execution-isolation requirement adopted on 2026-10-03 excludes
+  other OS users and unauthenticated network clients from submitting or triggering
+  arbitrary code through owned execution resources by default, assuming ordinary
+  OS isolation. Networked pools default to per-pool mutual TLS using Dask temporary
+  Security and Jobqueue worker credentials. Private runtime credential directories
+  under `Site.records_dir` are `0700`, files `0600`, and must be shared at identical
+  paths with account isolation, including safe ancestors and consistent UID/ACL
+  enforcement. Orderly close and failed startup clean them up.
+  Missing support must fail closed. `authentication="none"` is the explicit
+  per-pool opt-out, visible in canonical `Site.placements` and supported Runtime
+  overrides. The worker plugin carries Security separately from transport settings;
+  authentication is outside computation identity. Dashboard exposure does not
+  weaken execution authentication. Same-account processes, administrators and
+  unauthorized modification of OS isolation are outside the boundary. The
+  [maintained security account](../docs/internals/execution-security.md) separates
+  this requirement from HTTP audit evidence and actual-farm assumptions.
+  Owned TLS contexts tolerate Dask's missing close notification through OpenSSL's
+  unexpected-EOF option, retaining peer-certificate verification and encryption.
+  Dask's length-delimited reads remain responsible for rejecting truncated frames;
+  this is a scoped compatibility choice around the transport dependency.
 - Pool workers are LSF allocations. One command reserves a whole pool worker's
   command token, independently of its Dask thread count. Per-invocation CPU and
   memory requests must fit that allocation; unsupported or incompatible farm
@@ -138,6 +162,15 @@ NFS across hosts, or arbitrary process termination.
   executions and may exceed pool worker count; pool `workers` determines LSF jobs.
   Commands receive Run priority. Force interruption removes scheduler interest
   before intentional worker loss, preventing replay of the cancelled command.
+  Its temporary worker pause owns admission until acknowledgement: the memory
+  monitor's automatic resume is suspended during that fence and its original
+  pause threshold restored on matching-owner cleanup. Spilling and Nanny memory
+  termination continue. TLS regression checks exposed this competing pause
+  ownership; the bulk-stop test exercises the monitor's resume attempt directly.
+  A checkpoint connection loss retries before withdrawal only after the
+  scheduler confirms that exact worker address has disappeared, repeating the
+  ownership and location checks. A failed RPC to a still-present worker or an
+  absent task does not establish cancellation.
   The dispatch gate prevents re-entry into Exec; it does not guard the separate
   pooled command task against rescheduling after unexpected worker loss.
   `retries=0` is not a worker-loss replay policy. That wider pool guarantee
@@ -157,6 +190,14 @@ pending shared execution can inherit their highest urgency without creating a
 second computation; priority after Dask submission and starvation under sustained
 high-priority arrivals remain explicit limitations. Real workloads should decide
 whether those limitations warrant additional scheduling machinery.
+
+Pool connectivity is execution authority: a reachable scheduler is not merely
+a monitoring endpoint. Per-pool authentication preserves the existing split
+between process-local readiness and networked command execution while making
+the latter's trust boundary explicit. Private shared paths carry temporary
+credentials without a new staging or certificate-management responsibility.
+Whether a farm supplies that filesystem isolation remains deployment evidence,
+not something a local fake proves.
 
 ## Contribution to the parent
 

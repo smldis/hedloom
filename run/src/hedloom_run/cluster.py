@@ -1,9 +1,10 @@
 """The cluster a site is willing to run, including what it will not expose.
 
 The Runtime controller builds its executor through `async_cluster_for` on its
-owned loop. Placement concurrency and exposure come from the Site: a Dask
-cluster opens listening sockets, and on a shared submit host those are not
-private. Synchronous construction helpers also serve standalone executor checks.
+owned loop. Its execution channel is process-local (`inproc`); diagnostic HTTP
+exposure comes from the Site. Pool schedulers are separate authenticated network
+services. Listening sockets are host-wide, not private to an OS account.
+Synchronous construction helpers also serve standalone executor checks.
 
 Two facts make this an option rather than a footnote. Both were measured
 against `distributed==2026.7.1`. That was once the version `hedloom-run[dask]`
@@ -165,6 +166,7 @@ def local_cluster(
     dashboard: str = "none",
     processes: bool = False,
     placements: Mapping[str, int] | None = None,
+    authentication: str = "tls",
 ) -> Any:
     """Build the local, threaded cluster this kernel documents.
 
@@ -184,6 +186,10 @@ def local_cluster(
     runs anywhere but `local` needs the mapping. When a site has more than one
     placement, `spec_cluster` is the shape that separates them — one worker
     cannot hold two budgets apart, since its threads are a single pool.
+
+    The standalone ``processes=True`` variant uses authenticated TLS by default.
+    ``authentication="none"`` explicitly permits unauthenticated TCP execution;
+    the Runtime itself uses the process-local variant.
     """
 
     from distributed import LocalCluster
@@ -193,6 +199,8 @@ def local_cluster(
             f"unknown dashboard exposure {dashboard!r}; a site may declare "
             f"{', '.join(repr(item) for item in EXPOSURES)}"
         )
+    if authentication not in ("tls", "none"):
+        raise SiteError("local cluster authentication must be 'tls' or 'none'")
     if dashboard == "none" and processes:
         # Refused rather than quietly downgraded. Workers in their own
         # processes reach the scheduler over TCP, so a silent multi-process
@@ -207,6 +215,28 @@ def local_cluster(
         )
 
     options: dict[str, Any] = {"processes": processes, "n_workers": 1}
+    if processes:
+        from distributed.security import Security
+        if authentication == "tls":
+            try:
+                from ._pool_security import temporary_security
+                options["security"] = temporary_security()
+                if not options["security"].require_encryption:
+                    raise ValueError("temporary credentials do not require encryption")
+            except Exception as error:
+                raise SiteError(
+                    "authenticated multi-process execution needs working Dask TLS "
+                    "support and cryptography; no unauthenticated fallback is allowed"
+                ) from error
+            options["protocol"] = "tls://"
+        else:
+            options["security"] = Security(
+                require_encryption=False,
+                tls_ca_file=None, tls_client_cert=None, tls_client_key=None,
+                tls_scheduler_cert=None, tls_scheduler_key=None,
+                tls_worker_cert=None, tls_worker_key=None,
+            )
+            options["protocol"] = "tcp://"
     if threads is not None:
         options["threads_per_worker"] = threads
     if placements:

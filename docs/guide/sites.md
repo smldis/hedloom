@@ -42,6 +42,7 @@ max_jobs = 4
 
 [placement.pool]          # only if some operation asks for pooled()
 kind = "lsf-pooled"
+authentication = "tls"   # default: mutually authenticated execution connections
 queue = "short"
 cores = 1
 memory_mb = 4000
@@ -150,6 +151,48 @@ loaded, background Runtime construction is supported; a cold background
 constructor instead reports a clear startup error through `ready()` and rejected
 Run receipts. No separate import step is needed in the ordinary workflow.
 
+### Pool authentication
+
+Pooled placements default to `authentication = "tls"`. Hedloom uses Dask's
+temporary security support to authenticate both ends of the pool's execution
+connections. Scheduler, worker and submit-host clients use credentials generated
+for that pool; no manual certificate setup is needed. Install the `pooled` extra
+in the environment that starts the Runtime.
+
+Credentials live in a private temporary directory under `records_dir`. That
+directory must be accessible at the **same path** on the submit host and farm
+nodes, with permissions that exclude other OS users: directory mode `0700` and
+credential files `0600`. Orderly close and failed startup remove it. The protection
+also requires `records_dir` and its ancestors to prevent other users replacing
+those paths. Ownership, filesystem ACLs and UID mapping must preserve that
+isolation across hosts. Unsafe writable ancestors refuse startup; a sticky
+directory such as `/tmp` is acceptable when its child is owned and protected.
+The protection assumes normal OS isolation; processes running as your own account and privileged
+administrators are outside that boundary. If authentication cannot be established,
+startup fails; it does not fall back to unauthenticated connections.
+
+The explicit opt-out applies to one named pool:
+
+```toml
+[placement.pool]
+kind = "lsf-pooled"
+authentication = "none"
+# ... the pool's queue, allocation and capacity settings
+```
+
+It can also be supplied for one Runtime through the normal override mapping:
+
+```python
+with runtime(site, {"placement": {"pool": {"authentication": "none"}}}) as live:
+    print(live.site.placements["pool"]["authentication"])
+```
+
+`none` allows unauthenticated execution connections to that pool. Anyone who can
+reach its Dask execution listeners can execute code under the worker's account.
+The effective choice, including the `tls` default, is visible in
+`site.placements["pool"]["authentication"]`. Changing `dashboard` does not change
+this choice. See [the execution security boundary](../internals/execution-security.md).
+
 ```{warning}
 **Pooled batch workers do not have direct owner-death binding.** Orderly Runtime
 close cancels their allocations. Normal process-exit cleanup also reclaimed
@@ -202,27 +245,29 @@ to measure it.
 Why each placement's budget becomes a worker of its own, rather than a number
 checked somewhere, is [in the internals](../internals/placement-and-scheduling.md).
 
-## `dashboard` — what the cluster exposes
+## `dashboard` — diagnostic HTTP exposure
 
-A Dask scheduler starts an HTTP server whether or not anyone opens a browser,
-and every worker starts one too, both on all interfaces. On a shared submit host
-that publishes your invocation names, workspace paths and profiler to everyone who
-can reach it.
+The Runtime's readiness scheduler and workers communicate through `inproc`
+inside the submitting process. They have no network execution listener, including
+when a dashboard is enabled. A pool has a separate network-reachable scheduler
+and workers; their execution connections use that pool's authentication setting.
 
-* `"none"` — the default; no listening socket at all. Refused for a
-  multi-process cluster, whose workers must dial a listener.
-* `"loopback"` — off the network; still reachable by other users of the same
-  host, because loopback is per host and not per user.
-* `"network"` — explicit opt-in to Dask's own network-visible behaviour.
+`dashboard` controls diagnostic HTTP exposure separately:
 
-Exposure changes how a run can be watched and **nothing** about what it
-computes.
+* `"none"` — the default; suppresses readiness and pool-scheduler HTTP listeners.
+  A pool still needs its authenticated execution listeners. Farm workers can
+  retain unauthenticated health and metrics HTTP endpoints without dashboard
+  routes.
+* `"loopback"` — enables diagnostics on the local host. Other users on that host
+  can reach them: loopback is a host boundary, not an account boundary.
+* `"network"` — explicitly enables network-visible diagnostics.
 
-Two schedulers can exist once a pool is declared: the in-process readiness
-cluster, and one per pool whose workers dial in from the farm. `"none"` skips
-installing the dashboard routes on both — which is also the setting to reach for
-when an installation's bokeh is missing or mismatched, since that failure
-surfaces inside `distributed.dashboard.scheduler` as an `AttributeError` naming
-neither bokeh nor the dashboard. It does not make either scheduler silent: a
-pool's workers are on farm nodes and must be able to reach their scheduler, so
-its comm address stays network-reachable regardless.
+HTTP diagnostics are unauthenticated and can expose invocation names, paths,
+metrics and profiling information. Mutual TLS on execution connections does not
+authenticate HTTP. The execution-route audit and its evidence are documented
+in [execution security](../internals/execution-security.md); diagnostic exposure
+alone is not evidence of privacy on a shared host.
+
+`none` also avoids optional dashboard imports when an installation's bokeh is
+missing or incompatible. Diagnostic settings do not change computation identity,
+reuse, or the chosen pool authentication mode.

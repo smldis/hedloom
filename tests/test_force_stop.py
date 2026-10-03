@@ -294,6 +294,10 @@ def test_runtime_force_stop_cancels_active_and_queued_runs_together(tmp_path, fa
         except RuntimeError:
             Path(second_check).touch()
             raise
+        if snapshot['state'] == 'paused':
+            # The real memory monitor tries to resume a low-memory paused worker.
+            # Exercise that competing owner deterministically during the fence.
+            dask_worker.memory_manager._maybe_pause_or_unpause(dask_worker, 0)
         if snapshot['state'] == 'paused' and not Path(first_pause).exists():
             Path(first_pause).touch()
             while not Path(release_pause).exists():

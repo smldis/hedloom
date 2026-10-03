@@ -44,7 +44,7 @@ dask = ["distributed>=2023.9.2"]
 #
 # `dask-jobqueue` asks only for `distributed>=2022.02.0`, so it resolves with
 # the floor above.
-pooled = ["hedloom-run[dask]", "dask-jobqueue>=0.9"]
+pooled = ["hedloom-run[dask]", "dask-jobqueue>=0.9", "cryptography"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
