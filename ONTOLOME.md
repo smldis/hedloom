@@ -219,10 +219,18 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   acceptance; `Run.wait()` returns any terminal `RunResult`; `Run.result()` requires
   success. `await run` observes completion without making the caller own the loop.
   Timeout or cancellation of an observer does not withdraw the Run.
+- `run_study(subject, site=..., name=...)` is the blocking one-shot convenience
+  over that same async Runtime. It owns startup, submission, terminal observation
+  and automatic cleanup; `require_success=True` requires successful settlement.
+  Startup and invalid-argument errors raise directly. Interrupted calls withdraw
+  and drain through normal context cleanup. Each call starts fresh resources;
+  retained Runtimes serve repeated submissions, sharing and warm pools. User
+  review adopted this convenience on 2026-10-03: caller-side waiting remains
+  useful independently of the retired synchronous scheduling implementation.
 - `Run.stop()` requests withdrawal; it does not preempt entered Python or shell
   work. Live `snapshot()` and `result_if_done()` are in-memory observations.
   `Runtime.close()` closes admission and drains, and a context handles it
-  automatically. Legacy Session, blocking submit helpers, sequential mode and
+  automatically. Legacy Session, prior submit APIs, sequential mode and
   worker-held nested submissions are removed. `locally=True` serves authored
   bodies locally through the same async scheduler, rather than a second kernel.
   `Run.stop(force=True)` can escalate an ordinary withdrawal and interrupt

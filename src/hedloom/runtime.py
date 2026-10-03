@@ -481,6 +481,29 @@ def runtime(site, override=None, *, locally=False, watch=False, _watch_reader=No
     return Runtime(site, watch=watch, watch_reader=_watch_reader)
 
 
+def run_study(subject: Study, *, site: Site, name: str, override=None,
+              locally=False, watch=False, priority=0, reproducibility=None,
+              environment=None, stop_on_failure=True, require_success=False,
+              _watch_reader=None) -> RunResult:
+    """Run one Study to completion and release its owned Runtime.
+
+    This blocking convenience uses the same async execution as ``Runtime``.
+    It returns failed terminal results too; ``require_success=True`` raises
+    ``RunFailed`` with that result. Startup and invalid-argument errors raise
+    directly. Resources are closed before returning or propagating an error.
+    Repeated calls create separate runtimes; retain a Runtime to share pools
+    and capacity across submissions. Interrupted waits use normal context
+    withdrawal and drain semantics, rather than forced termination.
+    """
+    with runtime(site, override=override, locally=locally, watch=watch,
+                 _watch_reader=_watch_reader) as live:
+        live.ready()
+        receipt = live.submit(subject, name=name, priority=priority,
+                              reproducibility=reproducibility, environment=environment,
+                              stop_on_failure=stop_on_failure)
+        return receipt.result() if require_success else receipt.wait()
+
+
 @atexit.register
 def _reclaim_runtime_owners():
     for owner in tuple(_LIVE):
