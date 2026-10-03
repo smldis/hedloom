@@ -1,11 +1,12 @@
+
+from runtime_helpers import run_study
 import inspect
 import importlib
 
 import pytest
 
 from hedloom import Site, operation, returned, study
-from hedloom.session import Session
-from hedloom.study import Study, _apply_automatic_retention, submit
+from hedloom.study import _apply_automatic_retention
 
 study_module = importlib.import_module("hedloom.study")
 
@@ -57,9 +58,10 @@ def test_a_completed_run_reaches_the_post_run_trigger(tmp_path, monkeypatch):
 
     site = _site(tmp_path)
     monkeypatch.setattr(
-        study_module, "_apply_automatic_retention", lambda selected: called.append(selected)
+        importlib.import_module("hedloom.runtime"), "_apply_automatic_retention",
+        lambda selected: called.append(selected)
     )
-    run = subject().submit(site=site, sequential=True, name="test-run")
+    run = run_study(subject(), site=site, name="test-run")
     assert run.succeeded
     assert called == [site]
 
@@ -84,6 +86,5 @@ def test_a_prune_failure_warns_and_does_not_fail_the_run(tmp_path, monkeypatch):
 
 
 def test_submit_has_no_prune_argument():
-    assert "prune" not in inspect.signature(Study.submit).parameters
-    assert "prune" not in inspect.signature(submit).parameters
-    assert "prune" not in inspect.signature(Session.submit).parameters
+    from hedloom import Runtime
+    assert "prune" not in inspect.signature(Runtime.submit).parameters

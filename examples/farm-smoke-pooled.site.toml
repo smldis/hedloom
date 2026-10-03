@@ -16,7 +16,7 @@ cores = 1
 memory_mb = 2000
 # The pool's workers are batch jobs and are NOT owner-bound: unlike `bsub -I`,
 # they do not die with the client that submitted them. Two things stop them —
-# `LSFCluster.close()` when the session ends, and this walltime if the submit
+# `LSFCluster.close()` when the runtime ends, and this walltime if the submit
 # host dies without warning. Keep it short for a smoke test: it is the only
 # bound that survives a hard kill, and the cost of it being wrong is idle farm.
 walltime = "1:00"

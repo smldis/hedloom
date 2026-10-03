@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from hedloom_exec.lsf import LSFInteractiveTransport, SubprocessRunner
-from hedloom_run.driver import run_plan
+from _controller_support import run_bound_plan as run_plan
 
 FARM = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),

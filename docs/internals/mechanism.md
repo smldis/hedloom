@@ -23,7 +23,7 @@ The one-line thesis, so the rest reads as evidence for it:
 
 ## Part 1 — The mechanism
 
-### The three decorators, and the only one that spends
+### The three decorators and Runtime submission
 
 | You write | What it returns | When its body runs | What it costs |
 | --- | --- | --- | --- |
@@ -31,8 +31,9 @@ The one-line thesis, so the rest reads as evidence for it:
 | `@flow` | a `Flow` (a reusable planning strategy) | **once, at authoring time**, as ordinary Python | nothing |
 | `@study` | a `StudyBuilder` — a *family* of studies | once, at authoring time; calling it plans | nothing |
 
-`Study.submit()` is the only verb that spends anything
-(`src/hedloom/study.py:114`).
+`Runtime.submit(subject, name=...)` registers execution; planning alone
+spends no compute. The receipt separates immediate registration, durable
+acceptance and terminal observation.
 
 ### Planning is tracing, not evaluation
 
@@ -188,8 +189,8 @@ under the author's existing responsibility to declare them faithfully — not
 semantic equivalence, source immutability, or determinism. An intentional independent observation uses `execution="each_submission"`;
 renaming alone does not request one. Exec itself does not coalesce simultaneous calls: its
 claim refuses the loser by name (see [the claim protocol](attempt-claim-protocol.md)).
-A Session can share one call among consumers of compatible active invocations
-through Run-owned execution handles. Independent Sessions retain Exec's claim
+A Runtime can share one call among consumers of compatible active invocations
+through Run-owned execution handles. Independent Runtimes retain Exec's claim
 behavior. The shared handle records the selected try once; each consumer's
 history records its own durable binding to that handle.
 
@@ -209,14 +210,17 @@ reused. This prototype provides no migration and needs none.
 
 ### Execution — resolve, bind, admit
 
-The facade saves the complete static Plan and binds implementations and Site
-sources. Run prepares symbolic invocations. As dependencies succeed, Exec's
+The facade saves the static Plan and history header before signalling durable
+acceptance. It then prepares implementation serialization, Site sources and
+reproducibility evidence; this can still fail an accepted Run. Preparation
+evidence must publish before Run admits execution. Run prepares symbolic
+invocations. As dependencies succeed, Exec's
 finalizer computes the next invocation's identity from the selected artifacts.
 Run saves that consumer's resolved inputs and execution handle before admission.
 
-One Session-owned table joins compatible active invocations. Sequential execution
-uses an in-process completion; the graph kernel submits ready work to Dask with
-its declared placement resource. A joining controller waits without occupying a
+One Runtime-owned table joins compatible active invocations. The async
+controller submits ready work to Dask with its declared placement resource.
+A joining consumer waits without occupying a
 worker slot. Each consumer projects the shared result onto its own invocation.
 
 Cancellation gates all abandoned pending executions before waiting on entered
@@ -243,7 +247,7 @@ output equivalence, provenance, ownership, and current limits.
 | **Reuse across processes** | **yes** — content-addressed record on disk, with manifests | no — results live in worker memory | no | partial, by directory and explicit resume flag | no |
 | **Edited body invalidates** | **yes** — source fingerprint is in the digest | n/a (nothing to invalidate) | retraces, but nothing to reuse anyway | no — a changed script does not invalidate a run dir | no |
 | **Data-dependent branching** | **refused by construction** (handles raise on `__bool__`) | not in-graph; recompute and rebuild | yes — autograph lowers to `tf.cond`/`tf.while_loop` | steps are sequential; a step may act on prior metrics | no; the grid is declared |
-| **Who decides readiness** | Run controller admission; sequential or Dask execution | Dask scheduler | TF runtime + Grappler | the flow, in order | a local job queue |
+| **Who decides readiness** | Async Run controller admission; ready Dask execution | Dask scheduler | TF runtime + Grappler | the flow, in order | a local job queue |
 | **Who decides placement** | the **Plan** (per-invocation policy), never the scheduler | scheduler, hinted by `resources=` / `workers=` | placer, with `tf.device` as a *soft* hint | the host it runs on | the host it runs on |
 | **HPC / batch** | first-class: `lsf()` per invocation, `pooled()` for shared workers, job name = record + try | via `dask-jobqueue` (workers are batch jobs, tasks are not) | no | no | no |
 | **Sweeps** | `sweep(points, key=...)` — a keyed scope, keys derived per point | a list comprehension; keys come from token hashing | vectorization / `vmap`-style batching | not a concept | **declared conditions grid** — its native idiom |

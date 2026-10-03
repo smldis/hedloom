@@ -4,12 +4,9 @@ import json
 import os
 from pathlib import Path
 
-from distributed import Client, get_task_stream
-
-from hedloom import Site
+from hedloom import Site, runtime
 from hedloom_exec.identity import parse_try_name
 from hedloom_exec.planned import plan_bundles
-from hedloom_run.cluster import cluster_for
 
 from examples import farm_smoke
 
@@ -76,37 +73,12 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
     site = Site.from_file(profile)
     subject = farm_smoke.farm_sweep()
     plan_order = [item.authored_key for item in plan_bundles(subject.document)]
-    completion_order = []
-    cluster = cluster_for(site)
-    try:
-        with Client(cluster) as client:
-            workers = {
-                address: detail["name"]
-                for address, detail in client.scheduler_info()["workers"].items()
-            }
-            with get_task_stream(client) as stream:
-                first = subject.submit(
-                    site=site,
-                    client=client,
-                    on_event=lambda outcome: completion_order.append(
-                        outcome.authored_key
-                    ),
-                    name="test-run",
-                )
-
-            assert first.succeeded, first.summary()
-            assert [item.authored_key for item in first.report.outcomes] == plan_order
-            assert completion_order != plan_order
-            assert completion_order[-1] == "slow:summarize_numbers"
-            assert len(stream.data) == 8
-            task_workers = {workers[item["worker"]] for item in stream.data}
-
-            before_reuse = {
-                item.name: item.read_bytes() for item in fake_state.glob("*.json")
-            }
-            second = subject.submit(site=site, client=client, name="test-run")
-    finally:
-        cluster.close()
+    with runtime(site) as live:
+        first = live.submit(subject, name="test-run").wait()
+        assert first.succeeded, first.summary()
+        assert [item.authored_key for item in first.report.outcomes] == plan_order
+        before_reuse = {item.name: item.read_bytes() for item in fake_state.glob("*.json")}
+        second = live.submit(subject, name="test-run").wait()
 
     submitted = sorted(fake_state.glob("*.json"))
     records = [json.loads(item.read_text(encoding="utf-8")) for item in submitted]
@@ -118,7 +90,19 @@ def test_dask_farm_smoke_honours_placement_capacity_and_plan_order(
         assert (Path(site.records_dir) / identity / "manifest" / f"{number}.json").is_file()
 
     assert maximum_overlap(records) == 2
-    assert task_workers == {"lsf"}
+    assert {item.placement for item in first.report.outcomes} == {"lsf"}
+    authored = {f"{item.record}-{item.try_number}": item.authored_key
+                for item in first.report.outcomes}
+    completion_order = [authored[item["name"]]
+                        for item in sorted(records, key=lambda item: item["ended_at_ns"])]
+    assert completion_order != plan_order
+    assert completion_order[-1] == "slow:summarize_numbers"
+    # Each consumer job enters after its own producer has terminated.
+    by_key = {authored[item["name"]]: item for item in records}
+    for point in farm_smoke.POINTS:
+        producer = by_key[f"{point['key']}:generate_numbers"]
+        consumer = by_key[f"{point['key']}:summarize_numbers"]
+        assert producer["ended_at_ns"] <= consumer["started_at_ns"]
     assert second.succeeded
     assert len(second.report.reused) == 8
     assert {

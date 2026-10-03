@@ -1,9 +1,16 @@
 # Stopping a sweep, model-checked
 
+
+This is the historical complete-graph cancellation model. Its stack-snapshot
+race motivated durable entry gates; it does not describe or verify the current
+async controller. The replacement withdraws consumers, gates unentered work and
+settles entered execution. See [current scheduling](placement-and-scheduling.md).
+The retained TLA+ sources concern the historical protocol only.
+
 The companion to [`attempt-claim-protocol.md`](attempt-claim-protocol.md), one
 layer up. That page models the historical one-attempt form of what
 `hedloom_exec` now does per try; this one
-models what `hedloom_run.graph` does with the *rest* of a sweep when the first
+models what the earlier `hedloom_run.graph` did with the *rest* of a sweep when the first
 invocation comes back failed. The model is in
 `stop-admitting/`, starting from
 [`StopAdmitting.tla`](stop-admitting/StopAdmitting.tla), and runs in about a second.

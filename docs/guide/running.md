@@ -16,7 +16,7 @@ For example, save this as `manual_study.py`:
 ```python
 import argparse
 
-from hedloom import Site, local, operation, parameter, returned, study
+from hedloom import Site, local, operation, parameter, returned, runtime, study
 
 
 @operation(config={"n": parameter(int)}, outputs={"value": returned(kind="number")})
@@ -43,12 +43,9 @@ def main():
     if args.plan_only:
         return 0
 
-    run = subject.submit(
-        site=Site.from_file(args.site),
-        name=args.name,
-        sequential=True,
-        watch=True,
-    )
+    with runtime(Site.from_file(args.site), watch=True) as live:
+        receipt = live.submit(subject, name=args.name)
+        run = receipt.wait()
     print("Run:", run.run_id)
     print("Succeeded:", run.succeeded)
     output = run.outputs["value"]
@@ -78,9 +75,10 @@ python manual_study.py --n 3
 python manual_study.py --n 4 --name next-check
 ```
 
-Planning executes no operation bodies. The example submits sequentially for
-simple local debugging; omit `sequential=True` when the Site should manage
-parallel execution. Keep the same storage roots across experiments to reuse
+Planning executes no operation bodies. Submission returns a Run receipt
+immediately; `wait()` opts into waiting for its terminal result. A Site with
+local capacity one executes one invocation at a time through the same async
+controller and Dask executor as larger Sites. Keep the same storage roots across experiments to reuse
 unchanged work. A new submission name creates a new history occurrence; it does
 not force recomputation. Check exported verdicts separately when a study has
 them: execution success alone does not mean its conclusion passes.
@@ -101,16 +99,18 @@ The same file can serve as the definitions for an interactive working session.
 Start IPython in the environment used for the script, from the directory
 containing `manual_study.py` and `site.toml`:
 
-```ipython
+```python
 %run -n manual_study.py
 
 site = Site.from_file("site.toml")
 subject = square_study(3)
 print(subject.summary())
 
-run = subject.submit(
-    site=site, name="exploration", sequential=True, watch=True,
-)
+live = runtime(site, watch=True)
+receipt = live.submit(subject, name="exploration")
+receipt.done()                    # nonblocking; work progresses at an idle prompt
+receipt.snapshot()                # lifecycle and currently available evidence
+run = receipt.wait()              # only when you want to wait
 run.succeeded
 run.run_id
 output = run.outputs["value"]
@@ -138,176 +138,174 @@ operation registration also checks their source origin.
 Neither source reloading nor retaining an IPython namespace snapshots mutable
 globals, imported helpers, or external state. Pass changing values as declared
 configuration or inputs. Keep planning handles inside the authored graph;
-inspect ordinary values through `run.outputs` after submission.
+inspect ordinary values through `run.outputs` after completion.
 
-For several submissions that should share live compute, use an explicit
-[`session(...)` block](#several-runs-session). Retaining a `Site` variable shares
-storage configuration, not a live cluster. Saved history remains available
-after IPython exits through the same discovery commands used for scripts.
+## One owner, several Runs
 
-## `Study.submit(...)` — the one-run form
+A Runtime owns one controller thread and async loop, Dask executor, placement
+capacity, offload lanes and optional queue watcher. It accepts submissions from
+an ordinary script or REPL without depending on the caller's event loop.
+Additional Runs can wait for capacity with their own receipt; there is no fixed
+32-active-Run refusal limit. Retained Plans and receipts still use memory, so
+release references you no longer need and avoid submitting an unbounded stream.
 
 ```python
-run = subject.submit(name="investigate-start", site=site, watch=True)
+from hedloom import runtime
+
+with runtime(site, watch=True) as live:
+    north = live.submit(north_study, name="north")
+    south = live.submit(south_study, name="south", priority=10)
+    # Both were submitted before either caller waits.
+    north_result = north.wait()
+    south_result = south.wait()
 ```
 
-| Argument | Default | What it does |
+The Site holds storage and capacity configuration. Reusing a Site variable does
+not share live execution: two Runtimes each have their own placement budget.
+Compatible active work within one Runtime shares an execution handle; every
+Run keeps its own name and durable history. Later submissions re-enter Exec,
+which decides reuse from the recorded computation.
+
+## Receipt, acceptance and completion
+
+`submit(subject, name=...)` returns an in-memory `Run` receipt. During
+`ACCEPTING`, the Runtime publishes the saved Plan and initial history header;
+`accepted(timeout=None)` then returns that durable reference. Source reads,
+body serialization and reproducibility capture follow in `PREPARING`.
+Acceptance therefore does not promise that preparation will succeed.
+
+Failure before initial publication produces `REJECTED`; an accepted preparation
+failure produces `FAILED`. Neither launches computation. No execution is
+admitted until preparation evidence and its consumer execution binding are
+durable. Observable phases are `REGISTERED`, `ACCEPTING`, `PREPARING`, `RUNNING`
+and `STOPPING`; terminal states are `SUCCEEDED`, `FAILED`, `STOPPED` and `REJECTED`.
+
+- `done()` and `snapshot()` inspect without waiting. Completion does not mean
+  success; inspect the terminal result's `state`, errors and `succeeded`.
+- `wait(timeout=None)` returns the terminal `RunResult`, including unsuccessful
+  work, for inspection. A timeout leaves the Run running.
+- `result(timeout=None)` waits and raises when the Run is unsuccessful; otherwise
+  it returns the same result projection.
+- `stop()` withdraws this consumer. It prevents new work and lets already
+  entered work settle. It does not promise to kill a running command or cancel
+  shared work another consumer still needs.
+- `stop(force=True)` also requests interruption of solely owned pooled commands.
+  A running command's Dask worker is restarted within the same farm allocation;
+  queued commands can be cancelled without restarting a worker. Shared work
+  continues for its remaining consumers. Other placements and entered Python
+  bodies still drain. A pending ordinary stop can be escalated with this call.
+
+```python
+run.stop(force=True)
+result = run.wait()  # Inspect the actual outcomes after interruption settles.
+```
+
+Force is a request, not a successful-termination receipt. The live snapshot's
+`force_requested` records that request; terminal outcomes and saved attempt
+records establish what happened. If interruption cannot be confirmed, the
+result retains the failure rather than claiming cancellation. A command that
+finishes before interruption retains its actual result. Restarting restores
+pool capacity and does not automatically rerun the cancelled computation.
+`live.stop(force=True)` applies the same request to all Runs it currently owns.
+
+`RunResult` exposes `outputs`, `report`, `run_id`, `history`, `summary()` and
+invocation lookup, as explained in [results](results.md). Names identify consumer
+history and never force recomputation. An engineering verdict is a returned
+value, separate from execution success.
+
+| Where | Argument | Purpose |
 | --- | --- | --- |
-| `site` | *required* | Where work runs, where records go, what addresses mean; includes a separate `runs_dir` |
-| `name` | *required* | Chosen submission name; each request gets a durable occurrence such as `investigate-start.1` |
-| `on_started` | `None` | Receive the durable run reference before execution |
-| `watch` | `False` | Print each invocation as it settles, **and** poll the farm queue |
-| `stop_on_failure` | `True` | On the first failure, stop admitting new work |
-| `override` | `None` | Change how this run executes, never what it means |
-| `sequential` | `False` | One invocation at a time, no cluster, no `distributed` |
-| `locally` | `False` | Serve every placement in this process — the debugging pair |
-| `on_event` | `None` | Your own per-invocation callback instead of the printed line |
-| `client` | `None` | Escape hatch for a caller who already holds a `distributed.Client` |
+| `runtime(site, override=None, ...)` | `locally=False` | Serve every placement by its authored body on this host |
+| Runtime construction | `watch=False` | Print settling invocations and poll farm queue transitions |
+| `live.submit(subject, ...)` | `name` | Required durable consumer submission name |
+| submission | `priority=0` | Scheduling preference; higher numbers precede lower eligible work |
+| submission | `stop_on_failure=True` | Stop admitting new work after the first failure |
+| submission | `reproducibility=None`, `environment=None` | [Capture or supply reproducibility evidence](discovery.md#reproducibility-records) |
 
-**Concurrency is the site's.** `submit` opens the compute the site declares, for
-as long as the run needs it, spends up to each placement's `max_jobs`, and gives
-it back. There is no kernel to choose and never was a second mode — a site that
-declares nothing has capacity one, which *is* one invocation at a time.
+`Study.submit`, top-level `submit`, `Session`, `session`, `submit_all`,
+`sequential`, external `client=`, and public `on_started`/`on_event` callbacks
+are retired. They are not compatibility wrappers.
 
-## Several runs: `session(...)`
+## Priority and capacity
 
-`Study.submit` is the one-run form of a session. When you have more than one
-run, open the session yourself so they share one cluster, one budget and one
-watcher:
+Placement capacity comes from the Site. The controller rotates equal-priority
+Runs and forwards priorities to Dask and the pool. Pending shared work uses the highest attached consumer priority.
+Priority orders eligible pending work; it does not preempt an entered
+invocation, reserve a farm allocation, or
+become an LSF queue priority. Low-priority work can wait behind a steady stream
+of higher-priority work. Dependencies still need to finish before their
+consumers are eligible. See [placement and scheduling](../internals/placement-and-scheduling.md)
+for the executor boundary and pooled command limits.
 
-```python
-with session(site, watch=True) as farm:
-    first  = farm.submit(subject, name="investigate-start")
-    second = farm.submit(subject, name="investigate-start")      # reuse, same cluster, same watcher
-```
+## Lifetime and shutdown
 
-(`examples/farm_smoke.py`)
+Automatic cleanup preserves process ownership; an interactive caller does
+not have to remember a mandatory manual close. A context block provides a clear
+optional scope: normal exit drains registered Runs, exceptional exit requests stop
+and then settles entered work. `close()` provides early orderly release. None of
+these imply that work survives interpreter exit or that a hard kill can perform
+graceful settlement. Automatic exit cleanup is bounded and can leave incomplete
+history; orderly `close()` is the drain boundary. Real pooled farm workers
+additionally depend on cluster cancellation, connectivity and farm walltime; see [farm evidence](first-farm-run.md).
 
-What is deliberately **not** hidden is the lifetime. Leaving the block ends the
-runs inside it, and under owner-bound lifetime that takes their farm jobs with
-them. That is a real fact about running work here, so it keeps a real shape.
-
-`submit_all` runs several studies against that one cluster — which is what makes
-the shared budget structural rather than a convention, since two studies cannot
-between them put more on the farm than the site declared:
+For a dashboard before submission, explicitly wait for startup:
 
 ```python
-with session(site) as farm:
-    runs = farm.submit_all({"north": north_study, "south": south_study})
+live.ready()
+print(live.dashboard_link)
 ```
 
-`examples/farm_multi_client.py` measures exactly this, and also the arrangement
-where the cap does **not** hold: two *separate* sessions each have their own
-cluster and therefore their own budget, so two controllers can put twice
-`max_jobs` on the farm.
+Runtime construction and context entry do not wait for cluster or farm startup;
+construction begins opening the Site's configured resources, including pooled
+worker allocations, before its first submission. Build and inspect your Study
+before creating the Runtime when you want to review the Plan first. Submission
+remains nonblocking. A first pooled Runtime imports Jobqueue on the
+main thread while preserving SIGINT; [pooled bootstrap](sites.md#kind--lsf-pooled--a-shared-set-of-workers)
+explains the cold-background-constructor limit.
 
-## Nested studies in one Session
+## Caller-level stages
 
-An operation can author and submit an inner study through the Session already
-open. The runnable [nested-studies example](../../examples/nested_studies.py)
-does this on local in-process workers. Its wrapper executes every submission;
-the two inner operations reuse their records for unchanged text.
-
-Both levels call the same `Session.submit(...)`. Reusing a `Site` alone shares
-storage declarations, not live workers: a separate `Study.submit(site=...)`
-opens another Session and its own compute budget.
-
-Two details matter in the example:
-
-- The wrapper retains a local placement slot while waiting. The Site declares
-  two slots so the inner work has one available. A single slot causes the graph
-  kernel to refuse with `NestedCapacityExhausted`; a separate wrapper placement
-  can also provide headroom. Account for all concurrent wrappers when sizing it.
-- An [imported state module](../../examples/nested_studies_state.py) holds the
-  Session reference. A body defined in `__main__` is serialized by value, so a
-  direct Session global would attempt to serialize its locks. The module travels
-  by reference and reaches the existing Session on in-process workers. This
-  wiring does not give a separate process or remote worker access to the Session.
-  The caller clears the reference in `finally` before leaving the Session.
-
-The outer Plan contains the wrapper; the inner Plan is authored and saved when
-the wrapper submits it. Each Plan remains static, but inspecting the outer Plan
-alone does not show the inner work. Prefer flow composition when the whole graph
-can be authored together. [Fresh acquisition](runtime-artifacts.md) now works in
-one Plan and does not require nesting.
-
-## Running less, or running elsewhere: `override`
-
-An override speaks the profile's own vocabulary and applies to this session
-only, so a site needs one declaration rather than one per way of running it:
+Keep a known graph in one composed Plan. If a later Plan needs result values,
+author it from the caller after the earlier Run completes:
 
 ```python
-with session(site, {"placement": {"lsf": {"max_jobs": 1, "queue": "express"}}}) as farm:
-    ...
+jobs = live.submit(discovery, name="discover").result().outputs["jobs"].value
+corners = corner_study(jobs)
+print(corners.summary())
+result = live.submit(corners, name="corners").result()
 ```
 
-**An override changes how a run executes and never what it means.** Nothing it
-can reach is identity-bearing, so an overridden run lands on the same attempt
-identities as a plain one and the two reuse each other's work. It may carry
-`placement` and `kernel`; roots are refused, because moving the record changes
-what is reused — that is a different installation, not a different way of
-running this one.
+Worker-held nested submission is unsupported in this replacement; future
+hierarchical use cases remain deferred. The [historically nested example](../../examples/nested_studies.py)
+now demonstrates caller staging with one placement slot. Fresh acquisition
+usually needs no staging: [content identity](runtime-artifacts.md) preserves
+reuse inside one static Plan.
 
-## Debugging: `sequential` and `locally`
+## Overrides and local debugging
 
 ```python
-subject.submit(name="investigate-start", site=site, sequential=True)   # one at a time, no scheduler
-subject.submit(name="investigate-start", site=site, locally=True)      # ...and every placement served here
+with runtime(site, {"placement": {"lsf": {"max_jobs": 1, "queue": "express"}}}) as live:
+    run = live.submit(subject, name="small-farm-check").wait()
+
+with runtime(site, locally=True) as live:
+    run = live.submit(subject, name="local-debug").wait()
 ```
 
-Say `sequential=True` rather than leaving it to be inferred from a missing
-argument: a site declaring `max_jobs = 8` and quietly running one at a time is
-indistinguishable from a busy farm. It is also what keeps `distributed`
-optional — a plan small enough to walk in one thread should not need a
-scheduler, and if the extra is missing you get a `SiteError` naming both ways
-out rather than a silent downgrade.
+Overrides may change `placement` and `kernel` settings, never storage roots or
+computation meaning. `locally=True` preserves the authored Plan and placement
+capacity while serving its bodies locally; Dask remains the executor. A local
+result can be reused by later farm work. Declare environment differences that
+change results in computation identity rather than assume placement changes it.
 
-`locally=True` is `sequential=True` plus every placement served by its authored
-body in this process — for debugging a farm study on the submit host. The
-placement names, budgets and Plan are untouched, so identity is untouched, which
-is the point **and** the catch: a local run publishes attempts a later farm run
-will reuse. Sound as far as your declared inputs go; a result that genuinely
-depends on the machine needs that fact in `identity_env`.
+## Watching and failures
 
-## Watching a run
+`watch=True` prints settling invocation outcomes and, for direct farm work,
+queue transitions from the attempt watcher. Watcher failure disables observation
+and does not determine computation success. For custom interaction, poll Run
+snapshots; there is no arbitrary callback on the controller loop.
 
-`watch=True` does two different things, because there are two questions:
-
-```
-[      ran] coarse:integrate                  succeeded
-[watch] invoke:coarse pending → running (48s queued)
-```
-
-The first line is an invocation settling. The second is a **queue transition**,
-polled from the attempt records by `hedloom_exec.watch` — the only thing here
-that can tell `PEND` from `RUN`. It matters because `bsub -I` blocks from
-submission to completion, so without it a farm sweep prints nothing at all for
-the whole queue wait and then a burst.
-
-`on_event=callback` replaces the first of those, for a caller that wants its own
-progress reporting. It does **not** replace the second: a queue transition is
-not an invocation settling. The watcher can never fail a run — an LSF too old
-for `bjobs -o` prints once, disables the poller, and leaves the run alone.
-
-## When something fails
-
-`stop_on_failure=True` (the default) means **stop admitting new work**: cancel
-what has not started, let what is already executing finish, and return a
-partial report naming what was skipped. The reasoning is that the usual answer
-to a failed invocation is to debug it rather than to spend the farm on the other
-forty-nine — and resubmitting afterwards is cheap, because content-addressed
-reuse means the invocations that completed are reused and only the failure re-runs.
-
-`stop_on_failure=False` lets independent branches finish, which is what a sweep
-wants when the failure is known and local. Dependents of a failure are blocked
-either way; they are never run against inputs that do not exist.
-
-The *scope* of a failure differs between the two kernels and its *meaning* does
-not: the sequential kernel blocks everything after a failure, while the graph
-kernel lets independent branches continue. Both record the same thing about the
-invocation that failed. What `_stop_admitting` does with the rest of a sweep,
-and what a model checker found in it, is in
-[stopping a sweep, model-checked](../internals/stop-admitting-protocol.md).
-
-Whatever the run raises at you, [the refusals table](refusals.md) says what it
-means.
+With `stop_on_failure=True`, a failure stops new admissions and entered work
+settles. `False` lets independent branches finish; failed dependencies block
+their consumers either way. A stopped Run or failed preparation must not be
+mistaken for an empty successful report. [Refusals](refusals.md) explain common
+failures; saved history remains available after the Runtime ends.

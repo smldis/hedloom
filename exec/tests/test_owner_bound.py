@@ -87,3 +87,38 @@ def test_the_binding_is_requested_for_every_spawned_command():
     # The preexec hook must exist on Linux; its absence would silently reduce
     # the guarantee to "usually", which is the failure mode worth catching.
     assert _bind_child_lifetime() is not None
+
+
+def test_kill_binding_stops_a_command_that_ignores_termination(tmp_path):
+    """Worker recycling must not leave an uncooperative immediate child alive."""
+    marker = tmp_path / 'command.pid'
+    command = (
+        'import os,signal,time; from pathlib import Path; '
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+        f'Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(60)'
+    )
+    script = (
+        f'import sys,signal; sys.path.insert(0,{SRC!r}); '
+        'from hedloom_exec.lsf import SubprocessRunner; '
+        f'SubprocessRunner()([sys.executable,"-c",{command!r}], '
+        'parent_death_signal=signal.SIGKILL)'
+    )
+    owner = subprocess.Popen([sys.executable, '-c', script])
+    child = None
+    try:
+        deadline = time.monotonic() + 5
+        while not marker.exists():
+            assert owner.poll() is None, 'command owner exited before launching'
+            assert time.monotonic() < deadline, 'command did not launch'
+            time.sleep(.01)
+        child = int(marker.read_text())
+        assert _alive(child)
+        owner.kill()
+        owner.wait(timeout=5)
+        assert _wait_until_gone(child)
+    finally:
+        if owner.poll() is None:
+            owner.kill()
+        owner.wait(timeout=5)
+        if child is not None and _alive(child):
+            os.kill(child, signal.SIGKILL)

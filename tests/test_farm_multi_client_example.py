@@ -45,26 +45,26 @@ def test_two_studies_share_one_budget_one_keyspace_and_one_record(
         {"kernel": {"dashboard": "none"}}
     )
 
-    # One session, two studies: eight jobs wanted, and the placement cap is the
-    # session's rather than each study's.
+    # One runtime, two studies: eight jobs wanted, and the placement cap is the
+    # runtime's rather than each study's.
     assert farm_multi_client.shared_budget(site, 2)
     submitted = jobs(state)
     assert len(submitted) == 8
     assert maximum_overlap(submitted) == 2, (
-        "two studies on one session must draw on one budget"
+        "two studies on one runtime must draw on one budget"
     )
 
-    # Both consumers succeed; Session-owned handles share the four executions
+    # Both consumers succeed; Runtime-owned handles share the four executions
     # while retaining exact history for each named submission.
     assert farm_multi_client.same_work_twice(site)
     assert len(jobs(state)) == 12, "the second submission must add four jobs, not eight"
 
-    # Two sessions: different key namespaces, so both callers really reach
+    # Two runtimes: different key namespaces, so both callers really reach
     # `execute` and the journal claim is what prevents the duplicate.
     assert farm_multi_client.two_controllers(site)
     assert len(jobs(state)) == 16, "the claim must refuse the second caller, not queue it"
 
-    # And the concurrent record still reuses cleanly from a single session.
+    # And the concurrent record still reuses cleanly from a single runtime.
     assert farm_multi_client.all_reused(site)
     assert len(jobs(state)) == 16, "a reused invocation must reach no substrate"
 

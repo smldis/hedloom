@@ -120,37 +120,49 @@ if _LIBC is not None:
     _LIBC.prctl.restype = ctypes.c_int
 
 
-def _bind_child_lifetime() -> Callable[[], None] | None:
+def _bind_child_lifetime(parent_death_signal: int = signal.SIGTERM) -> Callable[[], None] | None:
     """Ask the kernel to signal our children when we die.
 
     Linux only. Combined with the child staying in our process group, this is
     what makes "the job dies with its owner" true even when the owner is killed
     without a chance to clean up.
 
-    DEVNOTE/TODO: There is a small fork-to-prctl race here. If the parent dies
-    after fork but before this callback installs PR_SET_PDEATHSIG, Linux does
-    not deliver the signal retroactively and the child may survive. Replace
-    this preexec hook with a tiny native launcher that receives the expected
-    parent PID, installs PR_SET_PDEATHSIG, verifies getppid() still matches,
-    and only then execs the requested command. That replacement should also
+    The default allows ordinary termination handling. Callers recycling a
+    worker can select SIGKILL so a command cannot ignore its owner's death.
+    This binds the immediate child; detached descendants need their own policy.
+
+    DEVNOTE/TODO: A tiny native launcher should replace this preexec hook to
     remove Python's general preexec_fn hazard in the threaded Dask kernel.
     """
 
     if _LIBC is None:
         return None
 
+    parent_death_signal = signal.Signals(parent_death_signal)
+    parent_pid = os.getpid()
+
     def preexec() -> None:  # pragma: no cover - runs in the forked child
         # Failure must be loud. A silently unset PDEATHSIG degrades the
         # owner-bound guarantee to "usually", and the orphan it leaves is an
         # LSF job nobody is watching.
-        if _LIBC.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM) != 0:
+        if _LIBC.prctl(_PR_SET_PDEATHSIG, parent_death_signal) != 0:
+            os._exit(127)
+        # Death before prctl is not signalled retroactively. Check after binding
+        # so either this check or the installed signal closes that fork race.
+        if os.getppid() != parent_pid:
+            os.kill(os.getpid(), parent_death_signal)
             os._exit(127)
 
     return preexec
 
 
 class SubprocessRunner:
-    """Run a command as a child bound to this process's lifetime."""
+    """Run a command as an immediate child bound to this process's lifetime.
+
+    On Linux, ``parent_death_signal`` defaults to SIGTERM; SIGKILL can be
+    selected when the caller must stop commands that ignore termination.
+    Detached descendants are outside this immediate-child binding.
+    """
 
     def __call__(
         self,
@@ -159,6 +171,7 @@ class SubprocessRunner:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        parent_death_signal: int = signal.SIGTERM,
     ) -> CommandResult:
         merged = dict(os.environ)
         if env:
@@ -173,7 +186,7 @@ class SubprocessRunner:
                 timeout=timeout,
                 # Deliberately not start_new_session: staying in the caller's
                 # process group is half of the owner-bound guarantee.
-                preexec_fn=_bind_child_lifetime(),
+                preexec_fn=_bind_child_lifetime(parent_death_signal),
             )
         except FileNotFoundError as error:
             raise CommandUnavailable(f"{argv[0]!r} is not available") from error

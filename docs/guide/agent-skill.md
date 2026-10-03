@@ -26,7 +26,7 @@ restart Codex; `/skills` lists available skills. See
 [OpenAI's skill discovery documentation](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills)
 for locations and invocation behavior.
 
-Evaluation so far covers local sequential authoring, modification, submission,
+Evaluation so far covers the earlier local sequential authoring, modification, submission,
 result use, and discovery. It does not establish farm coverage. For farm work,
 read [Sites and placements](sites.md) and the
 [first-farm-run guide](first-farm-run.md).

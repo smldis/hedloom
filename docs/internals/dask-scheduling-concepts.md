@@ -132,14 +132,11 @@ during a steal and a task with none has nothing to enforce. Annotating **every**
 task, `local` included, is what makes the lockout unrepresentable rather than
 unlikely — and it is also what makes stealing safe to leave switched on.
 
-### One deliberate exception
+### Unsupported placement
 
-If the run has no transport for a placement at all, that task is left
-*unannotated* on purpose, so transport selection refuses just that invocation
-exactly as the sequential kernel does. Annotating it would strand it forever
-against a capacity nobody declares, and would stop unrelated branches from
-completing — which would make the two kernels disagree about a plan, the one
-thing the readiness kernel may not do.
+The async controller refuses a placement for which the Runtime cannot provide
+execution. It does not send permanently unrunnable work to Dask or silently
+route it to another worker. All executable wrappers carry their placement token.
 
 ## Why a thread is expensive
 
@@ -160,7 +157,7 @@ queue wait included. That single fact is why everything above matters:
 - **the record** has a gap between submit and finish, because the thread that
   could ask LSF is the thread that is waiting. Only something outside, polling
   `bjobs`, can tell pending from running. That is what `hedloom_exec.watch` is,
-  and what `submit(watch=True)` now runs.
+  and what `runtime(site, watch=True)` runs.
 
 ## A transport is copied, never shared
 

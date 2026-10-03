@@ -16,7 +16,7 @@ becomes `records_dir`; `Site.history_root` / `[study] history_root` becomes
 The lower-level `hedloom_exec.execute`, `AttemptJournal`, `scan_attempts`,
 `prune.survey`, `pins.resolve_selector`, `watch.status_of`,
 `watch.live_attempts`, `watch.observe`, `hedloom.discovery.list_attempts`,
-and `hedloom_run.run_plan` / `run_plan_graph` record-location arguments now
+and the async Controller record-location configuration now
 use `records_dir`. `Survey.records_dir` and its `as_data()["records_dir"]`
 replace the old `root` field and key. APIs that accept a try-location argument
 use `work_dir`, including `workspace_path` and `workspace_for` when called by
@@ -36,12 +36,13 @@ runs_dir/_meta/allocations/           occurrence reservations
 runs_dir/_meta/executions/            shared dispatch handles
 ```
 
-`run.json` and other consumer-history documents now have schema version 3.
+`run.json` and other consumer-history documents now have schema version 4.
 `run.json` records `records_dir` and `work_dir` in place of `record_root` and
 `workspace_root`. Produced artifact references likewise use `records_dir`.
-Run readers require the direct run directory and schema 3; they refuse a
+Run readers require the direct run directory and schema 4; they refuse a
 previous `runs_dir/runs/` or `runs_dir/allocations/` tree. They do not promise
-to read schema-2 saved runs, reinterpret old metadata, or relocate saved data.
+to read schema-3 or earlier saved runs, reinterpret old metadata, or relocate
+saved data.
 Keep old evidence intact if it matters. To use a fresh location, choose a new
 `runs_dir` and make new submissions; manually inspect old saved runs with a
 matching older checkout when needed. No automatic migration is performed.

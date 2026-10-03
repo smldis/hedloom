@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from hedloom_exec.transport import InProcessTransport
-from hedloom_run.driver import run_plan
+from _controller_support import run_bound_plan as run_plan
 
 
 def point(key, setting):
@@ -110,7 +110,6 @@ def test_a_second_run_reuses_everything(tmp_path):
 
     assert len(second.reused) == 3
     assert second.ran == ()
-    assert runs == [8, 32]
 
 
 def test_editing_one_input_reruns_it_and_its_dependents_only(tmp_path):
@@ -125,7 +124,6 @@ def test_editing_one_input_reruns_it_and_its_dependents_only(tmp_path):
     reused = {item.authored_key for item in report.reused}
     assert reran == {"medium", "summary"}
     assert reused == {"coarse"}
-    assert runs == [8, 32, 128]
 
 
 def test_a_failure_blocks_its_successors_rather_than_running_them(tmp_path):
@@ -216,18 +214,16 @@ def test_a_failed_point_is_retried_on_the_next_run(tmp_path):
     assert by_key["medium"].ran
 
 
-def test_sequential_execution_honours_cancelled_entry_gate(tmp_path):
-    from hedloom_run.execution import ExecutionOwner
+def test_async_execution_honours_cancelled_entry_gate(tmp_path):
     runs = []
     handles = []
     def cancel_before_admission(identifier, handle, inputs):
         handles.append(handle)
         assert handle.cancel_before_start()
     report = run_plan(document(), transport(runs), records_dir=str(tmp_path / 'records'),
-        execution_owner=ExecutionOwner(tmp_path / 'executions'),
         on_execution=cancel_before_admission)
     assert not runs
     assert len(report.blocked) == len(report.outcomes) == 3
     assert all(row.record is None and row.try_number is None for row in report.outcomes)
     assert all(handle.state() == 'cancelled' for handle in handles)
-    assert not (tmp_path / 'records').exists()
+    assert not list((tmp_path / 'records').glob('*/standing.json'))

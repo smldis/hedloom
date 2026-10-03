@@ -1,148 +1,128 @@
 # Hedloom Run
 
-Walk a validated Plan and run it.
+Cooperatively admit a validated Plan and execute ready invocations through Dask.
 
-```python
-from hedloom_exec.transport import InProcessTransport
-from hedloom_run import run_plan
+This unit owns dependency readiness, binding, value threading, compatible live
+execution sharing and withdrawal. It imports Exec, never the planning package:
+Plans arrive as plain documents. Exec owns computation identity, attempt claims,
+transport execution, result capture and reuse. The [Hedloom facade](../README.md)
+composes these contracts into the operator-facing Runtime and Run receipts.
 
-report = run_plan(
-    plan_document,
-    transport,
-    records_dir="records",
-    work_dir="/nfs/studies/refinement",
-    commands={"solve": ["awk", "-f", "rule.awk", "point.in"]},
-    outputs={"simulate": {"raw": {"path": "point.raw"}}},
-)
+## Controller and execution
 
-print(report.summary())
-```
+`hedloom_run.controller.Controller` runs on the Runtime's dedicated async loop.
+It receives an async Dask Client, Site capacities and a bounded offload service.
+It admits dependencies only when their producer results exist. Input identity
+is finalized before lookup in the live execution owner table, so separately
+acquired but equal artifacts can converge on one compatible execution.
 
-The Plan declares meaning; the run binds mechanism. `commands` and `outputs`
-say how an operation actually runs and which files count as its results;
-operations named in neither run in-process.
+Dask receives ready invocation wrappers, with `pure=False`, `retries=0`, explicit
+placement resources and priority. It executes those wrappers; it does not own
+Plan dependencies, computation identity or reuse. The `driver` module retains
+`InvocationOutcome` and `RunReport`; blocking `run_plan` and `run_plan_graph`
+entry points have been retired. Operator callers use `hedloom.runtime`.
 
-A second run reuses everything. Edit one point and only that point and its
-dependents rerun. A failure stops the run, and its successors are reported as
-`blocked` rather than executed against inputs that do not exist — a failed step
-is not cached, so fixing the cause and rerunning retries exactly it.
+Reports remain in Plan order, independently of completion order. Every consumer
+retains its own authored key, candidate inputs and history. `record` and
+`try_number` identify the exact Exec selection. Output binding is shared with
+the facade through `binding.output_value`, so a downstream input and an exported
+port interpret the same recorded result consistently.
 
-Run the evidence:
+## Scheduling and resource ownership
 
-```console
-PYTHONPATH=src:../exec/src python -m pytest -q
-```
+A placement's `max_jobs` bounds executing wrappers in one Runtime. The ready
+queue considers higher Run priorities first and rotates equal-priority Runs.
+Priority is scheduling metadata, outside computation identity. Pending shared
+work uses the highest attached consumer priority. Already-entered execution is
+non-preemptive; priorities do not imply an LSF queue priority or a deadline.
 
-## Running a sweep on Dask
+Waiting Runs do not each own a thread or worker slot. They can wait with a
+receipt when execution is full; there is no default 32-Run cap. Bounded offload
+lanes keep source reads, identity preparation and persistence away from the
+controller loop. Capacity bounds execution concurrency rather than all memory,
+all subprocess resource use or an operator's global farm jobs.
 
-`run_plan` is one invocation at a time. For a real sweep, readiness belongs to
-Dask (adopted 2026-08-04):
+`cluster.async_cluster_for(site)` constructs in-process Dask workers from Site
+placement capacities. Every ready wrapper requests `placement:<name>: 1`,
+including local work. The facade Runtime owns startup and teardown; a caller
+cannot inject an arbitrary Client through its public submission surface.
 
-```python
-from distributed import Client
-from hedloom_run.cluster import cluster_for
-from hedloom_run.graph import run_plan_graph
+No task secedes: a worker holding an external command remains occupied. A local
+wrapper can wait in `bsub -I` while the actual payload runs on the farm. Its
+placement budget bounds active wrappers, including pending direct LSF jobs.
 
-# Concurrency is each placement's own `max_jobs`, read from the profile along
-# with the exposure. There is no limit parameter here to disagree with it: a
-# waiting invocation costs ~16 KiB of thread and one client process, so size
-# `max_jobs` from the share of the farm this study may spend — not from your
-# site's MAX JOB policy, which counts every job you have running from any
-# source. Build the cluster this way rather than by hand; the capacity a
-# worker declares and the placement a task asks for have to be one reading of
-# one profile, or Dask holds the task unrunnable and says nothing.
-cluster = cluster_for(site)
+## Sharing, withdrawal and replay
 
-with Client(cluster) as client:
-    report = run_plan_graph(
-        plan_document,
-        client=client,
-        transports={"local": local, "lsf-direct": lsf},
-        records_dir="records",
-        on_event=lambda outcome: print(
-            outcome.authored_key, outcome.outcome,
-            outcome.record, outcome.try_number,
-        ),
-    )
-```
+`Controller` owns the live execution table and durable dispatch handles. Compatibility includes
+finalized computation identity, implementation, roots, placement and transport
+binding. Run priority is outside this key. Completed dispatches are replaceable;
+later requests re-enter Exec rather than use the owner table as a result cache.
 
-Same Plan, same identities, same report order — the kernel decides how long a
-run takes, never what it means, and `hedloom_run.binding` holds the rules both use
-so they cannot drift. Two differences are deliberate: a failed point blocks
-its dependents while independent branches finish, and tasks are keyed by
-authored name so a dashboard shows points rather than digests.
+Each consumer publishes its binding before a new execution can launch. The
+worker publishes Exec's selected try and workspace through the handle. Selection
+accounting remains Exec-owned; observation errors do not redefine computation.
 
-The cluster is local and threaded on purpose. No nanny to restart a worker
-holding live `bsub -I` clients — under owner-bound lifetime that would kill
-their farm jobs — and nothing secedes, so a worker with jobs in flight reads as
-running. Note that Dask serializes every task even in-process, so a transport
-is *copied* to its worker; one that cannot be serialized is refused by
-placement name before anything runs.
+An entered handle never re-enters Exec. Dask retries are disabled and a worker
+replay refuses explicitly. Stopping one consumer does not cancel another's
+shared execution. With no consumers, the durable entry gate prevents unentered
+work from running; entered work settles and retains truthful evidence. This is
+withdrawal, not forced termination of an arbitrary Python body or command.
 
-`distributed` is an optional dependency (`pip install hedloom-run[dask]`), reached
-by explicit import: a plan small enough to walk in one thread should not need a
-scheduler. It takes a **floor**, `>=2023.9.2` — where `Client.register_plugin`
-arrives — rather than a pin: a site does not always get to choose its
-`distributed`, and a hard pin turns "a version behind" into "cannot install".
-Verified against 2023.9.2, 2024.8.0 and 2026.7.1.
+Explicit `stop(force=True)` can escalate withdrawal and interrupt solely owned
+pooled commands. The pooled waiter observes durable intent, freezes worker
+admission and removes scheduler interest before a nanny-managed restart. Exec
+publishes the confirmed cancelled attempt while the outer invocation stays alive
+to report it. The allocation survives and its new worker restores capacity.
+Queued cancellation preserves unrelated executing work; shared executions remain
+alive for their other consumers. Other placements still drain. Pool commands use
+Linux SIGKILL immediate-child binding; detached descendants are outside it.
 
-If your `distributed` has no matching **bokeh**, an explicitly enabled
-dashboard cannot be built, and Dask says so as `AttributeError: module
-'distributed.dashboard' has no attribute 'scheduler'` — naming neither bokeh
-nor the dashboard. The import is lazy, so under concurrency one enabled cluster
-can fail while its neighbour succeeds. That is translated into a message that
-names bokeh. What Dask still cannot tell you is whether a point is `PEND` or
-`RUN` — that needs a watcher over the attempt records, which is
-`hedloom_exec.watch` and which `hedloom.Study.submit(watch=True)` now runs for
-the duration of a run.
+Cross-Runtime active joining and recovery after process death are unsupported.
+Exec claims remain the backstop across independent owners.
 
-`dask-jobqueue` is a second, separate extra (`pip install hedloom-run[pooled]`),
-for pooled LSF placement — where invocations reach a cluster whose *workers* are
-themselves LSF jobs, rather than one job per invocation. It is deliberately not
-folded into `[dask]`: a farm sweep placing one job per point needs the
-scheduler and never needs a pool. It also belongs to this unit and no lower one,
-because a pooled transport holds a live Dask client and `hedloom-exec` imports
-neither Dask nor `hedloom_flow`. `LSFPooledTransport` there stays a refusing
-boundary; the implementation is `hedloom_run.pooled`.
+## Sites and placements
 
-A pool is a *second* cluster, opened beside the readiness one by
-`hedloom.session(...)`, and the two are not interchangeable. The readiness
-cluster's scheduler and workers are objects in this process and talk over
-`inproc`; a pool's workers are LSF jobs on farm nodes and must reach their
-scheduler over the network, so that one is TCP and the exposure choices in
-`hedloom_run.cluster` do not transfer to it. Teardown order follows from the
-same fact: readiness workers hold clients into the pool, so they close first.
+`Site` holds independent `records_dir`, `runs_dir` and `work_dir`, address spaces,
+placement transports, concurrency and retention. Relative TOML paths anchor to
+the profile. These are execution configuration, never Plan-owned machine paths.
 
-## What the cluster exposes
+Direct LSF forwards per-invocation queue, cores, memory and licences to the farm.
+Pooled LSF uses separately allocated `dask_jobqueue.LSFCluster` workers. The
+readiness worker holds a client plugin to the pool; a live Client never travels
+inside serialized transport data.
 
-A Dask scheduler starts an HTTP server whether or not anyone opens a browser —
-`dashboard=False` only drops the bokeh routes — and every worker starts one
-too, both on all interfaces. On a shared submit host that publishes your point
-names, workspace paths and profiler to everyone who can reach it. So the site
-says how much of that it wants:
+Each pooled worker offers one `hedloom-command` resource: one command at a time,
+regardless of its allocation's CPU count. Invocation cores and memory must fit
+that allocation. Licences, incompatible pool options and unknown requirements
+refuse rather than disappear. `workers` controls allocated farm jobs;
+`max_jobs` caps gateway wrappers. Different numbers can allow waiting wrappers
+or idle pool workers; they are not interchangeable resource requests.
 
-```toml
-[kernel]
-threads = 32
-dashboard = "none"        # "none" | "loopback" | "network"
-```
+Pool workers are ordinary batch jobs. Orderly close and normal process-exit
+cleanup reclaimed allocations in fake-farm probes. Extended SIGTERM/SIGKILL probes
+on Dask/distributed 2026.7.1 also reclaimed active commands and fake workers
+automatically in about 32.5 seconds. Scheduler loss was detected immediately;
+Dask's default shutdown then gave active executor threads a 30-second grace.
+Batch workers have no direct OS parent-death binding to the submitter; these
+observations do not establish cross-host detection or cleanup deadlines.
+The facade bootstraps a cold Jobqueue dependency on the main thread and restores
+SIGINT; cluster creation and scaling stay on its controller loop.
+Local/fake-farm evidence does not establish real-farm resource enforcement or
+remote shared-filesystem guarantees.
 
-* `"none"` — the default; no listening socket at all. Only possible for the
-  in-process cluster this kernel documents, since workers in their own
-  processes must dial a listener; asking for it with `processes=True` is
-  refused rather than quietly downgraded.
-* `"loopback"` — scheduler *and* worker on `127.0.0.1:0`. Off the network;
-  still reachable by other users of the same host, because loopback is per host
-  and not per user.
-* `"network"` — explicit opt-in to Dask's own behaviour; `cluster_for` passes
-  no address, so the dashboard is reachable from the network.
+## Failure and boundaries
 
-`"none"` costs the dashboard, `/health` and `/metrics`. It does not cost the
-post-mortem: `distributed.performance_report(...)` is computed on the scheduler
-and travels over the comm channel, which is `inproc://` here, so it still
-writes its HTML with nothing bound. Live progress comes from `on_event`.
+A failed producer blocks its dependents. `stop_on_failure=True` stops other
+pending admissions and settles entered work; `False` lets independent branches
+finish. A stopped or rejected Run is distinguished from successful completion
+by the facade lifecycle, even if its partial report contains no failures.
 
-Exposure changes how a run can be watched and nothing about what it computes —
-no identity, no reuse, no Plan content.
+Bodies execute work; they do not submit child Plans. Worker-held nested
+submission is unsupported in the initial async replacement. Caller-level staged
+Runs support dynamic fan-out today; future hierarchical use cases remain open.
 
-See [`ONTOLOME.md`](ONTOLOME.md) for the owned boundary.
+Sources resolve on the submitting machine. Shared paths are assumed to denote
+the same payload at the execution host. This unit performs no data staging,
+remote history service, automated retries or result-dependent in-Plan control.
+
+Run the evidence from the ASS root with `.venv/bin/python -m pytest hedloom/run/tests`.

@@ -27,7 +27,7 @@ be to discover later:
    rather than recomputed. Queue, cores and host are excluded from
    `IDENTITY_KEYS` on purpose; if that ever broke, changing a placement would
    silently discard a farm's worth of results.
-4. **Closing the session leaves no worker behind.** A pooled worker is a batch
+4. **Closing the runtime leaves no worker behind.** A pooled worker is a batch
    job and is *not* owner-bound: unlike `bsub -I`, it does not die with the
    client that submitted it. `LSFCluster.close()` is what stops it, and the
    check at the end is `bjobs`, not an assumption.
@@ -66,7 +66,7 @@ from hedloom import (  # noqa: E402
     operation,
     parameter,
     pooled,
-    session,
+    runtime,
     shell,
     study,
     sweep,
@@ -175,7 +175,7 @@ def pool_jobs() -> set[str] | None:
     """Which farm jobs are live right now, by name, according to LSF itself.
 
     Asked rather than assumed: the claim being checked is that closing the
-    session took the pool's workers with it, and only the farm can settle that.
+    runtime took the pool's workers with it, and only the farm can settle that.
 
     `None` means *could not ask*, which is deliberately not the same value as
     "nothing is running". Returning an empty set for an LSF that failed to
@@ -202,7 +202,7 @@ def pool_jobs() -> set[str] | None:
 
 def run(subject, moved, farm) -> int:
     print("first submission (pooled producers, direct consumers):")
-    first = farm.submit(subject, name="farm-smoke-pooled")
+    first = farm.submit(subject, name="farm-smoke-pooled").wait()
     if not first.succeeded:
         print(first.summary())
         return 1
@@ -222,13 +222,13 @@ def run(subject, moved, farm) -> int:
     print(sample.read_text(), end="")
 
     print("\nsecond submission (identical; must reuse all sixteen):")
-    second = farm.submit(subject, name="farm-smoke-pooled")
+    second = farm.submit(subject, name="farm-smoke-pooled").wait()
     if not second.succeeded or len(second.report.reused) != len(POINTS) * 2:
         print(second.summary())
         return 1
 
     print("\nthird submission (same work, moved off the pool onto bsub -I):")
-    third = farm.submit(moved, name="farm-smoke-pooled")
+    third = farm.submit(moved, name="farm-smoke-pooled").wait()
     if not third.succeeded:
         print(third.summary())
         return 1
@@ -275,10 +275,10 @@ def main() -> int:
     print(subject.summary(), "\n")
 
     before = pool_jobs()
-    with session(site, watch=True) as farm:
+    with runtime(site, watch=True) as farm:
         status = run(subject, moved, farm)
 
-    # The session has closed. A pooled worker is a batch job with no owner
+    # The runtime has closed. A pooled worker is a batch job with no owner
     # binding, so nothing but `LSFCluster.close()` was ever going to stop it —
     # which makes this the one check that cannot be inferred from the run.
     after = pool_jobs()
@@ -287,12 +287,12 @@ def main() -> int:
               "pool's workers stopped is unknown. Check with `bjobs` yourself.")
     elif after - before:
         leaked = sorted(after - before)
-        print(f"\nFAIL: {len(leaked)} farm job(s) outlived the session: "
+        print(f"\nFAIL: {len(leaked)} farm job(s) outlived the runtime: "
               f"{', '.join(leaked)}")
         print("bkill them, and treat this as a leak rather than a flake")
         return 1
     else:
-        print("\nno farm job outlived the session")
+        print("\nno farm job outlived the runtime")
 
     if status == 0:
         print("\npooled farm smoke passed: the pool came up, a mixed plan "

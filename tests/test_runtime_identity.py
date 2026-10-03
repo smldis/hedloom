@@ -1,12 +1,13 @@
 """Fresh observations retain their evidence while equal artifacts reuse work."""
+
+from runtime_helpers import run_study
 import pytest
 import json
 import subprocess
 from pathlib import Path
 
 from hedloom import Site, artifact, directory, located, operation, parameter, returned, study
-from concurrent.futures import ThreadPoolExecutor
-from hedloom import session, RunHistory
+from hedloom import runtime, RunHistory
 import time
 import os
 import shutil
@@ -34,8 +35,7 @@ def git(path, *args):
     return subprocess.check_output(["git", "-C", str(path), *args], text=True).strip()
 
 
-@pytest.mark.parametrize("sequential", [True, False])
-def test_latest_a_a_b_a_sequential(tmp_path, sequential):
+def test_latest_a_a_b_a_observations(tmp_path):
     repository = tmp_path / "repository"
     repository.mkdir()
     git(repository, "init", "-q")
@@ -51,7 +51,7 @@ def test_latest_a_a_b_a_sequential(tmp_path, sequential):
     runs = []
     for commit in (a, a, b, a):
         git(repository, "checkout", "-q", commit)
-        run = revision_study(str(repository)).submit(site=site, name="observe", sequential=sequential)
+        run = run_study(revision_study(str(repository)), site=site, name="observe")
         assert run.succeeded, run.summary()
         runs.append(run)
     assert [run.outputs["report"].value for run in runs] == ["A", "A", "B", "A"]
@@ -93,8 +93,8 @@ def shared_revision(path, markers):
     return held_analysis.named("analysis")(borrow_copy.named("pull")(path=path), markers=markers)
 
 
-@pytest.mark.parametrize("sequential, threads", [(True, 1), (False, 1), (False, 2)])
-def test_independent_observations_join_analysis(tmp_path, sequential, threads):
+@pytest.mark.parametrize("threads", [1, 2])
+def test_independent_observations_join_analysis(tmp_path, threads):
     for name in ("one", "two"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "payload").write_text("A")
@@ -104,20 +104,20 @@ def test_independent_observations_join_analysis(tmp_path, sequential, threads):
         while not predicate():
             assert time.monotonic() < deadline, "barrier timeout"
             time.sleep(.01)
-    with session(site, sequential=sequential) as live, ThreadPoolExecutor(2) as pool:
-        a = pool.submit(live.submit, shared_revision(str(tmp_path / "one"), str(tmp_path)), name="a")
+    with runtime(site) as live:
+        a = live.submit(shared_revision(str(tmp_path / "one"), str(tmp_path)), name="a")
         try:
             wait(lambda: (tmp_path / "calls").exists())
-            b = pool.submit(live.submit, shared_revision(str(tmp_path / "two"), str(tmp_path)), name="b")
+            b = live.submit(shared_revision(str(tmp_path / "two"), str(tmp_path)), name="b")
             # One graph slot cannot acquire B while A's analysis occupies it;
             # allow two slots there to demonstrate the converging boundary.
-            if not sequential and threads == 1:
+            if threads == 1:
                 (tmp_path / "release").touch()
             else:
                 wait(lambda: len(list((tmp_path / "history" / "b.1" / "selections").glob("*/execution.json"))) == 2)
         finally:
             (tmp_path / "release").touch()
-        first, second = a.result(), b.result()
+        first, second = a.wait(), b.wait()
     assert first.succeeded and second.succeeded
     assert first["pull"].record != second["pull"].record
     assert first["analysis"].record == second["analysis"].record
@@ -127,7 +127,7 @@ def test_independent_observations_join_analysis(tmp_path, sequential, threads):
     second_inputs = history.invocation(second.run_id, "analysis")
     assert second_inputs.requested_inputs["repo"]["producer"]["record"] == second["pull"].record
     assert second_inputs.executed_inputs["repo"]["producer"]["record"] == first["pull"].record
-    if sequential or threads == 2:
+    if threads == 2:
         assert first_inputs.execution_id == second_inputs.execution_id
     bindings = [json.loads(p.read_text()) for p in (tmp_path / "history").rglob("execution.json")]
     assert {row["inputs"]["repo"]["value"] for row in bindings if "repo" in row.get("inputs", {})} == {str(tmp_path / "one"), str(tmp_path / "two")}
@@ -152,23 +152,22 @@ def file_study(path):
     return read_tail.named("read")(acquire_file.named("pull")(path=path))
 
 
-@pytest.mark.parametrize("sequential", [True, False])
 @pytest.mark.parametrize("size", [1024, 65 * 1024 * 1024])
-def test_full_file_identity(tmp_path, sequential, size):
+def test_full_file_identity(tmp_path, size):
     source = tmp_path / "source"
     with source.open("wb") as stream:
         stream.truncate(size)
         stream.seek(size - 1)
         stream.write(b"A")
     site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
-    with session(site, sequential=sequential) as live:
-        a = live.submit(file_study(str(source)), name="a")
+    with runtime(site) as live:
+        a = live.submit(file_study(str(source)), name="a").wait()
         os.utime(source, None)
-        same = live.submit(file_study(str(source)), name="same")
+        same = live.submit(file_study(str(source)), name="same").wait()
         with source.open("r+b") as stream:
             stream.seek(size - 1)
             stream.write(b"B")
-        changed = live.submit(file_study(str(source)), name="changed")
+        changed = live.submit(file_study(str(source)), name="changed").wait()
     assert all(run.succeeded for run in (a, same, changed))
     assert same["read"].reused and not changed["read"].reused
     assert a["pull"].artifacts["document"]["modified_ns"] == changed["pull"].artifacts["document"]["modified_ns"]
@@ -191,14 +190,13 @@ def failed_acquisition(path, mode):
     return read_revision.named("analysis")(invalid_acquisition.named("pull")(path=path, mode=mode))
 
 
-@pytest.mark.parametrize("sequential", [True, False])
 @pytest.mark.parametrize("mode", ["raise", "missing_return", "invalid_identity", "missing_path"])
-def test_invalid_acquisition_blocks_consumers(tmp_path, sequential, mode):
+def test_invalid_acquisition_blocks_consumers(tmp_path, mode):
     directory = tmp_path / "repo"
     if mode != "missing_path":
         directory.mkdir()
     site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
-    run = failed_acquisition(str(directory), mode).submit(site=site, name="failed", sequential=sequential)
+    run = run_study(failed_acquisition(str(directory), mode), site=site, name="failed")
     assert run["pull"].outcome == "failed"
     assert run["analysis"].outcome == "blocked"
     assert run["analysis"].input_digest is None
@@ -260,15 +258,14 @@ def pair_study(path):
     return {"left": read_tail.named("left")(pair.left), "right": read_tail.named("right")(pair.right)}
 
 
-@pytest.mark.parametrize("sequential", [True, False])
-def test_named_outputs_invalidate_only_the_changed_port(tmp_path, sequential):
+def test_named_outputs_invalidate_only_the_changed_port(tmp_path):
     source = tmp_path / "source"
     source.write_text("B")
     site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
-    with session(site, sequential=sequential) as live:
-        first = live.submit(pair_study(str(source)), name="first")
+    with runtime(site) as live:
+        first = live.submit(pair_study(str(source)), name="first").wait()
         source.write_text("C")
-        second = live.submit(pair_study(str(source)), name="second")
+        second = live.submit(pair_study(str(source)), name="second").wait()
     assert first.succeeded and second.succeeded
     assert len({run[name].record for run in (first, second) for name in ("pair", "other-observation")}) == 4
     assert second["left"].reused and not second["right"].reused
@@ -290,7 +287,7 @@ def test_historical_identity_is_separate_from_current_access(tmp_path):
     location.mkdir()
     site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
     subject = stable_borrow_study(str(location))
-    first = subject.submit(site=site, name="first", sequential=True)
+    first = run_study(subject, site=site, name="first")
     output = first.outputs["output"]
     assert output.available and output.accessible
     location.rename(tmp_path / "moved")
@@ -298,27 +295,24 @@ def test_historical_identity_is_separate_from_current_access(tmp_path):
     saved = RunHistory(site.runs_dir).outputs(first.run_id)["output"]
     assert saved["available"] and not saved["accessible"]
     assert saved["artifact"]["identity"]["value"] == "A"
-    next_run = subject.submit(site=site, name="missing", sequential=True)
+    next_run = run_study(subject, site=site, name="missing")
     assert not next_run.succeeded
     assert "no longer accessible" in next_run.report.outcomes[0].error
 
 
-def test_releasing_a_completed_generation_keeps_its_replacement(tmp_path):
-    from concurrent.futures import Future
-    from hedloom_run.execution import ExecutionOwner
-    owner = ExecutionOwner(tmp_path)
-    with owner.lock:
-        previous = owner.entry("same")
-        previous.consumers.add("first")
-        previous.future = Future()
-        previous.future.set_result(None)
-        replacement = owner.entry("same")
-        replacement.consumers.add("second")
-    owner.release(previous, "first")
-    assert owner.groups["same"] is replacement
-    assert owner.withdraw(replacement, "second") == "blocked"
-    owner.release(replacement, "second")
-    assert not owner.groups
+def test_a_completed_generation_is_replaced_without_redirecting_history(tmp_path):
+    (tmp_path / 'release').touch()
+    (tmp_path / 'one').mkdir()
+    (tmp_path / 'one' / 'payload').write_text('A')
+    site = Site(records_dir=str(tmp_path / 'records'), runs_dir=str(tmp_path / 'history'))
+    with runtime(site) as live:
+        first = live.submit(shared_revision(str(tmp_path / 'one'), str(tmp_path)), name='first').wait()
+        second = live.submit(shared_revision(str(tmp_path / 'one'), str(tmp_path)), name='second').wait()
+    history = RunHistory(site.runs_dir)
+    a, b = (history.invocation(run.run_id, 'analysis') for run in (first, second))
+    assert a.execution_id != b.execution_id
+    assert a.record == b.record and second['analysis'].reused
+    assert history.invocation(first.run_id, 'analysis').execution_id == a.execution_id
 
 
 @study
@@ -331,8 +325,8 @@ def two_consumers(path, markers):
 def test_one_completion_projects_multiple_invocations(tmp_path):
     (tmp_path / "payload").write_text("A")
     site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"), threads=2)
-    with session(site) as live, ThreadPoolExecutor(1) as pool:
-        future = pool.submit(live.submit, two_consumers(str(tmp_path), str(tmp_path)), name="two")
+    with runtime(site) as live:
+        future = live.submit(two_consumers(str(tmp_path), str(tmp_path)), name="two")
         try:
             deadline = time.monotonic() + 10
             while len(list((tmp_path / "history" / "two.1" / "selections").glob("*/execution.json"))) != 3:
@@ -340,7 +334,7 @@ def test_one_completion_projects_multiple_invocations(tmp_path):
                 time.sleep(.01)
         finally:
             (tmp_path / "release").touch()
-        run = future.result()
+        run = future.wait()
     assert run.succeeded
     assert run["one"].record == run["two"].record
     assert run["one"].invocation_id != run["two"].invocation_id
@@ -361,9 +355,8 @@ def external_file_study(path):
     return read_tail.named("read")(acquire_external_file.named("pull")(path=path))
 
 
-@pytest.mark.parametrize("sequential", [True, False])
 @pytest.mark.parametrize("size", [1024, 65 * 1024 * 1024])
-def test_external_content_identity(tmp_path, sequential, size):
+def test_external_content_identity(tmp_path, size):
     source = tmp_path / "source"
     with source.open("wb") as stream:
         stream.truncate(size)
@@ -371,14 +364,14 @@ def test_external_content_identity(tmp_path, sequential, size):
         stream.write(b"A")
     stamp = source.stat()
     site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
-    with session(site, sequential=sequential) as live:
-        a = live.submit(external_file_study(str(source)), name="a")
-        same = live.submit(external_file_study(str(source)), name="same")
+    with runtime(site) as live:
+        a = live.submit(external_file_study(str(source)), name="a").wait()
+        same = live.submit(external_file_study(str(source)), name="same").wait()
         with source.open("r+b") as stream:
             stream.seek(size - 1)
             stream.write(b"B")
         os.utime(source, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
-        changed = live.submit(external_file_study(str(source)), name="changed")
+        changed = live.submit(external_file_study(str(source)), name="changed").wait()
     assert all(run.succeeded for run in (a, same, changed))
     assert len({run["pull"].record for run in (a, same, changed)}) == 3
     assert same["read"].reused and not changed["read"].reused
@@ -396,7 +389,7 @@ def test_external_content_requires_existing_file(tmp_path, shape):
     if shape == "directory":
         source.mkdir()
     site = Site(records_dir=str(tmp_path / "records"), runs_dir=str(tmp_path / "history"))
-    run = external_file_study(str(source)).submit(site=site, name="invalid", sequential=True)
+    run = run_study(external_file_study(str(source)), site=site, name="invalid")
     assert not run.succeeded
 
 

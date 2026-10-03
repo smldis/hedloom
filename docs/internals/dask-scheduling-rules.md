@@ -208,7 +208,8 @@ Three things worth knowing for our case:
 
 ## 6. How hedloom's vocabulary maps onto the rules
 
-Purely a mapping of the implementation shipped 2026-08-16.
+The current async integration retains these Dask resource rules. Upstream
+source citations elsewhere on this page are a dated reading of 2026.7.1.
 
 | hedloom | Dask |
 | --- | --- |
@@ -216,7 +217,9 @@ Purely a mapping of the implementation shipped 2026-08-16.
 | `[kernel] threads` | local concurrency; the default cap for an in-process placement, and for implicit `local` |
 | `max_jobs` | `Site.placements[name]`, used for both the worker's `nthreads` and `resources={"placement:<name>": cap}` |
 | one in-flight `bsub -I` | one task holding one thread for its whole life |
-| the sequential driver | no scheduler at all; concurrency 1 |
+| local capacity one | one ready wrapper at a time, through the same async/Dask engine |
+| Run priority | controller ordering and `Client.submit(priority=...)`; no preemption |
+| pooled worker | `hedloom-command: 1`, one command at a time |
 
 **On "a default for unannotated tasks":** at the *Plan* level there is already
 one, and it is not a gap — `select_transport` resolves
@@ -224,23 +227,11 @@ one, and it is not a gap — `select_transport` resolves
 invocation has a resolved placement before anything runs**. There is no such
 thing as an unannotated invocation.
 
-The graph kernel now translates that resolved placement into `resources=` for
-every task whose placement has a transport. R3 therefore does not apply to any
-task the run can actually execute.
-
-There is one deliberate exception. If the run has **no transport** for a
-placement, `_admission` returns no resource annotation and `select_transport`
-refuses that invocation on the worker. This is not a fallback: it preserves the
-sequential kernel's per-invocation refusal and lets unrelated branches run.
-Annotating the task would instead leave it permanently unrunnable under R7 and
-make the two kernels disagree about the plan.
-
-The shipped path, stated in terms of these rules:
-
-```
-served placement:    submit(..., resources={p: 1}) -> the worker declaring p (R2)
-unserved placement:  submit(..., resources={})     -> run and refuse that invocation (R3)
-```
+The async controller translates each executable placement into an explicit
+resource requirement. It refuses missing capacity instead of submitting a
+permanently unrunnable task. Unsupported placement never authorizes an
+unannotated fallback. Ready wrappers use `pure=False`, `retries=0`, forwarded
+priority and FIFO ordering; Exec owns reuse and replay protection.
 
 ---
 

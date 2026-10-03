@@ -53,6 +53,7 @@ from hedloom import (  # noqa: E402
     operation,
     parameter,
     returned,
+    runtime,
     shell,
     study,
     sweep,
@@ -172,9 +173,9 @@ def main(work: Path | None = None) -> int:
     site = Site(records_dir=str(records), work_dir=str(workspaces), runs_dir=str(records.parent / "runs"))
 
     print("=== first pass: two points diverge")
-    run = spending_study(POINTS).submit(
-        site=site, watch=True, stop_on_failure=False
-    , name="retention")
+    with runtime(site, watch=True) as live:
+        run = live.submit(spending_study(POINTS), name="retention",
+                          stop_on_failure=False).wait()
     outcomes = [item.outcome for item in run.report.outcomes]
     print(f"\n    invocations: {outcomes.count('succeeded')} succeeded, "
           f"{outcomes.count('failed')} failed")
@@ -195,9 +196,9 @@ def main(work: Path | None = None) -> int:
           f"newer than the seven-day floor ({len(held)} skipped as floor)")
 
     print("\n=== second pass: the corrected points are different computations")
-    fixed = spending_study(CORRECTED).submit(
-        site=site, watch=True, stop_on_failure=False
-    , name="retention")
+    with runtime(site, watch=True) as live:
+        fixed = live.submit(spending_study(CORRECTED), name="retention",
+                          stop_on_failure=False).wait()
     settled_now = [item.outcome for item in fixed.report.outcomes]
     print(f"\n    invocations: {settled_now.count('succeeded')} succeeded, "
           f"{settled_now.count('failed')} failed")

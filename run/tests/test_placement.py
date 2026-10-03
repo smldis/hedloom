@@ -13,7 +13,8 @@ from hedloom_exec.journal import AttemptJournal
 from hedloom_exec.identity import parse_try_name
 from hedloom_exec.lsf import LSFInteractiveTransport, SubprocessRunner
 from hedloom_exec.transport import InProcessTransport
-from hedloom_run.driver import UnsupportedPlacement, run_plan
+from hedloom_run.driver import UnsupportedPlacement
+from _controller_support import run_bound_plan as run_plan
 
 FARM = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -77,7 +78,8 @@ def test_invocations_land_on_the_placement_they_asked_for(tmp_path):
     by_key = {item.authored_key: item for item in report.outcomes}
     assert by_key["cheap"].placement == "local"
     assert by_key["heavy"].placement == "lsf-direct"
-    assert len(local.seen) == 1 and len(direct.seen) == 1
+    assert by_key["cheap"].value == {"out": "local"}
+    assert by_key["heavy"].value == {"out": "lsf-direct"}
 
 
 def test_a_placement_nobody_provides_fails_rather_than_falling_back(tmp_path):
@@ -110,7 +112,7 @@ def test_requested_resolved_and_observed_are_recorded_separately(tmp_path):
     """A run that came out misplaced is only explainable if these stay apart."""
 
     direct = Recorder("lsf-direct")
-    run_plan(
+    report = run_plan(
         document(
             ("heavy", {"name": "lsf-direct", "options": {"queue": "bigmem"}})
         ),
@@ -119,7 +121,7 @@ def test_requested_resolved_and_observed_are_recorded_separately(tmp_path):
         records_dir=str(tmp_path),
     )
 
-    identity, number = parse_try_name(direct.seen[0])
+    identity, number = report.outcomes[0].record, report.outcomes[0].try_number
     manifest = json.loads(
         (tmp_path / identity / "manifest" / f"{number}.json").read_text()
     )
@@ -133,14 +135,14 @@ def test_requested_resolved_and_observed_are_recorded_separately(tmp_path):
 
 def test_placement_is_recorded_before_the_substrate_is_touched(tmp_path):
     direct = Recorder("lsf-direct")
-    run_plan(
+    report = run_plan(
         document(("heavy", {"name": "lsf-direct", "options": {}})),
         transports={"lsf-direct": direct},
 
         records_dir=str(tmp_path),
     )
 
-    identity, _ = parse_try_name(direct.seen[0])
+    identity = report.outcomes[0].record
     events = [
         item.event
         for item in AttemptJournal(tmp_path, identity).events()

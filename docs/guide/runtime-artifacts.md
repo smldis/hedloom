@@ -28,11 +28,9 @@ computation; changed bytes select a new one. The runnable
 [live-source example](../../examples/live_source.py) exercises this using a
 local dictionary as its service and one worker slot.
 
-For nested submission through the same live Session, see the separate
-[nested-studies example](../../examples/nested_studies.py) and
-[Session guidance](running.md#nested-studies-in-one-session). Fresh acquisition
-no longer requires staging, but nesting remains available for integrating a
-study submitted from an operation.
+Worker-held nested submission is deferred. The [historically nested example](../../examples/nested_studies.py)
+now uses caller-level stages; see [running staged Plans](running.md#caller-level-stages).
+Fresh acquisition and analysis can usually compose in one static Plan.
 
 ## Identity and ownership
 
@@ -106,10 +104,10 @@ share that observation. Tries remain attempts/recovery within a record.
 
 The complete Plan is saved before work starts. As inputs resolve, each consumer's
 history saves its candidate identities, paths/values, exact producer references,
-and selected execution handle before joining or admitting execution. A Session's
+and selected execution handle before joining or admitting execution. A Runtime's
 existing owner table shares compatible active invocations after this resolution.
 Compatibility includes implementation, placement, transport and storage bindings;
-there is no cross-Session joining guarantee.
+there is no cross-Runtime joining guarantee.
 
 The actual try writes `inputs_bound` before submission intent and launch. Its
 manifest records captured output identity and ownership before terminal
@@ -123,7 +121,7 @@ historical `available`; `StudyOutput.accessible` performs the same current acces
 check. A present directory does not establish that its recorded commit is still
 checked out. Missing borrowed paths refuse reuse without restoring them.
 
-Plan schema 4 and history schema 2 are the current formats. No migration or
+Plan schema 4 and consumer-history schema 4 are the current formats. No migration or
 legacy return protocol is provided. Runtime identity changes neither the static
 graph nor placement. A blocked invocation whose inputs never resolved reports
 no computation digest.

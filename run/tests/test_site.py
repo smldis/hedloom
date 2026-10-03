@@ -14,7 +14,7 @@ import pytest
 from hedloom_exec.identity import attempt_identity, try_name
 
 from hedloom_exec.transport import InProcessTransport
-from hedloom_run.driver import run_plan
+from _controller_support import run_bound_plan as run_plan
 from hedloom_run.site import Site, SiteError, fingerprint_file
 
 

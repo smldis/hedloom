@@ -101,10 +101,11 @@ nothing concurrent to confuse a failure.
 
 This is the run that catches a wrong `bsub` line, and it is cheap.
 
-Concurrency is the profile's, so `max_jobs = 1` is the honest spelling of
-"one at a time under the real scheduler". If you want *genuinely no scheduler* —
-worth doing once, if `bsub` itself is what you suspect — pass `sequential=True`
-to the example's `session(...)` call. That builds no cluster at all.
+Concurrency is the profile's, so `max_jobs = 1` means one active wrapper at a
+time. To separate controller problems from `bsub` problems, use the transport
+preflight. The async Runtime
+has no sequential mode; use the standalone Exec preflight to inspect the direct
+transport, then the maintained smoke example to test the whole path.
 
 If you would rather debug the kernel before the watcher, drop `watch=True` from
 the same call for this first pass. The watcher is on for the whole run
@@ -145,7 +146,8 @@ the next, failure recording, and reuse on resubmission.
 
 **Has not.** Everything that needs more than one job in flight:
 
-- **The graph kernel itself.** Nothing has yet put it in front of a real queue,
+- **The async Runtime and concurrent executor.** Nothing has yet put this
+  replacement in front of a real queue,
   so concurrency, `max_jobs` as a real bound, and failure isolation between
   branches are exercised only against a fake `bsub` and a real client fixture.
 - **The `bjobs` output parser.** Both call shapes are exercised — `-J <name>`
@@ -195,3 +197,22 @@ client's death propagates to the work, and that hedloom then reads the record
 and the queue correctly. **Whether a real `bsub -I` ends its job when its client
 dies remains LSF's promise**, and a fake cannot check somebody else's promise.
 That is what step 1 of the ladder is for.
+
+
+For pooled placement, local fake-farm probes verified normal process-exit
+reclamation. The initial SIGTERM/SIGKILL probes saw active commands and batch
+workers alive after five seconds. Extended probes on 2026-10-02, using
+Dask/distributed 2026.7.1, observed automatic reclamation after 32.45 seconds for
+SIGTERM and 32.50 seconds for SIGKILL, without issuing `bkill`. The entered
+command would otherwise have run for 60 seconds.
+
+Worker logs show immediate detection of scheduler loss and the start of shutdown.
+Dask's `Worker.close` defaults to a 30-second grace while joining active executor
+threads; worker exit then reclaims the command through its Linux parent-death
+binding. The earlier five-second check ended before that grace expired. This is
+measured delayed cleanup, rather than evidence of permanent orphaning.
+
+Batch allocations still have no direct OS parent-death binding to the submitter.
+These timings establish one local fake-farm case, not a deadline under network
+partitions or a real-farm guarantee. Connectivity, worker shutdown and farm
+walltime remain part of that boundary.

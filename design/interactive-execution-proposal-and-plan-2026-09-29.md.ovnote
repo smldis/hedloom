@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "source": "interactive-execution-proposal-and-plan-2026-09-29.md",
+  "comments": [
+    {
+      "id": "08cf7f8a-b8ae-4ffc-bb36-497dbff297f1",
+      "body": "how do i check for completion without .wait()?",
+      "anchor": {
+        "exact": "if report.succeeded:",
+        "prefix": "                            # waits; returns terminal RunResult\n",
+        "suffix": "\n    print(report.outputs[\"answer\"].value)\nrt.close()           ",
+        "start": 9011,
+        "end": 9031,
+        "view": "preview",
+        "sourceVersion": "0bc334f3d4b565e8d1f8523efe56bcab3dc9cebb5ca31ad674b4e816373a4a6b"
+      },
+      "createdAt": "2026-10-01T19:26:51.989285+00:00",
+      "updatedAt": "2026-10-01T19:27:13.866562+00:00"
+    },
+    {
+      "id": "c4f38900-923e-4734-92b2-332c1f8dd09e",
+      "body": "what is tornado?",
+      "anchor": {
+        "exact": "Tornado",
+        "prefix": " loop. Close them with awaited methods before closing the loop.\n",
+        "suffix": " integration uses the current asyncio loop, as the local probe v",
+        "start": 14467,
+        "end": 14474,
+        "view": "preview",
+        "sourceVersion": "0bc334f3d4b565e8d1f8523efe56bcab3dc9cebb5ca31ad674b4e816373a4a6b"
+      },
+      "createdAt": "2026-10-01T19:29:26.078646+00:00",
+      "updatedAt": "2026-10-01T19:34:00.720295+00:00"
+    },
+    {
+      "id": "0822f041-6aa3-4e0d-88d3-08a7cd87fa17",
+      "body": "we do need to keep compatibility to dask and distributed used on my actual farm",
+      "anchor": {
+        "exact": "Do not inherit the old >=2023.9.2\ncompatibility claim",
+        "prefix": "red distributed\n2026.8.0 family, with matching Dask resolution. ",
+        "suffix": " without testing this new path. Keep Jobqueue optional;\nFlow's s",
+        "start": 24337,
+        "end": 24390,
+        "view": "preview",
+        "sourceVersion": "0bc334f3d4b565e8d1f8523efe56bcab3dc9cebb5ca31ad674b4e816373a4a6b"
+      },
+      "createdAt": "2026-10-01T19:45:05.678087+00:00",
+      "updatedAt": "2026-10-01T19:45:41.714653+00:00"
+    },
+    {
+      "id": "5d060d82-6941-4330-bf94-55cf526bf147",
+      "body": "Why do we have these restrictions? are they simple to implement? do they change the architecture?",
+      "anchor": {
+        "exact": "Initial bound / owner",
+        "prefix": "y owners. No unbounded setting is needed initially.\n\n\n\nResource\n",
+        "suffix": "\nBehavior at capacity\n\n\n\nController\nExactly 1 thread and 1 loop ",
+        "start": 25026,
+        "end": 25047,
+        "view": "preview",
+        "sourceVersion": "0bc334f3d4b565e8d1f8523efe56bcab3dc9cebb5ca31ad674b4e816373a4a6b"
+      },
+      "createdAt": "2026-10-01T19:46:37.292139+00:00",
+      "updatedAt": "2026-10-01T19:47:12.108572+00:00"
+    },
+    {
+      "id": "7602fc5c-59e7-4ae3-a273-303e325bdc49",
+      "body": "We can avoid supporting schema-3 history in any way",
+      "anchor": {
+        "exact": "Add a small read-only schema-3 history decoder for existing saved evidence",
+        "prefix": "comes, terminal run event. Plan schema remains 4 independently.\n",
+        "suffix": ";\nno copying, auto-migration, rewrite, or interpretation as an a",
+        "start": 44073,
+        "end": 44147,
+        "view": "preview",
+        "sourceVersion": "0bc334f3d4b565e8d1f8523efe56bcab3dc9cebb5ca31ad674b4e816373a4a6b"
+      },
+      "createdAt": "2026-10-01T19:58:20.116779+00:00",
+      "updatedAt": "2026-10-01T19:58:40.663655+00:00"
+    },
+    {
+      "id": "22327d79-fa22-4a02-860e-0e9f42733225",
+      "body": "dont we have a venv and a fake farm? we should add a note on the agents.md file about the ass venv ",
+      "anchor": {
+        "exact": "Async Jobqueue cluster lifecycle: untested here because Jobqueue is absent",
+        "prefix": " completed. Before implementation claims, these probes matter:\n\n",
+        "suffix": ".\nLocal async Client/SpecCluster hosting and the async worker-pl",
+        "start": 55507,
+        "end": 55581,
+        "view": "preview",
+        "sourceVersion": "0bc334f3d4b565e8d1f8523efe56bcab3dc9cebb5ca31ad674b4e816373a4a6b"
+      },
+      "createdAt": "2026-10-01T20:13:27.350417+00:00",
+      "updatedAt": "2026-10-01T20:14:08.118059+00:00"
+    }
+  ]
+}
