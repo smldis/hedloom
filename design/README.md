@@ -16,6 +16,7 @@ seven dated files.
 
 | File | What it is | Status |
 | --- | --- | --- |
+| `formal/async-interruption/README.md` | Bounded TLA+ issues discovery, reproducible counterexamples and source correspondence for pooled force interruption. | **Review evidence, 2026-10-03.** Historical models remain tied to their inspected revision; follow-up checks assess task-local loss evidence and pause ownership. This is not a proof of Dask, the farm or the complete runtime. |
 | `nested-studies-historical-reference-2026-10-02.md` | Recoverable pre-async nesting code, shared-Session and sequential-child approaches, capacity/serialization constraints, and future design questions. | **Historical reference, freshly checked.** Six focused tests pass at `e9dbe70`; hierarchical support remains deferred. |
 | `interactive-execution-redesign-2026-09-29.md` | A replacement concept for staggered interactive submissions with explicit resource ownership. | **Adopted and implemented, 2026-10-01.** Dated concept retained; Runtime owns a background loop, Dask executes ready work, and automatic ownership replaces the proposed mandatory resource ceremony. |
 | `interactive-execution-internals-census-2026-09-29.md` | Source-checked execution, resource, evidence, and consumer census at `e9dbe70`, with targeted local probes and documentation contradictions. | **Investigation complete.** Describes the pre-refactor baseline and evidence limits at its recorded revisions. |
