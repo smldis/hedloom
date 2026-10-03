@@ -171,6 +171,19 @@ NFS across hosts, or arbitrary process termination.
   scheduler confirms that exact worker address has disappeared, repeating the
   ownership and location checks. A failed RPC to a still-present worker or an
   absent task does not establish cancellation.
+  Assignment loss is recorded on the existing Dask task before the owned pool
+  scheduler removes its worker. Unknown losses remain uncertain; only an
+  acknowledged owned restart certifies its exact worker loss. Pending evidence
+  waits within the interruption deadline. This preserves never-assigned queues
+  and bulk interruption while refusing false cancellation after disconnection.
+  Task-local admission holds prevent a replacement worker admitting queued work
+  before its restart evidence or pending force withdrawal settles. Exact request
+  cleanup releases its own hold and reconsiders ready work through Dask.
+  Unconfirmed restart evidence remains quarantined; affected Runs can keep
+  waiting until force-withdrawn, even when a replacement is live. Automatic
+  recovery from uncertain physical termination is outside this prototype.
+  Scheduler pause release requires the same key owner, and stale running-status
+  messages cannot clear an owned fence.
   The dispatch gate prevents re-entry into Exec; it does not guard the separate
   pooled command task against rescheduling after unexpected worker loss.
   `retries=0` is not a worker-loss replay policy. That wider pool guarantee
@@ -198,6 +211,13 @@ the latter's trust boundary explicit. Private shared paths carry temporary
 credentials without a new staging or certificate-management responsibility.
 Whether a farm supplies that filesystem isolation remains deployment evidence,
 not something a local fake proves.
+
+The [dated formal investigation](../design/formal/async-interruption/README.md)
+exposed that scheduler disappearance can precede physical command termination.
+Local public-API probes confirmed the false cancellation at the earlier revision.
+Termination evidence now belongs to the owned pool scheduler's task lifetime,
+without turning it into a durable history or a separate recovery service.
+Bounded model checks inform this boundary; they do not prove the full runtime.
 
 ## Contribution to the parent
 

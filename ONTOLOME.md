@@ -371,6 +371,15 @@ Local fake-farm pool security and async-executor tests now exercise authenticate
 command execution, unauthorized endpoint refusal and credential cleanup. This
 supports the chosen integration without establishing real-farm isolation.
 
+Formal issues discovery distinguished scheduler absence from physical command
+termination: a removed worker could leave its command alive while the earlier
+force path published cancellation. The owned pool scheduler now retains loss
+evidence with each task; acknowledged restarts certify only their own loss,
+and uncertainty stays an indeterminate failure. Exact pause ownership also
+prevents delayed cleanup from changing another interruption's fence. The
+[bounded investigation](design/formal/async-interruption/README.md) records
+source correspondence, counterexamples and the remaining assumptions.
+
 The retained Dask path passes local and fake-farm checks with the ASS environment
 (Dask/distributed 2026.7.1). Run tests and facade lifecycle checks also pass on
 cached 2023.9.2 and 2024.8.0 versions without a dependency floor increase.

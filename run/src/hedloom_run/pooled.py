@@ -119,7 +119,16 @@ def _force_support():
     return sys.platform.startswith("linux") and _LIBC is not None
 
 
-def _locate_interrupt(key, client_id, previous_worker=None, dask_scheduler=None):
+def _assignment_evidence(task):
+    from ._pool_scheduler import LOSS
+    record = (getattr(task, "metadata", None) or {}).get(LOSS)
+    if record and record["unknown"]:
+        raise RuntimeError("pooled cancellation indeterminate: prior worker assignment loss is unconfirmed")
+    return bool(record and record["pending"] is not None)
+
+
+def _locate_interrupt(key, client_id, previous_worker=None, request_token=None,
+                      dask_scheduler=None):
     task = dask_scheduler.tasks.get(key)
     if task is None:
         location = {"state": "unregistered"}
@@ -129,7 +138,17 @@ def _locate_interrupt(key, client_id, previous_worker=None, dask_scheduler=None)
         owner = dask_scheduler.clients.get(client_id)
         if owner is None or task.who_wants != {owner} or task.dependents:
             raise RuntimeError("pooled cancellation refused: unrelated scheduling consumers")
-        location = {"state": "located", "worker":
+        pending = _assignment_evidence(task)
+        admission_busy = False
+        if request_token is not None:
+            from ._pool_scheduler import ADMISSION
+            if task.metadata is None:
+                task.metadata = {}
+            own_admission = {"token": request_token, "identity": id(task)}
+            admission_busy = task.metadata.get(ADMISSION) not in (None, own_admission)
+            if not admission_busy:
+                task.metadata[ADMISSION] = own_admission
+        location = {"state": "admission-busy" if admission_busy else "restart-pending" if pending else "located", "worker":
                     task.processing_on.address if task.processing_on else None}
     if previous_worker is not None:
         location["previous_worker_present"] = previous_worker in dask_scheduler.workers
@@ -186,12 +205,18 @@ def _worker_released(key, dask_worker=None):
     return key not in dask_worker.state.tasks
 
 
-def _resume_interrupted_worker(worker, dask_scheduler=None):
+def _resume_interrupted_worker(worker, key, dask_scheduler=None):
+    from ._pool_scheduler import FENCE
     state = dask_scheduler.workers.get(worker)
-    if state is not None and state.status.name == "paused":
+    if state is not None and state.extra.get(FENCE) == key:
+        del state.extra[FENCE]
+        if state.status.name != "paused":
+            return True
         dask_scheduler.handle_worker_status_change(
             status="running", worker=worker, stimulus_id="hedloom-interrupt-aborted"
         )
+        return True
+    return False
 
 
 def _prepare_interrupt(key, client_id, worker_snapshot=None,
@@ -212,6 +237,8 @@ def _prepare_interrupt(key, client_id, worker_snapshot=None,
     owner = scheduler.clients.get(client_id)
     if owner is None or task.who_wants != {owner} or task.dependents:
         raise RuntimeError("pooled cancellation refused: unrelated scheduling consumers")
+    if _assignment_evidence(task):
+        return {"state": "restart-pending"}
     worker = task.processing_on
     address = None
     if worker is not None:
@@ -234,6 +261,12 @@ def _prepare_interrupt(key, client_id, worker_snapshot=None,
         if worker.status.name not in {"running", "paused"}:
             raise RuntimeError("pooled cancellation refused: worker is already unavailable")
         address = worker.address
+        from ._pool_scheduler import FENCE
+        if not hasattr(worker, "extra"):
+            worker.extra = {}
+        if worker.extra.get(FENCE) not in {None, key}:
+            raise RuntimeError("pooled cancellation refused: scheduler fence has another owner")
+        worker.extra[FENCE] = key
         scheduler.handle_worker_status_change(
             status="paused", worker=address, stimulus_id=f"hedloom-interrupt-{key}"
         )
@@ -243,26 +276,61 @@ def _prepare_interrupt(key, client_id, worker_snapshot=None,
         )
     except BaseException:
         if address:
-            scheduler.handle_worker_status_change(
-                status="running", worker=address, stimulus_id=f"hedloom-interrupt-aborted-{key}"
-            )
+            _resume_interrupted_worker(address, key, scheduler)
         raise
     return {"state": "withdrawn", "worker": address}
 
 
 def _interrupt_ack(key, worker, dask_scheduler=None):
+    from ._pool_scheduler import FENCE
     if key in dask_scheduler.tasks:
         return False
     if worker:
         state = dask_scheduler.workers.get(worker)
-        if state is None or state.status.name != "paused":
+        if (state is None or state.status.name != "paused"
+                or state.extra.get(FENCE) != key):
             raise RuntimeError("pooled cancellation lost its exclusive paused worker")
     return True
+
+
+def _begin_owned_restart(key, worker, token, dask_scheduler=None):
+    from ._pool_scheduler import FENCE, RESTART
+    state = dask_scheduler.workers.get(worker)
+    if state is None or state.status.name != "paused" or state.extra.get(FENCE) != key:
+        raise RuntimeError("pooled restart lost its owned worker fence")
+    state.extra[RESTART] = token
+    return {"worker_identity": id(state),
+            "tasks": [(task.key, id(task)) for task in state.processing]}
+
+
+def _certify_owned_restart(worker, token, evidence, dask_scheduler=None):
+    from ._pool_scheduler import LOSS, reconsider
+    for key, identity in evidence["tasks"]:
+        task = dask_scheduler.tasks.get(key)
+        if task is None or id(task) != identity:
+            continue
+        record = (getattr(task, "metadata", None) or {}).get(LOSS)
+        if record and record["pending"] == {
+                "token": token, "worker": worker, "identity": evidence["worker_identity"]}:
+            # Unknown losses are sticky, even when this exact loss is proven.
+            record["pending"] = None
+            reconsider(task, dask_scheduler)
+
+
+def _release_interrupt_admission(key, request_token, dask_scheduler=None):
+    from ._pool_scheduler import ADMISSION, reconsider
+    task = dask_scheduler.tasks.get(key)
+    if task is not None and (task.metadata or {}).get(ADMISSION) == {
+            "token": request_token, "identity": id(task)}:
+        del task.metadata[ADMISSION]
+        reconsider(task, dask_scheduler)
 
 
 async def _interrupt_command(client, future):
     """Run on the existing pooled-client loop; return only confirmed outcomes."""
     from distributed.comm.core import CommClosedError
+    import uuid
+    request_token = uuid.uuid4().hex
     worker = None
     restart_started = False
 
@@ -275,10 +343,14 @@ async def _interrupt_command(client, future):
             # a restart may leave this command temporarily unassigned.
             snapshot = None
             location = await client.run_on_scheduler(
-                _locate_interrupt, key=future.key, client_id=client.id
+                _locate_interrupt, key=future.key, client_id=client.id,
+                request_token=request_token
             )
             if location["state"] == "completed":
                 return None
+            if location["state"] in {"restart-pending", "admission-busy"}:
+                await asyncio.sleep(.02)
+                continue
             if location["state"] != "unregistered":
                 worker = location["worker"]
                 if worker:
@@ -289,6 +361,7 @@ async def _interrupt_command(client, future):
                         relocated = await client.run_on_scheduler(
                             _locate_interrupt, key=future.key, client_id=client.id,
                             previous_worker=worker,
+                            request_token=request_token,
                         )
                         if relocated["previous_worker_present"]:
                             # A lost reply may have installed our fence. Keep
@@ -316,6 +389,14 @@ async def _interrupt_command(client, future):
                 if decision["state"] == "moved":
                     await asyncio.sleep(.02)
                     continue
+                if decision["state"] == "restart-pending":
+                    # A concurrent owned restart must be certified before this
+                    # task can be withdrawn. Release only our actual fence.
+                    if worker:
+                        await client.run(_resume_command_worker, key=future.key, workers=[worker])
+                    worker = None
+                    await asyncio.sleep(.02)
+                    continue
                 if decision["state"] != "unregistered":
                     break
                 raise RuntimeError("pooled command disappeared before cancellation acknowledgement")
@@ -336,28 +417,39 @@ async def _interrupt_command(client, future):
                                        workers=[worker]))[worker]:
                 await asyncio.sleep(.02)
         if worker and entered:
+            token = uuid.uuid4().hex
+            evidence = await client.run_on_scheduler(
+                _begin_owned_restart, key=future.key, worker=worker, token=token)
             restart_started = True
             restarted = await client.restart_workers([worker], timeout=30,
                                                      raise_for_error=False)
             if restarted.get(worker) != "OK":
                 raise RuntimeError(f"pooled worker restart not confirmed: {restarted!r}")
+            await client.run_on_scheduler(_certify_owned_restart, worker=worker,
+                                          token=token, evidence=evidence)
         return {"reason": "force stop requested", "worker": worker,
                 "worker_restarted": bool(worker and entered)}
 
     try:
         return await asyncio.wait_for(interrupt(), timeout=_INTERRUPT_TIMEOUT)
     finally:
+        try:
+            await asyncio.wait_for(client.run_on_scheduler(
+                _release_interrupt_admission, key=future.key, request_token=request_token), timeout=2)
+        except Exception:
+            logging.getLogger(__name__).exception("could not release pooled force admission hold")
         if worker and not restart_started:
             # No intentional worker loss occurred. Worker-side resource
             # reservations still prevent overlapping commands while it drains.
             # An uncertain restart instead leaves the old worker quarantined;
             # resuming it could overlap a replacement with surviving work.
             try:
-                resumed = await asyncio.wait_for(client.run(
+                # Scheduler cleanup precedes releasing the actual worker fence;
+                # a later claimant cannot be resumed by our delayed cleanup.
+                await asyncio.wait_for(client.run_on_scheduler(
+                    _resume_interrupted_worker, worker=worker, key=future.key), timeout=2)
+                await asyncio.wait_for(client.run(
                     _resume_command_worker, key=future.key, workers=[worker]), timeout=2)
-                if resumed.get(worker):
-                    await asyncio.wait_for(client.run_on_scheduler(
-                        _resume_interrupted_worker, worker=worker), timeout=2)
             except Exception:
                 logging.getLogger(__name__).exception(
                     "could not restore pooled worker after unconfirmed interruption"
@@ -745,11 +837,11 @@ def _scheduler_exposure(dashboard: str) -> dict[str, Any]:
 
 
 def _pool_scheduler_class(dashboard: str) -> dict[str, Any]:
+    from ._pool_scheduler import OwnedPoolScheduler
     if dashboard == "none":
-        from distributed import Scheduler
         from .cluster import _silent
-        return {"scheduler_cls": _silent(Scheduler)}
-    return {}
+        return {"scheduler_cls": _silent(OwnedPoolScheduler)}
+    return {"scheduler_cls": OwnedPoolScheduler}
 
 
 def open_pools(site: Any) -> dict[str, Any]:

@@ -203,8 +203,11 @@ result = run.wait()  # Inspect the actual outcomes after interruption settles.
 Force is a request, not a successful-termination receipt. The live snapshot's
 `force_requested` records that request; terminal outcomes and saved attempt
 records establish what happened. If interruption cannot be confirmed, the
-result retains the failure rather than claiming cancellation. A command that
-finishes before interruption retains its actual result. Restarting restores
+result retains the failure rather than claiming cancellation. Failed interruption
+can leave admitted work running or allow queued work to enter while cancellation
+messages are delayed. A worker disappearing from scheduler state is not proof
+that its command stopped. A command that finishes before interruption retains
+its actual result. Restarting restores
 pool capacity and does not automatically rerun the cancelled computation.
 `live.stop(force=True)` applies the same request to all Runs it currently owns.
 
