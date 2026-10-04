@@ -278,7 +278,7 @@ class Runtime:
 
     async def _initialize(self):
         from hedloom._offload import Offload
-        from hedloom_run.cluster import async_cluster_for
+        from hedloom_run.cluster import async_cluster_for, dashboard_link
         from hedloom_run.controller import Controller
         from hedloom_run.pooled import open_pools_async, attach_pools_async
         try:
@@ -292,7 +292,7 @@ class Runtime:
             self._client = await Client(self._cluster, asynchronous=True, set_as_default=False)
             self._pools = await open_pools_async(self.site)
             await attach_pools_async(self._client, self._pools)
-            self._dashboard_link = self._cluster.dashboard_link
+            self._dashboard_link = dashboard_link(self._cluster, dashboard=self.site.dashboard)
             self._controller = Controller(self._client, self.site.capacity, self._work,
                 executions_dir=Path(self.site.runs_dir or self.site.records_dir) / '_meta' / 'executions')
             if self.watch:

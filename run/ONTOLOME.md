@@ -133,6 +133,10 @@ NFS across hosts, or arbitrary process termination.
   readiness and pool-scheduler HTTP listeners; `loopback` binds locally; `network`
   opts into exposed diagnostics. Farm workers can retain health/metrics endpoints.
   HTTP is unauthenticated and loopback is shared by users of a host.
+  Runtime dashboard links derive their host from diagnostic exposure, not the
+  inproc readiness address: loopback uses `127.0.0.1`, retaining Dask's URL
+  template and assigned HTTP port. A local regression opens the advertised URL
+  after Study completion while the Runtime remains open.
   A transport copied to a worker must be serializable; diagnostics name the
   failing placement.
 - The composed execution-isolation requirement adopted on 2026-10-03 excludes

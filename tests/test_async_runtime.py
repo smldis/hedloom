@@ -51,6 +51,20 @@ def site(tmp_path, capacity=1):
                 work_dir=str(tmp_path/'work'), placements={'local': {'max_jobs': capacity}})
 
 
+def test_loopback_dashboard_link_opens_after_study_completion(tmp_path):
+    pytest.importorskip('bokeh')
+    from urllib.parse import urlsplit
+    from urllib.request import urlopen
+
+    with runtime(site(tmp_path), {'kernel': {'dashboard': 'loopback'}}) as owner:
+        owner.ready(15)
+        link = owner.dashboard_link
+        assert urlsplit(link).hostname == '127.0.0.1'
+        owner.submit(simple(), name='dashboard', reproducibility=DISABLED).result(15)
+        with urlopen(link, timeout=5) as response:
+            assert response.status == 200
+
+
 def until(predicate, timeout=10):
     deadline = time.monotonic() + timeout
     while not predicate():

@@ -70,7 +70,7 @@ from typing import Any, Callable, Mapping
 
 from hedloom_run.site import EXPOSURES, PLACEMENT_RESOURCE, Site, SiteError
 
-__all__ = ["EXPOSURES", "async_cluster_for", "cluster_for", "local_cluster", "spec_cluster"]
+__all__ = ["EXPOSURES", "async_cluster_for", "cluster_for", "dashboard_link", "local_cluster", "spec_cluster"]
 
 
 _DASHBOARD_IMPORT = "distributed.dashboard"
@@ -369,6 +369,23 @@ def spec_cluster(
         ),
         dashboard,
     )
+
+
+def dashboard_link(cluster: Any, *, dashboard: str) -> str:
+    """Format diagnostics using their exposure, not the readiness address.
+
+    An inproc scheduler address contains a machine IP unrelated to its HTTP
+    listener. Keep Dask's configured URL template while supplying the actual
+    loopback host and dynamically assigned dashboard port.
+    """
+    if dashboard != "loopback":
+        return cluster.dashboard_link
+    port = cluster.scheduler_info.get("services", {}).get("dashboard")
+    if port is None:
+        return ""
+    from distributed.utils import format_dashboard_link
+
+    return format_dashboard_link("127.0.0.1", port)
 
 
 def cluster_for(site: Site, *, dashboard: str | None = None) -> Any:
