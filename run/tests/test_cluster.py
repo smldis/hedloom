@@ -15,10 +15,26 @@ import logging
 import threading
 import pytest
 
-from hedloom_run.cluster import cluster_for, local_cluster, spec_cluster
+from hedloom_run.cluster import cluster_for, dashboard_link, local_cluster, spec_cluster
 from hedloom_run.site import Site, SiteError
 
 distributed = pytest.importorskip("distributed")
+
+
+def test_dashboard_link_preserves_configured_proxy_and_disabled_exposure():
+    from types import SimpleNamespace
+    import dask
+
+    cluster = SimpleNamespace(scheduler_info={'services': {'dashboard': 12345}},
+                              dashboard_link='network-link')
+    with dask.config.set({'distributed.dashboard.link':
+                          'https://proxy.example/{host}/{port}/status'}):
+        assert dashboard_link(cluster, dashboard='loopback') == (
+            'https://proxy.example/127.0.0.1/12345/status')
+        assert dashboard_link(cluster, dashboard='network') == 'network-link'
+    silent = SimpleNamespace(scheduler_info={'services': {}}, dashboard_link='')
+    assert dashboard_link(silent, dashboard='loopback') == ''
+    assert dashboard_link(silent, dashboard='none') == ''
 
 
 class Recorder:

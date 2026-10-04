@@ -262,12 +262,17 @@ graceful settlement. Automatic exit cleanup is bounded and can leave incomplete
 history; orderly `close()` is the drain boundary. Real pooled farm workers
 additionally depend on cluster cancellation, connectivity and farm walltime; see [farm evidence](first-farm-run.md).
 
-For a dashboard before submission, explicitly wait for startup:
+For a dashboard before submission, enable it and explicitly wait for startup.
+`watch=True` controls console progress; it does not enable the dashboard:
 
 ```python
+live = runtime(site, {"kernel": {"dashboard": "loopback"}}, watch=True)
 live.ready()
 print(live.dashboard_link)
 ```
+
+The loopback link uses `127.0.0.1` and the assigned HTTP port. It remains
+available after a Study finishes while its Runtime is open.
 
 Runtime construction and context entry do not wait for cluster or farm startup;
 construction begins opening the Site's configured resources, including pooled
