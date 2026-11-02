@@ -138,6 +138,32 @@ After editing the file, repeat `%run -n manual_study.py` and build a **new**
 operation bodies. The [source-reloading rules](authoring.md#editing-and-rerunning-a-script)
 explain what edits affect reuse.
 
+For imported modules, IPython autoreload can refresh definitions before each
+command instead of repeating `%run`:
+
+```python
+%load_ext autoreload
+%autoreload 2
+from hedloom import Site, runtime
+from manual_study import square_study
+
+site = Site.from_file("site.toml")
+live = runtime(site)
+
+# Repeat these two lines after saving changes to manual_study.py.
+subject = square_study(3)
+receipt = live.submit(subject, name="exploration")
+```
+
+Both `from manual_study import square_study` and
+`import manual_study as tb; tb.square_study(3)` support this loop for a
+module-level `@study`. Calling an existing imported builder resolves the current
+definition at the same source location, including edits to graph construction
+and nested flows in that module. A built `subject` retains its selected Plan and
+operation bodies; submitted Runs also pin referenced same-module helper code.
+The controller continues independently while the prompt is idle. No IPython
+event-loop integration or `await` is needed for `live.submit`.
+
 File-backed definitions give interactive authoring a stable source location.
 You can define operations directly at the prompt, but Hedloom fingerprints
 source through `inspect.getsource()`: if source cannot be recovered, reuse
@@ -148,7 +174,10 @@ operation registration also checks their source origin.
 
 Neither source reloading nor retaining an IPython namespace snapshots mutable
 globals, imported helpers, or external state. Pass changing values as declared
-configuration or inputs. Keep planning handles inside the authored graph;
+configuration or inputs. Editing only a helper is not included in an
+operation's body fingerprint; bump the operation's explicit `version` when
+such an implementation dependency changes. Keep planning handles inside the
+authored graph;
 inspect ordinary values through `run.outputs` after completion.
 
 ## One owner, several Runs

@@ -19,6 +19,7 @@ lines whose only job was to agree with the first file.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 from typing import Any, Callable, Mapping
 
 from hedloom_flow import (  # noqa: F401 - the authoring surface, re-exported
@@ -202,6 +203,10 @@ class StudyBuilder:
     arguments that distinguish one member from another. Every member carries
     the family's stable ``name`` into its records. Calling it plans, which costs
     nothing but Python; `submit` is still the only thing that spends.
+
+    A retained import follows a redefinition at the same module source
+    declaration when called. Materialized Studies keep their selected Plan
+    and operation bodies.
     """
 
     build: Callable[..., Plan]
@@ -209,11 +214,23 @@ class StudyBuilder:
     declared: Mapping[str, Any] | None = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Study:
-        plan = self.build(*args, **kwargs)
+        # Autoreload upgrades functions, but cannot replace a StudyBuilder held
+        # by `from module import study`. Follow the source declaration in its
+        # module before planning; finished Studies remain bound to their Plan.
+        builder = self
+        function = getattr(self.build, "__wrapped__", self.build)
+        current = sys.modules.get(getattr(function, "__module__", ""))
+        for part in getattr(function, "__qualname__", "").split("."):
+            current = getattr(current, part, None)
+        if isinstance(current, StudyBuilder):
+            replacement = getattr(current.build, "__wrapped__", current.build)
+            if _study_origin(replacement) == _study_origin(function):
+                builder = current
+        plan = builder.build(*args, **kwargs)
         return Study(
             plan,
-            self.declared if self.declared is not None else _implementations_for(plan),
-            name=self.name,
+            builder.declared if builder.declared is not None else _implementations_for(plan),
+            name=builder.name,
         )
 
     def __getattr__(self, name: str) -> Any:

@@ -48,6 +48,15 @@ grid_refinement()       # StudyBuilder.__call__   src/hedloom/__init__.py:175
             └─ Study(name, plan, implementations)
 ```
 
+A retained module-level `StudyBuilder` first resolves the current builder at
+its defining module and qualified name, checking the source file and qualified
+function name before following a replacement. This supports IPython
+`from module import builder` without changing Flow's immutable operation/flow
+definitions or introducing another registration table. The family is a route
+to fresh planning; the resulting `Study` retains its Plan and exact operation
+bindings. Runtime submission separately pins selected code and same-module
+helpers before asynchronous preparation.
+
 Inside that context, calling an operation does **not** call the body. It goes to
 `PlanDraft._call_operation` (`authoring.py:723`), which:
 

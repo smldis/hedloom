@@ -191,6 +191,19 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   one. Exported Plan output names do not participate in study identity, and
   the study name does not participate in execution-record identity: it names
   the requester, and the declared computation names the record.
+- A module-level study family retained across source reload resolves the
+  current builder at its module/qualified-name declaration when called,
+  guarded by matching source file and qualified function name. A built `Study`
+  remains a selected Plan and operation binding, while Runtime registration
+  separately pins code and referenced same-module helpers. Real IPython
+  autoreload modes 2 and 3 exposed that retaining a callable decorator object
+  otherwise combined old study logic with new module globals. The adopted
+  facade change follows the source declaration without mutating Flow's
+  immutable definitions or adding a second registry. Direct operation/flow
+  imports and call views retain their original definitions; helper-only edits
+  still need declared dependencies or explicit operation version changes.
+  `tests/test_interactive_reload.py` supplies local execution, reuse and queued
+  Run evidence with IPython 9.18.1, not a guarantee for all reloader versions.
 - An operation body **runs**. It receives the inputs the Plan resolved, its
   declared config, and — if it names the reserved parameter `out` — a
   `Workspace` addressing that attempt's own directory. Attribute access on the

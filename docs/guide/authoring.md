@@ -281,6 +281,22 @@ their matching bodies rather than silently using the latest replacement.
 Different source functions cannot claim an already registered operation name.
 Moving a study definition within its file does not create a name collision.
 
+Calling a retained module-level `@study` import, such as
+`from testbenches import my_study`, resolves the current builder at that
+source declaration before planning. This also picks up changed study arguments,
+graph construction, default policy, explicit implementations, and study name.
+It follows only a matching source file and qualified function name; rebinding
+the module attribute to an unrelated study does not redirect the retained
+builder. A previously built `Study` is already materialized: call the builder
+again after an edit rather than resubmitting the old object to obtain new code.
+
+This refresh applies to calling the study family. Retained `@operation` and
+`@flow` objects, their `.named(...)`/`.options(...)` call views, and builder
+metadata are still the objects originally imported. When assembling a graph
+at the prompt, access updated operations and flows through their module or
+repeat their imports. Local definitions inside a factory have no module
+attribute to resolve; call the factory again to obtain their replacements.
+
 Registration pins selected function code with a shallow globals mapping. Later
 source edits can supply a new function to a new Run without replacing a queued
 Run's chosen code. Mutable objects, closures, imported libraries and external
