@@ -23,6 +23,13 @@ pytest.importorskip("cryptography")
 from distributed.security import Security
 
 
+@pytest.fixture(autouse=True)
+def private_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+
 def test_owned_contexts_preserve_verification_and_pickle_without_global_policy_changes():
     import cloudpickle
     import pickle
@@ -74,12 +81,26 @@ def test_private_credentials_and_repr_do_not_expose_key_material(tmp_path):
     assert not directory.exists()
 
 
-@pytest.mark.parametrize("unsafe", ["records", "ancestor"])
+def test_new_credential_ancestors_stay_private_with_shared_project_umask():
+    root = Path.home() / ".hedloom" / "pool-credentials"
+    previous = os.umask(0o002)
+    owner = None
+    try:
+        owner = PoolCredentials(root)
+        for path in (root.parent, root, owner.directory):
+            assert stat.S_IMODE(path.stat().st_mode) == 0o700
+    finally:
+        os.umask(previous)
+        if owner is not None:
+            owner.close()
+
+
+@pytest.mark.parametrize("unsafe", ["credentials", "ancestor"])
 def test_unsafe_writable_ancestry_refuses_before_listener_or_worker_files(tmp_path, unsafe):
     parent = tmp_path / "ancestor"
-    root = parent / "records"
+    root = parent / "credentials"
     root.mkdir(parents=True)
-    (root if unsafe == "records" else parent).chmod(0o777)
+    (root if unsafe == "credentials" else parent).chmod(0o777)
     with pytest.raises(TransportError, match="protected|without group/world"):
         PoolCredentials(root)
     assert not list(root.glob(".hedloom-pool-*"))
@@ -109,7 +130,7 @@ def test_constructor_failure_reclaims_jobqueue_retained_worker_files(tmp_path):
         with pytest.raises(ValueError, match="invalid job shape"):
             asyncio.run(open_pools_async(site))
     assert jobqueue.LSFCluster._dummy_job is original
-    assert not list((tmp_path / "records").glob(".hedloom-pool-*"))
+    assert not list(Path(site.pool_credentials_dir).glob(".hedloom-pool-*"))
 
 
 def test_invalid_sync_allocation_fails_before_creating_credentials(tmp_path):
@@ -121,7 +142,7 @@ def test_invalid_sync_allocation_fails_before_creating_credentials(tmp_path):
         open_pools(site)
     # Retain the exception/traceback: credential removal must not require GC.
     assert failure.value is not None
-    assert not list((tmp_path / "records").glob(".hedloom-pool-*"))
+    assert not Path(site.pool_credentials_dir).exists()
 
 
 def test_scheduler_startup_failure_reclaims_worker_credentials(tmp_path, monkeypatch):
@@ -138,7 +159,54 @@ def test_scheduler_startup_failure_reclaims_worker_credentials(tmp_path, monkeyp
     })
     with pytest.raises(RuntimeError, match="deliberate scheduler startup failure"):
         asyncio.run(open_pools_async(site))
-    assert not list((tmp_path / "records").glob(".hedloom-pool-*"))
+    assert not list(Path(site.pool_credentials_dir).glob(".hedloom-pool-*"))
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_unsafe_credentials_refuse_without_falling_back_to_records(
+    tmp_path, asynchronous, explicit,
+):
+    records = tmp_path / "records"
+    records.mkdir(mode=0o700)
+    if explicit:
+        unsafe = tmp_path / "unsafe"
+        unsafe.mkdir(mode=0o777)
+        unsafe.chmod(0o777)
+        options = {"pool_credentials_dir": str(unsafe / "credentials")}
+    else:
+        unsafe = Path.home()
+        unsafe.chmod(0o777)
+        options = {}
+    site = Site(records_dir=str(records), placements={
+        "pool": {"kind": "lsf-pooled", "workers": 0, "max_jobs": 1},
+    }, **options)
+    with pytest.raises(TransportError, match=str(unsafe)):
+        if asynchronous:
+            asyncio.run(open_pools_async(site))
+        else:
+            open_pools(site)
+    assert not list(records.iterdir())
+    assert not list(Path(site.pool_credentials_dir).glob(".hedloom-pool-*"))
+
+
+def test_sync_pool_uses_separate_credentials_with_shared_records(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    site = Site(records_dir=str(shared / "records"), placements={
+        "pool": {"kind": "lsf-pooled", "workers": 0, "max_jobs": 1},
+    })
+    pools = open_pools(site)
+    directories = list(Path(site.pool_credentials_dir).glob(".hedloom-pool-*"))
+    try:
+        assert len(directories) == 1
+        assert pools["pool"].scheduler_address.startswith("tls://")
+        assert not Path(site.records_dir).exists()
+    finally:
+        for cluster in pools.values():
+            cluster.close()
+    assert all(not directory.exists() for directory in directories)
 
 
 async def rejected_client(address, security):
@@ -205,7 +273,7 @@ def test_scheduler_requires_its_own_client_certificate(tmp_path):
             await close_pools_async(pools)
 
     asyncio.run(check())
-    assert not list((tmp_path / "records").glob(".hedloom-pool-*"))
+    assert not list(Path(site.pool_credentials_dir).glob(".hedloom-pool-*"))
 
 
 def test_truncated_tls_frame_closes_without_poisoning_another_authenticated_connection(tmp_path):
@@ -245,27 +313,36 @@ def test_truncated_tls_frame_closes_without_poisoning_another_authenticated_conn
     asyncio.run(check())
 
 
-def test_tls_pool_authenticates_clients_workers_and_nannies_and_cleans_retained_handles(tmp_path, monkeypatch):
+@pytest.mark.parametrize("explicit", [False, True])
+def test_tls_pool_authenticates_clients_workers_and_nannies_and_cleans_retained_handles(tmp_path, monkeypatch, explicit):
     fake = Path(__file__).resolve().parents[2] / "exec" / "tests" / "fakefarm"
     monkeypatch.setenv("PATH", str(fake) + os.pathsep + os.environ["PATH"])
     farm = tmp_path / "farm"
     monkeypatch.setenv("FAKE_LSF_STATE", str(farm))
     for command in ("bsub", "bjobs", "bkill"):
         assert Path(shutil.which(command)).parent == fake
-    records = tmp_path / "records"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    records = shared / "records"
+    records.mkdir()
+    records.chmod(0o770)
+    options = {"pool_credentials_dir": str(tmp_path / "private-credentials")} if explicit else {}
     site = Site(records_dir=str(records), placements={
         "one": {"kind": "lsf-pooled", "workers": 1, "max_jobs": 1},
         "two": {"kind": "lsf-pooled", "workers": 0, "max_jobs": 1},
-    })
+    }, **options)
 
     async def check():
         pools = await open_pools_async(site)
         client = None
-        directories = list(records.glob(".hedloom-pool-*"))
+        directories = list(Path(site.pool_credentials_dir).glob(".hedloom-pool-*"))
         handles = [getattr(pool, "_job_" + field) for pool in pools.values()
                    for field in ("ca_file", "cert", "key")]
         try:
             assert len(directories) == 2
+            assert not list(records.glob(".hedloom-pool-*"))
+            assert stat.S_IMODE(Path(site.pool_credentials_dir).stat().st_mode) == 0o700
             assert pools["one"].security.tls_ca_file != pools["two"].security.tls_ca_file
             for directory in directories:
                 assert stat.S_IMODE(directory.stat().st_mode) == 0o700
@@ -355,7 +432,7 @@ def test_explicit_opt_out_uses_tcp_even_with_ambient_tls_configuration(tmp_path,
     with dask.config.set({"distributed.comm.require-encryption": True,
                          "jobqueue.lsf.job-script-prologue": ["export HEDLOOM_TEST_PROLOGUE=kept"]}):
         asyncio.run(check())
-    assert not list((tmp_path / "records").glob(".hedloom-pool-*"))
+    assert not Path(site.pool_credentials_dir).exists()
     jobs = [json.loads(path.read_text()) for path in (tmp_path / "farm").glob("*.json")]
     assert len(jobs) == 1
     assert jobs[0]["state"] not in ("PEND", "RUN")

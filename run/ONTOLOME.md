@@ -144,9 +144,15 @@ NFS across hosts, or arbitrary process termination.
   arbitrary code through owned execution resources by default, assuming ordinary
   OS isolation. Networked pools default to per-pool mutual TLS using Dask temporary
   Security and Jobqueue worker credentials. Private runtime credential directories
-  under `Site.records_dir` are `0700`, files `0600`, and must be shared at identical
+  under `Site.pool_credentials_dir` are `0700`, files `0600`, and must be shared at identical
   paths with account isolation, including safe ancestors and consistent UID/ACL
   enforcement. Orderly close and failed startup clean them up.
+  The independent credential root defaults to `~/.hedloom/pool-credentials`;
+  Python and profile configuration can select a protected farm-visible path.
+  Missing ancestors are created privately and existing permissions preserved.
+  Unsafe credential ancestry refuses with the offending path, without falling
+  back to records. Records may remain in collaborative project storage; moving
+  runtime credentials does not move execution evidence or alter its identity.
   Missing support must fail closed. `authentication="none"` is the explicit
   per-pool opt-out, visible in canonical `Site.placements` and supported Runtime
   overrides. The worker plugin carries Security separately from transport settings;

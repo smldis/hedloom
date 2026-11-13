@@ -32,6 +32,9 @@ study run from elsewhere still means the same thing:
 records_dir = "_runs/farm-smoke/records"
 work_dir = "_runs/farm-smoke/work"
 runs_dir = "_runs/farm-smoke/runs"
+# Optional: defaults to ~/.hedloom/pool-credentials on the submit host.
+# Set an absolute shared path if home is not visible on farm nodes.
+# pool_credentials_dir = "/shared/private/yourname/pool-credentials"
 
 [placement.lsf]
 kind = "lsf-interactive"
@@ -159,14 +162,41 @@ connections. Scheduler, worker and submit-host clients use credentials generated
 for that pool; no manual certificate setup is needed. Install the `pooled` extra
 in the environment that starts the Runtime.
 
-Credentials live in a private temporary directory under `records_dir`. That
-directory must be accessible at the **same path** on the submit host and farm
-nodes, with permissions that exclude other OS users: directory mode `0700` and
-credential files `0600`. Orderly close and failed startup remove it. The protection
-also requires `records_dir` and its ancestors to prevent other users replacing
-those paths. Ownership, filesystem ACLs and UID mapping must preserve that
-isolation across hosts. Unsafe writable ancestors refuse startup; a sticky
-directory such as `/tmp` is acceptable when its child is owned and protected.
+Credentials live in a private temporary directory under
+`Site.pool_credentials_dir`, independently of `records_dir`, `work_dir` and
+`runs_dir`. The default is `~/.hedloom/pool-credentials` in the submitter's home.
+Override it in Python with `Site(..., pool_credentials_dir="/shared/private/user/pools")`
+or in the site profile:
+
+```toml
+[study]
+records_dir = "/shared/project/records"
+pool_credentials_dir = "/shared/private/yourname/pool-credentials"
+```
+
+Relative profile paths resolve against the profile directory; use the actual
+absolute path for a home override rather than shell syntax such as `$HOME` or
+`~`. The default home location must be visible at the **same absolute path** on
+the submit host and farm nodes. If home is node-local, configure a protected
+shared path explicitly; local `/tmp` alone is insufficient. Local validation
+cannot establish worker visibility or remote access controls.
+
+Hedloom creates missing credential directories and ancestors with mode `0700`,
+and credential files use `0600`. Existing directories keep their permissions.
+Orderly close and failed startup remove each pool's temporary directory; the
+configured parent remains. The credential root and its ancestors must prevent
+other users replacing those paths. The root must be owned by the submitter
+without group/world write permissions. Ancestors must be owned by root or the
+submitter; group/world-writable ancestors require the sticky bit. Filesystem
+ACLs and UID mapping must preserve isolation across hosts. Unsafe paths refuse
+startup with the offending path in the error.
+
+**Changed default:** credentials previously lived under `records_dir`. They
+now use the private home location even for existing profiles. To keep using a
+protected records location for credentials, set `pool_credentials_dir` to that
+same path explicitly. There is no automatic fallback to records. Records and
+result reuse stay at their configured locations.
+
 The protection assumes normal OS isolation; processes running as your own account and privileged
 administrators are outside that boundary. If authentication cannot be established,
 startup fails; it does not fall back to unauthenticated connections.

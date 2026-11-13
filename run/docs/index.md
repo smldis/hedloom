@@ -95,9 +95,12 @@ Runtime readiness communication is process-local `inproc`. Networked pools
 default to per-pool `authentication="tls"`, using Dask temporary Security and
 Jobqueue worker credentials. The plugin receives Security separately from the
 transport. Credentials use a private temporary directory (`0700`) under
-`records_dir`, with files `0600`; farm nodes must see the same paths with account
+`Site.pool_credentials_dir` (default `~/.hedloom/pool-credentials`), with files
+`0600`; farm nodes must see the same paths with account
 isolation. Orderly close and failed startup remove that directory. Missing
 authentication support fails startup rather than selecting an unprotected mode.
+Credential storage is independent of records. Configure a protected shared path
+if home is not farm-visible; unsafe paths fail without falling back to records.
 
 The explicit per-pool opt-out is `authentication="none"`, through Site or a
 Runtime override, visible in effective `Site.placements`. Diagnostic exposure

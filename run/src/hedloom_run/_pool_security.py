@@ -35,7 +35,7 @@ def temporary_security():
 class PoolCredentials:
     """Keep worker credentials alive until close, without exposing their text."""
 
-    def __init__(self, records_dir, authentication="tls"):
+    def __init__(self, credentials_dir, authentication="tls"):
         from distributed.security import Security
 
         self.directory = None
@@ -52,8 +52,13 @@ class PoolCredentials:
             return
         self.protocol = "tls://"
         try:
-            root = Path(records_dir).resolve()
-            root.mkdir(parents=True, exist_ok=True)
+            root = Path(credentials_dir).resolve()
+            # mkdir(parents=True) uses the ambient umask for intermediate
+            # directories. Shared-project umasks must not make a new .hedloom
+            # ancestor group-writable. Leave all existing permissions intact.
+            for directory in reversed((root, *root.parents)):
+                if not directory.exists():
+                    directory.mkdir(mode=0o700, exist_ok=True)
             self._validate_parent(root)
             self._temporary = tempfile.TemporaryDirectory(prefix=".hedloom-pool-", dir=root)
             self.directory = Path(self._temporary.name)
@@ -71,7 +76,8 @@ class PoolCredentials:
             raise TransportError(
                 "could not configure authenticated pooled execution "
                 f"({type(error).__name__}); install hedloom-run[pooled] and "
-                "provide a writable records_dir shared with farm workers"
+                "provide a writable pool_credentials_dir shared with farm workers: "
+                f"{credentials_dir}"
             ) from error
 
     def __repr__(self):
@@ -99,12 +105,13 @@ class PoolCredentials:
             if (metadata.st_uid not in {0, os.getuid()}
                     or (mode & 0o022 and not mode & stat.S_ISVTX)):
                 raise TransportError(
-                    "authenticated pools need records_dir and its ancestors "
-                    "protected from other users renaming credential directories"
+                    f"unsafe pool_credentials_dir ancestor {path}: "
+                    "must be owned by this user or root and protected from "
+                    "other users renaming credential directories"
                 )
         if root.stat().st_uid != os.getuid() or stat.S_IMODE(root.stat().st_mode) & 0o022:
             raise TransportError(
-                "authenticated pools need records_dir owned by this user "
+                f"pool_credentials_dir {root} must be owned by this user "
                 "without group/world write permission"
             )
 

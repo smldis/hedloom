@@ -194,6 +194,13 @@ class Site:
     runs_dir: str | None = None
     """Optional consumer-history location; persistence belongs to the facade."""
 
+    pool_credentials_dir: str | None = None
+    """Shared private pool security root, defaulting to ~/.hedloom/pool-credentials.
+
+    Resolved to an absolute path at construction, independently of records.
+    Farm workers must see the same path with the same account isolation.
+    """
+
     def __post_init__(self) -> None:
         """Anchor every root, because a relative one is silently wrong.
 
@@ -209,6 +216,12 @@ class Site:
         """
 
         object.__setattr__(self, "records_dir", str(Path(self.records_dir).resolve()))
+        object.__setattr__(
+            self, "pool_credentials_dir",
+            str(Path(self.pool_credentials_dir).resolve())
+            if self.pool_credentials_dir is not None
+            else str((Path.home() / ".hedloom" / "pool-credentials").resolve()),
+        )
         if self.runs_dir is not None:
             object.__setattr__(self, "runs_dir", str(Path(self.runs_dir).resolve()))
         if self.work_dir is not None:
@@ -299,6 +312,7 @@ class Site:
 
         return Site(
             records_dir=self.records_dir,
+            pool_credentials_dir=self.pool_credentials_dir,
             transports={**self.transports, **transports},
             work_dir=self.work_dir,
             runs_dir=self.runs_dir,
@@ -368,6 +382,7 @@ class Site:
         }
         return Site(
             records_dir=self.records_dir,
+            pool_credentials_dir=self.pool_credentials_dir,
             transports={
                 name: transport
                 for name, transport in self.transports.items()
@@ -396,6 +411,7 @@ class Site:
 
         return Site(
             records_dir=self.records_dir,
+            pool_credentials_dir=self.pool_credentials_dir,
             transports={},
             work_dir=self.work_dir,
             runs_dir=self.runs_dir,
@@ -510,6 +526,10 @@ class Site:
 
         return cls(
             records_dir=anchored(study["records_dir"]),
+            pool_credentials_dir=(
+                anchored(study["pool_credentials_dir"])
+                if study.get("pool_credentials_dir") is not None else None
+            ),
             runs_dir=anchored(study["runs_dir"]) if study.get("runs_dir") else None,
             work_dir=(
                 anchored(study["work_dir"])
