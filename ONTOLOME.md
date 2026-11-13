@@ -334,7 +334,8 @@ outside the current collector. See docs/guide/runtime-artifacts.md.
   effective configuration. The maintained requirement and evidence limits are
   in [execution security](docs/internals/execution-security.md).
   Runtime readiness communication remains process-local. Networked pools default
-  to per-pool mutual TLS with private temporary credentials in `records_dir`;
+  to per-pool mutual TLS with private temporary credentials under the independent
+  `Site.pool_credentials_dir`, defaulting to `~/.hedloom/pool-credentials`;
   named `authentication="none"` opts out for that pool. Site and Runtime overrides
   retain the effective mode. Diagnostic HTTP exposure is independently selected
   by `dashboard`, is unauthenticated and is not private merely because it binds

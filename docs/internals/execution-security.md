@@ -41,12 +41,18 @@ temporary security support. Dask generates the credentials; users need no manual
 certificate setup. Missing support or failed protected startup is
 an error, not permission to create an unauthenticated pool.
 
-Credentials are stored under `Site.records_dir` in a temporary directory with
+Credentials are stored under `Site.pool_credentials_dir` in a temporary directory with
 mode `0700`; credential files use mode `0600`. Farm nodes must see those paths
 at the same location and enforce the corresponding account isolation. Runtime
 close and failed startup remove the temporary directory. Abrupt process death
 can leave temporary files; the permissions still carry the isolation boundary.
 Credentials are runtime resources, not reusable computation outputs.
+The root defaults to `~/.hedloom/pool-credentials` on the submit host and is
+configured independently of records through Python or `[study]` in a profile.
+Missing ancestors are created privately; existing permissions are preserved.
+Sites with node-local homes must configure a protected shared credential root.
+Unsafe credential paths fail without falling back to records. Moving this root
+does not move stored results or change computation identity.
 
 Protecting the files alone is insufficient if another user can replace an
 ancestor directory. Startup rejects unsafe writable ancestors; sticky directories

@@ -885,7 +885,7 @@ def open_pools(site: Any) -> dict[str, Any]:
         for name, options in pooled.items():
             cores = int(options.get("cores") or 1)
             memory_mb = int(options.get("memory_mb") or 1000)
-            credentials = PoolCredentials(site.records_dir, options.get("authentication", "tls"))
+            credentials = PoolCredentials(site.pool_credentials_dir, options.get("authentication", "tls"))
             try:
                 cluster = owned_cluster_type(LSFCluster, credentials)(
                     security=credentials.security,
@@ -985,7 +985,7 @@ async def open_pools_async(site: Any) -> dict[str, Any]:
     clusters: dict[str, Any] = {}
     try:
         for name, options in pooled.items():
-            credentials = PoolCredentials(site.records_dir, options.get("authentication", "tls"))
+            credentials = PoolCredentials(site.pool_credentials_dir, options.get("authentication", "tls"))
             try:
                 cluster = owned_cluster_type(LSFCluster, credentials)(
                     security=credentials.security,

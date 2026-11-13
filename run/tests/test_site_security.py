@@ -1,4 +1,6 @@
 """Authentication defaults and explicit operator overrides stay visible."""
+from pathlib import Path
+
 import pytest
 
 from hedloom_run.site import Site, SiteError
@@ -6,6 +8,35 @@ from hedloom_run.site import Site, SiteError
 
 def pool(**options):
     return {"kind": "lsf-pooled", "max_jobs": 1, **options}
+
+
+def test_pool_credentials_default_is_independent_of_records(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    site = Site(records_dir=str(tmp_path / "shared" / "records"))
+    expected = str(home / ".hedloom" / "pool-credentials")
+    assert site.pool_credentials_dir == expected
+    assert not home.exists(), "Site construction must not create runtime directories"
+    profile = tmp_path / "site.toml"
+    profile.write_text('[study]\nrecords_dir="elsewhere"\n')
+    assert Site.from_file(profile).pool_credentials_dir == expected
+
+
+def test_pool_credentials_profile_path_and_site_derivations(tmp_path, monkeypatch):
+    profile = tmp_path / "site.toml"
+    profile.write_text('[study]\nrecords_dir="records"\n'
+                       'pool_credentials_dir="private/credentials"\n'
+                       '[placement.pool]\nkind="lsf-pooled"\nmax_jobs=1\n')
+    monkeypatch.chdir(tmp_path.parent)
+    site = Site.from_file(profile)
+    expected = str(tmp_path / "private" / "credentials")
+    assert site.pool_credentials_dir == expected
+    for derived in (site.with_transports(), site.overridden({"kernel": {"threads": 2}}),
+                    site.served_in_process()):
+        assert derived.pool_credentials_dir == expected
+        assert derived.records_dir == site.records_dir
+    direct = Site(records_dir="records", pool_credentials_dir="private")
+    assert direct.pool_credentials_dir == str(tmp_path.parent / "private")
 
 
 def test_pool_authentication_default_and_scoped_override(tmp_path):

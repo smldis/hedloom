@@ -127,10 +127,12 @@ for why setting it that high makes the placement spend its budget on queueing.
 ### 4. Pooling, only if the shape calls for it
 
 Pools require authenticated Dask execution connections by default. Before this
-step, make sure `records_dir` is visible at the same path on the submit host and
-every farm node, and that private directories and files enforce the owner's
-permissions across hosts. `records_dir` and its ancestors must also prevent
-another user replacing those paths; check filesystem ACLs and UID mapping as
+step, make sure `pool_credentials_dir` is visible at the same path on the submit
+host and every farm node, and that private directories and files enforce the owner's
+permissions across hosts. It defaults to `~/.hedloom/pool-credentials`; configure
+a protected shared path in `[study]` if home is not farm-visible. This path is
+independent of records storage. `pool_credentials_dir` and its ancestors must
+also prevent another user replacing those paths; check filesystem ACLs and UID mapping as
 well as the Unix permission bits. Hedloom generates a private temporary credential
 directory (`0700`) and credential files (`0600`) there. Install the `pooled`
 extra on the submit host; no manual certificate setup is needed. The worker
